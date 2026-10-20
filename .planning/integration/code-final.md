@@ -1,5 +1,7 @@
 # code-final — final integration, 2026-10-20
 
+This is the historical offline integration report. Follow-up: the sole open HARN-04 / CR-HAR-09 item below was closed by fresh live requalification; see [requalify-adapters.md](requalify-adapters.md) and [live-acceptance.md](live-acceptance.md) for current status. The adapter fix subsequently brought offline totals to 903 tests, 901 pass, 0 fail, 2 POSIX skips, 0 TODO.
+
 ## Result
 
 - Full offline suite: **890 tests; 888 pass, 0 fail, 2 skipped, 0 todo, 0 cancelled** (Node 24.19.0, Windows).

@@ -146,6 +146,8 @@ kit into a temp project and drives the installed `ph`. `node kit/install/units.m
 units in `kit.json`; `node kit/release-check.mjs [<range>]` checks `CHANGELOG.md` against `kit.json` and prompt-text
 commits (HARN-15). Third-party text: see `NOTICE.md`.
 
-Offline regression success is not live release qualification. Two-stack adapter generation/trigger smokes,
-real mod permissions and hook transcript checks, visual panel checks, and qualification on the candidate minimum
-Node version remain manual checks; see `.planning/integration/code-final.md`. This checkout was tested on Node 24.
+Offline regression success is not blanket live release qualification. Bounded Windows/Node 24 live checks now
+cover two-stack adapter generation and fresh triggers, mod activation/read/edit/write/permission denials, Paseo
+runtime/schema/resume, selected hook callbacks, and actual planning/swarm UI. See
+`.planning/integration/live-acceptance.md` and `.planning/integration/requalify-adapters.md`. Full GSD lifecycle, all permission/hook modes,
+scale/reconnect, POSIX, and qualification on the candidate minimum Node remain unverified.

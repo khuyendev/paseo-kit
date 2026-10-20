@@ -1,0 +1,109 @@
+{
+  "date": "2026-10-20",
+  "counts": {
+    "pass": 2,
+    "fail": 0,
+    "blocked": 0
+  },
+  "HARN_04": "closed",
+  "CR_HAR_09": "closed",
+  "lanes": {
+    "node-http": {
+      "outcome": "pass",
+      "root": "C:/Users/fish/Desktop/paseo-kit-live-fix-tests-20261020/adapters/node-http",
+      "parent": "492f8a01-82fb-4010-bb21-9b5dc6f4df3d",
+      "workspace": "wks_17f574ffd239550b",
+      "model": "circle-agent/gpt-6-astra[1m]",
+      "effort": "medium",
+      "harnessInvocation": {
+        "toolUseId": "call_EHRcapT9nIzOgkcO2TPgZLDf",
+        "base": "C:\\Users\\fish\\Desktop\\paseo-kit-live-fix-tests-20261020\\adapters\\node-http\\.claude\\skills\\harness"
+      },
+      "stackSkill": "node-http-service",
+      "baselineTests": 2,
+      "declaredTests": 2,
+      "selectorChecks": 7,
+      "isolatedNegativeChecks": 5,
+      "sourceUnchanged": true,
+      "generatedUnchanged": true,
+      "trigger": {
+        "requests": 20,
+        "tp": 10,
+        "fp": 0,
+        "fn": 0,
+        "tn": 10,
+        "precision": 1,
+        "recall": 1,
+        "maxLiveChildren": 4
+      },
+      "finalLintExit": 0,
+      "finalLintWarnings": 4,
+      "doctorExit": 0,
+      "archived": true,
+      "evidencePrefix": "_workspace/live-fix/requalification/node-http",
+      "triggerEvidence": "_workspace/live-fix/requalification/triggers-node-http"
+    },
+    "compiled-cli": {
+      "outcome": "pass",
+      "root": "C:/Users/fish/Desktop/paseo-kit-live-fix-tests-20261020/adapters/compiled-cli",
+      "parent": "b97ca5b0-412d-4f22-98ea-dfac24564f06",
+      "workspace": "wks_e83fafbace61f715",
+      "model": "circle-agent/gpt-6-astra[1m]",
+      "effort": "medium",
+      "harnessInvocation": {
+        "toolUseId": "call_gM8dy9paUnRWsrxvX8iqQrTy",
+        "base": "C:\\Users\\fish\\Desktop\\paseo-kit-live-fix-tests-20261020\\adapters\\compiled-cli\\.claude\\skills\\harness"
+      },
+      "stackSkill": "compiled-cli",
+      "baselineTests": 2,
+      "declaredTests": 2,
+      "selectorChecks": 8,
+      "isolatedNegativeChecks": 5,
+      "sourceUnchanged": true,
+      "generatedUnchanged": true,
+      "trigger": {
+        "requests": 20,
+        "tp": 10,
+        "fp": 0,
+        "fn": 0,
+        "tn": 10,
+        "precision": 1,
+        "recall": 1,
+        "maxLiveChildren": 4
+      },
+      "finalLintExit": 0,
+      "finalLintWarnings": 0,
+      "doctorExit": 0,
+      "archived": true,
+      "evidencePrefix": "_workspace/live-fix/requalification/compiled-cli",
+      "triggerEvidence": "_workspace/live-fix/requalification/triggers-compiled-cli"
+    }
+  },
+  "oldFailures": {
+    "LA_01": "Original test: test/service.test.mjs now normalizes to two concrete :: IDs; real records prove both.",
+    "LA_02": "Old test:all explicitly rejects before runner. Documented test:cli and file selector each prove both # IDs; test:greeting proves one."
+  },
+  "policy": {
+    "unchangedSha256": "67963a95fc2790b5f3e05f74afa895884cb7a1d3b326d970dfedf30cef6c2e7a",
+    "mainCircleDenies": [
+      "Agent",
+      "Workflow"
+    ],
+    "workerSendMessageDeniedInConfig": true,
+    "runtimeToolSurface": "not exposed; policy readback only; SendMessage was never called"
+  },
+  "cleanup": {
+    "parentsArchived": 2,
+    "childrenArchived": 40,
+    "newLocalWorkspacesArchived": 2,
+    "fixtureFilesPreserved": true,
+    "persistentServersStarted": 0
+  },
+  "limitations": [
+    "No full GSD lifecycle/gate run",
+    "No blanket proof of runtime tool denial beyond policy readback",
+    "Node adapter uses a reviewed hash-pinned flat-test catalog; CLI supports unique literal top-level test names",
+    "Generated history/pending notes preserved; measured results live in triggers.json and this report"
+  ],
+  "report": ".planning/integration/requalify-adapters.md"
+}

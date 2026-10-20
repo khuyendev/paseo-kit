@@ -1,0 +1,70 @@
+{
+  "independentPublicCliChecks": [
+    {
+      "lane": "node-http",
+      "command": "test: test/service.test.mjs",
+      "exit": 0,
+      "outcome": "passed",
+      "targets": [
+        "test/service.test.mjs::health",
+        "test/service.test.mjs::missing"
+      ],
+      "executed": {
+        "count": 2,
+        "targets": [
+          "test/service.test.mjs::health",
+          "test/service.test.mjs::missing"
+        ]
+      },
+      "reason": null,
+      "record": "C:\\Users\\fish\\Desktop\\paseo-kit\\_workspace\\live-fix\\main-verification\\check-9S7Uas\\check.json"
+    },
+    {
+      "lane": "compiled-cli",
+      "command": "test:cli",
+      "exit": 0,
+      "outcome": "passed",
+      "targets": [
+        "test/cli.test.mjs#greeting",
+        "test/cli.test.mjs#usage"
+      ],
+      "executed": {
+        "count": 2,
+        "targets": [
+          "test/cli.test.mjs#greeting",
+          "test/cli.test.mjs#usage"
+        ]
+      },
+      "reason": null,
+      "record": "C:\\Users\\fish\\Desktop\\paseo-kit\\_workspace\\live-fix\\main-verification\\check-mXUDSA\\check.json"
+    },
+    {
+      "lane": "compiled-cli",
+      "command": "test:greeting",
+      "exit": 0,
+      "outcome": "passed",
+      "targets": [
+        "test/cli.test.mjs#greeting"
+      ],
+      "executed": {
+        "count": 1,
+        "targets": [
+          "test/cli.test.mjs#greeting"
+        ]
+      },
+      "reason": null,
+      "record": "C:\\Users\\fish\\Desktop\\paseo-kit\\_workspace\\live-fix\\main-verification\\check-gr7v4q\\check.json"
+    },
+    {
+      "lane": "compiled-cli",
+      "command": "test:all",
+      "exit": 2,
+      "outcome": "failed",
+      "targets": [],
+      "executed": null,
+      "reason": "adapter parse tools/adapter/tests.mjs: exit 1: Unknown test selector: all",
+      "record": "C:\\Users\\fish\\Desktop\\paseo-kit\\_workspace\\live-fix\\main-verification\\check-y3ZyF8\\check.json"
+    }
+  ],
+  "freshTriggerRecordsVerified": 40
+}

@@ -10,7 +10,10 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
   stable target identities and a positive/negative protocol self-check before readiness. Added an explicit
   opt-in adapter check using existing hook/coverage contracts; lint stays structural and protected method text
   stays unchanged. Measured checks and live requalification instructions: `.planning/integration/close-live-findings.md`.
-  Offline regressions do not close HARN-04 / CR-HAR-09; fresh real generated adapters still require live testing.
+  Offline regressions alone did not close HARN-04 / CR-HAR-09. Subsequent fresh Node HTTP and compiled C#
+  generator runs invoked installed harness Skill and passed selector/evidence checks, negative controls,
+  lint and 40 fresh trigger requests; bounded live qualification closed both items. Main independently reran
+  the repaired selector checks. Evidence: `.planning/integration/requalify-adapters.md`.
 
 ## [0.0.1] - 2026-10-20
 

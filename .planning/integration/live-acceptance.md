@@ -1,6 +1,12 @@
 # Live acceptance summary — 2026-10-20
 
-## Verdict: NOT fully accepted
+## Current verdict: requested live findings resolved
+
+After the owner authorized fixes, LA-01/02 were corrected in the kit-authored adapter layer and requalified with two fresh real generators. **HARN-04 / CR-HAR-09 are now closed for the bounded two-stack qualification.** Main independently reran the original Node file selector, the compiled documented suite and single-target selectors, and the explicit rejection of unsupported `all`; both fresh 20-request trigger records were verified. See [live requalification](requalify-adapters.md), [compact evidence](requalify-evidence.json), and [main readback](main-requalification-check.json).
+
+LA-03 is resolved: only the worker SendMessage deny was added, main circle remains unchanged, and installed doctor exits 0. See [policy fix](worker-policy-fix.md). Offline regressions: **903 tests, 901 pass, 0 fail, 2 POSIX skips, 0 TODO**. This is not blanket qualification of every platform, hook mode or a complete GSD lifecycle.
+
+## Historical verdict: initial test-only pass (before fixes)
 
 The owner authorized live testing and committing the existing fixes, not further product changes. The committed code passes offline regression and bounded live runtime/mod/UI smokes, but the generated adapters fail two requested-target evidence checks. **HARN-04 / CR-HAR-09 remains open.** There is also a live worker-provider readiness mismatch. Neither the generated output nor the owner's configuration was repaired to turn these results green.
 
@@ -13,7 +19,7 @@ The owner authorized live testing and committing the existing fixes, not further
 
 Counts are bounded named smoke checks, not coverage of every requirement. Detailed scope, exact commands, versions, cleanup and unrun scenarios: [adapters](live-adapters.md), [runtime](live-runtime.md), [mod](live-mod.md), [UI](live-ui.md).
 
-## Unresolved observations
+## Historical observations (all resolved by the follow-up above)
 
 ### LA-01 Generated Node adapter: file target becomes test-name evidence
 
@@ -59,6 +65,6 @@ LA-01/02 are generated-output defects, not yet proof of a core runtime bug. Thei
 
 ## Remaining qualification
 
-A green offline suite is not full live acceptance. HARN-04 is not closed until generated adapter requested-target/evidence semantics pass. Other exhaustive requirements (full GSD lifecycle, all permission modes, all hooks/thresholds, scale/reconnect, POSIX, minimum Node floor) were outside this bounded smoke and are listed as unverified in area reports, not silently marked passed.
+A green offline suite is not full live acceptance. HARN-04 was subsequently closed by the fresh live requalification linked above; the historical failed artifacts remain preserved. Other exhaustive requirements (full GSD lifecycle, all permission modes, all hooks/thresholds, scale/reconnect, POSIX, minimum Node floor) were outside this bounded smoke and are listed as unverified in area reports, not silently marked passed.
 
-Next work, if authorized: correct the project-adapter generation/validation contract in the adapter layer (preserve Harness/GSD method text), regenerate on properly hosted fixtures and requalify; separately reconcile worker SendMessage policy only with permission to change the live machine.
+The requested adapter-contract repair, fresh live requalification and narrow worker-policy correction are complete. No remaining reproducible failure from this acceptance pass is open. Full GSD lifecycle, all modes/hooks, minimum Node and POSIX/scale qualification remain outside this bounded pass.
