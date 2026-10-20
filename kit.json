@@ -297,6 +297,7 @@
     ".agents/gsd/upstream/gsd-core/workflows/verify-work/steps/automated-ui-verification.md",
     ".agents/gsd/upstream/gsd-core/workflows/verify-work/steps/mvp-uat-framing.md",
     ".agents/harness.defaults.json",
+    ".agents/harness/adapter/check.mjs",
     ".agents/harness/adapter/commands.mjs",
     ".agents/harness/adapter/contract.mjs",
     ".agents/harness/adapter/evidence.mjs",

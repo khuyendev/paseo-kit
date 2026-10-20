@@ -6,6 +6,12 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Owner-authorized live adapter fix, 2026-10-20 (LA-01/02, D-111): kit-authored generation overlay now requires
+  stable target identities and a positive/negative protocol self-check before readiness. Added an explicit
+  opt-in adapter check using existing hook/coverage contracts; lint stays structural and protected method text
+  stays unchanged. Measured checks and live requalification instructions: `.planning/integration/close-live-findings.md`.
+  Offline regressions do not close HARN-04 / CR-HAR-09; fresh real generated adapters still require live testing.
+
 ## [0.0.1] - 2026-10-20
 
 First release of the from-scratch kit (owner decisions D-109, D-110, D-111, approved 2026-10-20; specification

@@ -1,0 +1,10 @@
+{
+  "changed": true,
+  "change": "circle-agent.disallowedTools += SendMessage only",
+  "backup": "C:\\Users\\fish\\.paseo\\config.before-worker-sendmessage-1792500752214.json",
+  "unrelatedConfigUnchanged": true,
+  "circleSendMessageAllowed": true,
+  "workerSendMessageDenied": true,
+  "reloadExit": 0,
+  "reloadError": null
+}

@@ -39,6 +39,12 @@ states what the harness output is for in this kit (the project adapter, D-109). 
 `tests/harness/method-text.test.mjs` checks every shipped file against the source copy in
 `tests/harness/fixtures/method-source/` and the region inventory in `tests/harness/fixtures/PROVENANCE.json`.
 
+Kit-authored overlay update (2026-10-20, owner-authorized LA-01/02 fix):
+`references/kit-adapter.md` section 5 now specifies canonical end-to-end target IDs, parser-only normalization
+or runner-proven selector mapping, and a mandatory positive/negative dynamic protocol self-check using
+`adapter/check.mjs`; section 10 requires reporting its evidence. This is adapter-only guidance, not a change
+to any protected method region or upstream text. The source/region provenance inventory remains unchanged.
+
 Region inventory (source line ranges of the carried file; each region is replaced by the stated number of lines):
 
 - `SKILL.md` lines 10-10 -> 3 line(s): (c) (g)

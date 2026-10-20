@@ -104,6 +104,17 @@ test("HARN-03 the kit overlay exists, each SKILL.md loads it, and it names every
   assert.match(overlay, /pro\*\* = multi-step structural coding/);
 });
 
+test("HARN-03 adapter readiness requires identity checks and records the adapter-only NOTICE change", () => {
+  const overlay = lf(path.join(SKILLS, "harness", "references", "kit-adapter.md"));
+  for (const text of ["Stable target identities", "mandatory", "--run", "multi-test file", "suite alias",
+    "zero execution", "missing executed member", "failed runner", "unknown", "not ready", "never by copying the request"]) {
+    assert.ok(overlay.toLowerCase().includes(text.toLowerCase()), `overlay requires ${text}`);
+  }
+  const notice = lf(path.join(SKILLS, "harness", "NOTICE.md"));
+  assert.match(notice, /owner-authorized LA-01\/02 fix/);
+  assert.match(notice, /source\/region provenance inventory remains unchanged/);
+});
+
 test("HARN-08 HARN-11 the overlay states tier-only agent models and English harness files", () => {
   const overlay = lf(path.join(SKILLS, "harness", "references", "kit-adapter.md"));
   assert.match(overlay, /Agent files name only a tier in `model:`/);

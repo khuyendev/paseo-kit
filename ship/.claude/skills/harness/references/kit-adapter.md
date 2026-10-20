@@ -113,8 +113,50 @@ is one JSON object on stdin `{v: 1, op, codeRoot, phaseDir?, ...}`; the response
 | `attribute` | `failures: [{text, file?}], plans: [{id, owns}]` | `{assignments: [{failure, plan\|null}]}` |
 
 A non-zero exit, a timeout, another `v`, a missing field or unparsable output counts as `unresolvable`, never as a
-pass. Test each script by hand with one request before relying on it. An evidence parser must report how many
-targets really ran: a test runner that exits 0 after running nothing is a failure, not a pass.
+pass. An evidence parser must report how many targets really ran: a test runner that exits 0 after running
+nothing is a failure, not a pass.
+
+### Stable target identities (ADPT-03/15/17)
+
+Choose one canonical target identity scheme and document it in the generated stack skill. The parser's targets,
+resolver's results, runner selection and `executed.targets` must use those exact identities end to end (including
+path separators, case and disambiguation of repeated test names). A positive count alone proves no named target.
+
+- Normalize file/suite/alias selectors to a nonempty set of concrete IDs in the **parser**, before execution,
+  using project discovery. The resolver validates each ID unchanged; its closed response cannot rename or expand
+  targets. Use `{targets}` in runner argv when running the normalized set; do not reselect from the original
+  `{argument}` in a way that changes that set. Unknown/empty selectors must fail closed, not fall back to all.
+- Alternatively retain a file or suite ID only when runner output proves that selection completed and maps its
+  actual executed members to that ID. The evidence parser must require that completion/membership proof, not
+  merely a global count or one matching member. Retain the raw runner mapping in the logs. If the runner cannot
+  provide it, normalize in the parser instead. Discovery alone is not execution evidence.
+- `executed.targets` comes from actual completed runner records, never by copying the request or adding every
+  requested name. Skipped, filtered-out, missing and unstarted cases are not executed. `count` is the actual
+  executed-case count, not necessarily the number of selector IDs. Failed runners cannot pass. Do not set
+  `exit_code_sufficient: true` to bypass target coverage for tests.
+
+### Mandatory protocol self-check before readiness
+
+Lint is structural and never executes build commands. Separately, with permission to run the project commands,
+run the declared build/test commands and an end-to-end check of **every documented selector form**:
+
+```text
+node .agents/harness/adapter/check.mjs --kind <kind> --command "<prefix><selector>" --run
+```
+
+This explicit opt-in runs parser -> resolver -> runner -> evidence and applies the gate's `executionProblem`
+coverage rule. It retains `check.json`, stdout and stderr in a fresh `_workspace/adapter-check/check-*` directory
+(`--output <dir>` changes the parent). Exit 0 = this obligation passed, 2 = rejected, 1 = usage/config/error.
+It is not a full GSD gate and cannot certify an evidence parser that invents runner facts.
+
+Before reporting ready, write/run a project-owned self-check that asserts independently known expected IDs and
+counts, not expected values copied from the parser. Cover an exact single target, a multi-test file and every
+advertised suite alias; where a form is unsupported, assert its rejection and do not document it as supported.
+In an isolated fixture exercise zero execution, one missing executed member, a failed runner, and an unknown
+selector. Assert rejection and inspect raw runner records; for unknown/missing resolution assert no runner ran.
+Use controlled runner output for failure injection only, label it synthetic, and keep real positive runs separate.
+Preserve commands, exit codes, expected/resolved/executed IDs, counts and log paths. If any check fails or cannot
+run, report the adapter **not ready**, with the blocker; a lint pass or trigger score does not waive this check.
 
 ## 6. Stack skill and project agents
 
@@ -191,7 +233,7 @@ commas (lint checks exactly these files); Supersedes names the earlier row's dat
 it, else stays empty.
 
 Then report to the owner, in the owner's language: what was written (each adapter entry, the stack skill, any
-agent and script), the commands you ran and their results, the lint result, and what you could not decide. Ask
+agent and script), the commands you ran and their results, the lint result, protocol self-check results and evidence paths, and what you could not decide. Ask
 the owner to confirm before any GSD flow relies on the adapter. Files the harness writes (adapter, skills, agents,
 history rows) are in English whatever language the owner uses.
 
