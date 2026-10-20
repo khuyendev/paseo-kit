@@ -6,6 +6,15 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Owner-approved tier policy, 2026-10-20: kit-authored adapter/runtime guidance keeps model, thinking and native
+  `features.fast_mode` in one project tier, batches owner-requested mapping updates and uses tier references by
+  default instead of duplicate Fast tiers. Existing runtime feature forwarding is reused; protected Harness/GSD
+  method text and neutral shipped model defaults remain unchanged. Tests cover on/off tier propagation and
+  direct-model bypass. Bounded live evidence (`.planning/integration/tier-fast-mode-live.md`) confirms tier
+  values reach Paseo but does not qualify effective Fast: the Opus ON response still reported standard speed.
+  Direct native CLI loopback request capture emitted `speed:fast` for Opus 5.5, not Haiku/Sonnet 5.5 in the tested
+  invocation (`.planning/integration/native-fast-request-evidence.json`); no upstream capability is inferred.
+
 - Owner-authorized live adapter fix, 2026-10-20 (LA-01/02, D-111): kit-authored generation overlay now requires
   stable target identities and a positive/negative protocol self-check before readiness. Added an explicit
   opt-in adapter check using existing hook/coverage contracts; lint stays structural and protected method text

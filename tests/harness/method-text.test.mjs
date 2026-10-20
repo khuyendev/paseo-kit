@@ -122,6 +122,15 @@ test("HARN-08 HARN-11 the overlay states tier-only agent models and English harn
   assert.match(overlay, /in the owner's language/);
 });
 
+test("HARN-03 tier changes stay in the adapter overlay and preserve method provenance", () => {
+  const overlay = lf(path.join(SKILLS, "harness", "references", "kit-adapter.md"));
+  for (const text of ["features.fast_mode", "Batch changes", "preserving its other fields", "not concrete model IDs",
+    "bypasses the tier", "independent of bypass permissions", "cached resume", "shipped tiers unconfigured"]) {
+    assert.ok(overlay.includes(text), `overlay explains ${text}`);
+  }
+  assert.match(lf(path.join(SKILLS, "harness", "NOTICE.md")), /Kit-authored tier-policy update/);
+});
+
 test("HARN-12 harness-evolve reads the run records and names the kit pull form", () => {
   const evolve = lf(path.join(SKILLS, "harness-evolve", "SKILL.md"));
   assert.ok(evolve.includes("_workspace/_runs/*/run.json"));

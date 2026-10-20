@@ -115,6 +115,19 @@ stdin/stdout (ADPT-15), with closed shapes and exactly one nonblank response lin
 adapter; `ph doctor` and `ph harness lint` check it. Null build/test commands are `not_configured`, never green.
 Gate evidence validates all requested steps, logs, execution counts, current file scopes, HEAD and effective config.
 
+### Change a tier's model, effort and Fast toggle
+
+Keep these together in the project overlay, for example:
+
+```json
+{"tiers": {"pro": {"provider": "circle/<fast-capable model>", "thinking": "medium", "features": {"fast_mode": true}}}}
+```
+
+Use `false` for Fast off. Orchestrators normally select tier names (`--model pro` or `agent(..., {model: "pro"})`)
+and patch only requested tier fields when the owner changes the mapping. A concrete model ID bypasses the tier's
+features. Fast needs provider/model support, is independent of permission bypass, and applies to new agents rather
+than changing running ones. No duplicate `pro-fast` tier or provider-config change is needed.
+
 ## File tools
 
 The harness-files Claude Code mod (`.claude/plugins/harness-files/`, enabled per project with `--enable-plugin`)

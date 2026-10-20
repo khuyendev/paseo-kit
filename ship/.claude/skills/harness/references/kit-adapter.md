@@ -179,6 +179,30 @@ changes, review, verification); **frontier** = planning and long autonomous work
 results. Agent files name only a tier in `model:`. Concrete model ids appear only in `tiers` and in `gsd.roles`
 entries, each with a non-empty `reason`.
 
+Keep model, effort and Fast on/off together in each tier: `tiers.<name>.provider`, `thinking`, and
+`features.fast_mode` (a JSON boolean). When the owner changes a tier, patch those requested fields in the project
+`.agents/harness.config.json`, preserving its other fields and unrelated settings. Batch changes to several tiers
+in one edit and validate once. Do not rewrite kit defaults or provider settings, and do not create duplicate
+`pro-fast` / `pro-slow` tiers merely to toggle Fast.
+
+By default, generated `gsd.roles.<role>.model`, workflow agent calls and spawn commands reference tier names,
+not concrete model IDs; a per-role concrete-model exception needs the owner's explicit instruction. Then an owner
+request such as "pro, medium, Fast off" changes one mapping, not every workflow. `--model pro` and
+`agent(..., {model: "pro"})` receive that tier's features; a direct `--model circle/<model>` bypasses the tier
+and does not inherit its Fast setting. Explicit effort overrides remain independent.
+
+For example, a configured tier entry can be:
+
+```json
+{"provider": "circle/<fast-capable model>", "thinking": "medium", "features": {"fast_mode": true}}
+```
+
+Use `false` for Fast off; do not replace the model with a differently named `*-fast` model to simulate this toggle.
+Fast is independent of bypass permissions and only works for provider/model combinations that advertise it.
+Changing tiers affects subsequently created agents/new workflow launches, not already-running agents or workflows;
+a cached resume may create no agent at all. Leave the kit's shipped tiers unconfigured until the project or owner
+chooses their models.
+
 ## 8. Lint
 
 `node .agents/harness/ph.mjs harness lint` checks what the harness generated: the files listed in the Scope of the

@@ -45,6 +45,11 @@ or runner-proven selector mapping, and a mandatory positive/negative dynamic pro
 `adapter/check.mjs`; section 10 requires reporting its evidence. This is adapter-only guidance, not a change
 to any protected method region or upstream text. The source/region provenance inventory remains unchanged.
 
+Kit-authored tier-policy update (2026-10-20, owner request): `references/kit-adapter.md` section 7 keeps model,
+effort and `features.fast_mode` in one project tier and directs orchestrators to patch requested fields in one
+batched edit, reference tier names by default and preserve unrelated settings. No protected method region or
+source/region provenance entry changes; native feature support and per-call model exceptions remain explicit.
+
 Region inventory (source line ranges of the carried file; each region is replaced by the stated number of lines):
 
 - `SKILL.md` lines 10-10 -> 3 line(s): (c) (g)

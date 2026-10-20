@@ -1,0 +1,104 @@
+{
+  "date": "2026-10-20",
+  "claudeCodeVersion": "2.1.296",
+  "scope": "Native CLI request-formation diagnostic only; synthetic loopback responses, no real model inference or upstream forwarding",
+  "cases": [
+    {
+      "model": "claude-haiku-5-5",
+      "requestedFast": false,
+      "exit": 0,
+      "timedOut": false,
+      "requests": [
+        {
+          "case": "claude-haiku-5-5-off",
+          "path": "/v1/messages?beta=true",
+          "method": "POST",
+          "model": "claude-haiku-5-5",
+          "speed": null,
+          "stream": true
+        }
+      ]
+    },
+    {
+      "model": "claude-haiku-5-5",
+      "requestedFast": true,
+      "exit": 0,
+      "timedOut": false,
+      "requests": [
+        {
+          "case": "claude-haiku-5-5-on",
+          "path": "/v1/messages?beta=true",
+          "method": "POST",
+          "model": "claude-haiku-5-5",
+          "speed": null,
+          "stream": true
+        }
+      ]
+    },
+    {
+      "model": "claude-sonnet-5-5",
+      "requestedFast": false,
+      "exit": 0,
+      "timedOut": false,
+      "requests": [
+        {
+          "case": "claude-sonnet-5-5-off",
+          "path": "/v1/messages?beta=true",
+          "method": "POST",
+          "model": "claude-sonnet-5-5",
+          "speed": null,
+          "stream": true
+        }
+      ]
+    },
+    {
+      "model": "claude-sonnet-5-5",
+      "requestedFast": true,
+      "exit": 0,
+      "timedOut": false,
+      "requests": [
+        {
+          "case": "claude-sonnet-5-5-on",
+          "path": "/v1/messages?beta=true",
+          "method": "POST",
+          "model": "claude-sonnet-5-5",
+          "speed": null,
+          "stream": true
+        }
+      ]
+    },
+    {
+      "model": "claude-opus-5-5",
+      "requestedFast": false,
+      "exit": 0,
+      "timedOut": false,
+      "requests": [
+        {
+          "case": "claude-opus-5-5-off",
+          "path": "/v1/messages?beta=true",
+          "method": "POST",
+          "model": "claude-opus-5-5",
+          "speed": null,
+          "stream": true
+        }
+      ]
+    },
+    {
+      "model": "claude-opus-5-5",
+      "requestedFast": true,
+      "exit": 0,
+      "timedOut": false,
+      "requests": [
+        {
+          "case": "claude-opus-5-5-on",
+          "path": "/v1/messages?beta=true",
+          "method": "POST",
+          "model": "claude-opus-5-5",
+          "speed": "fast",
+          "stream": true
+        }
+      ]
+    }
+  ],
+  "conclusion": "In this tested native CLI invocation, fastMode:true emitted speed:fast for Opus 5.5 but not Haiku 5.5 or Sonnet 5.5. This does not establish proxy capability or explain standard-speed responses observed through Paseo."
+}

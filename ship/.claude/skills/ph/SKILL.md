@@ -64,6 +64,12 @@ Options are `--key value` only; a value may itself start with `--`. Prompts: exa
   `provider/model`. The kit ships the tiers unconfigured; the project's mapping lives in `.agents/harness.config.json`
   (written by the harness adapter generator). `--effort off|low|medium|high|xhigh|max` overrides the tier's thinking
   level (clamped to what the model offers). `allowed_models`, when set, limits the usable ids.
+- Keep a tier's model, effort and Fast toggle in `.agents/harness.config.json`: `tiers.<name>.provider`,
+  `thinking`, `features.fast_mode: true|false`. Use tier names by default so an owner can change this mapping once.
+  `--model pro` inherits `tiers.pro.features`; a direct `--model circle/<model>` does not. Fast does not change
+  permission mode or model identity and requires provider/model support. Patch only requested tier fields,
+  preserve other settings, and do not duplicate tiers merely for Fast on/off. Changes affect new agents/new
+  workflow launches, not live agents or cached resume calls. The shipped tiers remain unconfigured.
 - `--role R` (fanout `role=`, workflow `agent({role})`) names a GSD role; model and effort then follow
   `gsd.roles.<R>` of the adapter. Precedence, for model and effort separately: `--model`/`--effort` > role entry >
   the agent type's `model:` > `default_tier`. The role is never guessed from the agent type.

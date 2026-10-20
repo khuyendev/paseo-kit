@@ -1,0 +1,31 @@
+{
+  "date": "2026-10-20",
+  "result": {"pass": 7, "fail": 1, "blocked": 2, "effectiveOn": "unverified"},
+  "fixture": "C:/Users/fish/Desktop/paseo-kit-fast-mode-test-20261020",
+  "artifacts": "_workspace/tier-fast-mode-test",
+  "report": ".planning/integration/tier-fast-mode-live.md",
+  "capability": {"api": "DaemonClient.listProviderFeatures(draftConfig)", "provider": "circle-agent", "model": "claude-opus-5-5[1m]", "returnedFeature": {"id": "fast_mode", "type": "toggle", "label": "Fast", "value": false}},
+  "parent": "78fe6d6a-bdb3-497a-91f6-aede2dde4aa0",
+  "workspace": "wks_1a9040fdc5ad5f32",
+  "targetAttempts": 2,
+  "retries": 0,
+  "sameTaskPrompt": "Reply exactly FAST_TOGGLE_ACK. Do not use tools.",
+  "publicSelection": "ph spawn --model pro",
+  "invariants": {"featureReadbackMatched": true, "onlyOverlayChange": "tiers.pro.features.fast_mode", "requestedModel": "claude-opus-5-5[1m]", "nativeResponseModel": "claude-opus-5-5", "requestedAndEffectiveEffort": "medium", "permissionMode": "bypassPermissions", "sameParentAndCwd": true, "serial": true},
+  "calls": [
+    {"name": "on", "agent": "6f9d6b0c-0d79-45fb-9111-6485545a42e6", "session": "dca6ce47-a866-4074-814a-703de0b20100", "requestedFast": true, "daemonReadbackFast": true, "nativeEffectiveFastMode": null, "usageSpeed": "standard", "serviceTier": "standard", "reply": "FAST_TOGGLE_ACK", "inputTokens": 2, "cacheCreationTokens": 19526, "cacheReadTokens": 0, "outputTokens": 16, "reportedCostUsd": 0.097958},
+    {"name": "off", "agent": "431458cc-81ab-4b8f-b2d7-2cecfcc1d87c", "session": "a0ee0743-2382-4eb3-abba-8ff9d134fa35", "requestedFast": false, "daemonReadbackFast": false, "nativeEffectiveFastMode": null, "usageSpeed": "standard", "serviceTier": "standard", "reply": "FAST_TOGGLE_ACK", "inputTokens": 2, "cacheCreationTokens": 7028, "cacheReadTokens": 12498, "outputTokens": 16, "reportedCostUsd": 0.037967600000000004}
+  ],
+  "paidTargetReportedTotalUsd": 0.1359256,
+  "orchestrationCostIncluded": false,
+  "nativeTranscriptDirectory": "C:/Users/fish/.claude-circle/projects/C--Users-fish-Desktop-paseo-kit-fast-mode-test-20261020",
+  "nativeTranscriptEvidenceLines": {"permissionAndCwd": 3, "assistantModelEffortUsage": 18},
+  "claudeCodeVersion": "2.1.296",
+  "nativeQueryDebugRecordsFound": 0,
+  "limitations": ["ON response reports standard speed, not fast", "Claude Code effective fastMode application is not exposed by captured diagnostics", "Provider settings-building source and daemon readback do not prove native application or upstream honoring", "Two tiny calls are not a latency benchmark", "Cache differences and reported cost do not establish Fast pricing"],
+  "cleanup": {"childrenArchived": true, "parentArchived": true, "exactLocalWorkspaceArchived": true, "fixturePreserved": true},
+  "productCodeChanges": false,
+  "ownerConfigChanges": false,
+  "daemonRestartOrReload": false,
+  "committed": false
+}
