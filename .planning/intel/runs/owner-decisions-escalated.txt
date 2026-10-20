@@ -1,0 +1,14 @@
+The owner answered every escalated question (2026-10-20). Apply them to all four files (re-read their current state first; edit in place, each tool call under about 300 lines):
+
+- D-07: (1) `machine apply` links `kit-init` into every CLAUDE_CONFIG_DIR of the template providers, behind an explicit flag (e.g. `--link-user-skills`), reported by `machine check`, removable.
+- D-15: (A)+(C) additive only, never remove models; `machine check` lists model ids the template no longer ships, as notes for the owner.
+- D-39: (A) keep the Claude Code mod (WildEraV6 runs it today: enabledPlugins harness-files, no file MCP servers), slimmed to the three batch tools and a simpler ticket protocol.
+- D-62: (A) trimmed pinned upstream snapshot + generation with the adapter overlay + check; plumbing written by the kit; MIT notice ships.
+- D-77: (A) one file: sections `gsd` and `adapter` in `.agents/harness.config.json`; no `.planning/config.json`.
+- D-78: (B) forensics + a plain gsd-debugger agent (upstream session file, root-cause rule, bounded budget, "a test that ran nothing is not a pass"); the WildEra debug engine is LATER and not part of the kit.
+- D-107: done by the main session (omp notes marked superseded, SendMessage added to the deny note); mark it resolved.
+
+New owner principle D-110 (overrides any earlier proposal it contradicts): the kit is VANILLA. Nothing specific to WildEraV6, Unreal or games goes into the kit: no Unreal vocabulary, build scripts, experiment kinds, ownership rules keyed to Unreal paths, ue-*/wiring-architect agents, WildEra phases or migration steps. WildEra code is evidence of lessons only: generalize a mechanism when it is useful to any project (and say what the project adapter supplies), else drop it. Moving WildEraV6 onto the new kit is that project's own task, not a kit phase: remove P14 "Adopt WildEra" from PHASES-DRAFT.md (keep at most a note that an existing kit 0.1.0 project can upgrade, if M1 still needs that). Sweep SYNTHESIS.md, DECISIONS.md and PHASES-DRAFT.md for WildEra/Unreal-specific content and generalize or remove it; list what you changed under a new section "## D-110 vanilla sweep" at the end of SYNTHESIS.md (item | before | after).
+
+Then update INGEST-CONFLICTS.md: BLOCKERS become 0 (each B-NN marked resolved with its decision), and DECISIONS.md: move the seven escalated items to the resolved table with the owner's answer, add D-110, update Counts.
+Your final reply is one line: `updated decisions <resolved>/<escalated> blockers <N> vanilla-sweep <K items>` and nothing else.
