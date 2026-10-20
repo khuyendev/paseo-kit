@@ -1,0 +1,11 @@
+Owner decision (2026-10-20): 15 phases is too fine for a codebase this size (each GSD phase pays a full discuss/research/plan/review/execute/verify cycle). Restructure ROADMAP.md into exactly 6 phases, with more plans per phase executed in waves:
+
+1. Foundation + tracer: repository skeleton, test harness, config, minimal install, paseo-client, `ph spawn`/`watch`/`result`, a minimal workflow run end to end (the tracer slice from PHASES-DRAFT is built first inside this phase).
+2. Full runtime: every `ph` command, the workflow engine, watchdog, worktrees, run tools.
+3. Agent tools + machine: full install/update/status/pull, machine check/apply/export, hooks, file tools.
+4. GSD core + project start: `.planning/` data layer and `gsd` verbs, upstream vendoring and generation, map-codebase, the harness adapter generator, new-project.
+5. GSD lifecycle: discuss, research, plan (with skeleton review and checker), execute, verify, forensics and the plain debugger, harness-evolve.
+6. UI: the `.planning/` panel and the swarm map.
+
+Keep the GSD roadmap grammar (Goal, Depends on, `**Requirements:**`, Success criteria 4-8 per phase, Plans: TBD); every v1 requirement in exactly one phase; dependency direction from SYNTHESIS respected (move a requirement to the phase its dependencies are in when needed and say so in a short note under the phase). Update the coverage table and STATE.md (6 phases, Phase 1 not started). Record this decision in ROADMAP.md as a one-line note ("owner 2026-10-20: 6 phases, coarse granularity"). Same rules as before.
+Your final reply is one line: `restructured ROADMAP.md 6 phases <placed>/<v1> requirements placed; STATE.md` and nothing else.

@@ -1,0 +1,25 @@
+You are the foundation coder (agent name: code-foundation). Ten coders will start in parallel right after you, each owning one module and coding against the contracts you write, so your interfaces must be complete, precise and stable.
+
+Your paths:
+- Repository root: package.json (type module, `test` script running `node --test` over tests/, no dependencies), kit.json (name paseo-kit, version 0.0.1, shipped units list placeholder that the install coder fills), .gitignore, kit.mjs (entry point only: dispatches `install|update|status|pull|adopt` to kit/install/index.mjs and `machine check|apply|export` to kit/machine/index.mjs; those modules are written by other coders: create each as a stub that exports `run(argv)` and exits 1 "not implemented").
+- ship/.agents/harness.defaults.json and ship/.agents/harness/config.mjs (M3, all CONF requirements: defaults + project overlay merge, closed validation, machine keys, provenance). The schema must already contain every key of every module listed in SYNTHESIS "Data formats" / "Kit and project configuration" and in the requirements (tiers, aliases, limits, workflow, watchdog, context_guard, io_guard, read_limits, the `gsd` and `adapter` sections of D-77, machine keys with SendMessage denied only for circle-agent workers and Agent+Workflow for the main provider), with defaults, so the module coders do not need to change it.
+- ship/.agents/harness/platform.mjs, ship/.agents/harness/lib/ (shared helpers: one-line-per-item output, `failed <what>: <err>` lines, exit codes 0/1/2, UsageError, path helpers for Windows and POSIX, atomic write, JSON read with clear errors).
+- ship/.agents/harness/paseo-client/ (M4, all PCLI requirements: the only module that talks to the Paseo daemon, through the npm-installed Paseo CLI's own client as the old runtime did (see map runtime and the old daemon.mjs for how it is loaded), behind an interface that tests can replace).
+- ship/.agents/harness/ph.mjs (entry point: parses `ph <command>`, looks commands up in a registry that the ph, workflow, gsd-core and other coders fill from their own modules; registration contract defined by you; unknown command -> usage, exit 1).
+- tests/helpers/ and tests/fakes/: a fake Paseo daemon/client implementing the paseo-client interface in memory (agents, labels, turns, usage, archive, timeline events, structured output), a temp-project factory (creates a throwaway project dir with git), and output/exit assertions. Tests for your modules under tests/foundation/.
+- docs/INTERFACES.md: the contracts every other coder codes against: config API and the full key list with owners; paseo-client API; the ph command registry and handler signature; shared lib helpers; the repository layout with the owner of every directory (copy the ownership table below); the fakes and helpers; the integration request file. Write it first (before the code), then keep it in sync with what you build.
+
+Ownership table for the parallel coders (put it in INTERFACES.md):
+- code-install: kit/install/, ship/blocks/, ship/templates/, tests/install/ (M1 INST)
+- code-machine: kit/machine/, paseo/providers.json, user/skills/kit-init/, tests/machine/ (M2 MACH)
+- code-ph: ship/.agents/harness/runtime/, ship/.claude/skills/ph/, tests/ph/ (M5 PHCL)
+- code-workflow: ship/.agents/harness/workflow/, tests/workflow/ (M6 FLOW)
+- code-files: ship/.agents/harness/files/, ship/.claude/plugins/, tests/files/ (M7 FTOL)
+- code-hooks: ship/.claude/hooks/, tests/hooks/ (M8 HOOK)
+- code-gsd-core: ship/.agents/harness/gsd/, ship/.agents/gsd/upstream/, ship/.agents/agents/ (generated GSD roles), LICENSES/gsd-core-MIT.txt, tests/gsd-core/ (M9 GSDC)
+- code-gsd-flows: ship/.claude/skills/gsd-*/, ship/.agents/workflows/, tests/gsd-flows/ (M10 GSDF)
+- code-harness: ship/.claude/skills/harness/, ship/.claude/skills/harness-evolve/, ship/.agents/harness/adapter/, LICENSES/harness-Apache-2.0.txt, tests/harness/ (M11 HARN, M12 ADPT)
+- code-ui: plugins/, tests/ui/ (M13 PANL)
+- integrator (after all): README.md, CHANGELOG.md, NOTICE.md, docs/ other than INTERFACES.md, cross-module fixes.
+
+Final reply: `done code-foundation <implemented>/<v1> requirements, tests <pass>/<total>`.

@@ -1,0 +1,13 @@
+A reviewer checked your specification. Review file: {REVIEW}. Read it in full, then revise your spec {SPEC} in place.
+
+For every finding:
+- Verify it against the inputs (maps, SYNTHESIS, DECISIONS, the cited lines) yourself before changing anything; the reviewer can be wrong. Decisions D-109, D-110 (vanilla) and D-111 (harness and GSD skill text unchanged; only the adapter layer changes) win over any finding that contradicts them.
+- If it holds: fix the spec. New requirements get the next free number of their prefix; never renumber existing IDs; a requirement that should go is kept with "Scope: withdrawn — <reason>". Keep the Traceability table and Counts correct.
+- If it does not hold: leave the spec as is and say why.
+
+Then append a section at the end of the spec:
+## Revision log r1
+Table: finding ID | accepted / rejected | what changed (requirement IDs) or why rejected.
+
+The earlier rules still apply: change no file except your spec, write in parts with each tool call under about 300 lines, never message the main/leader session.
+Your final reply is one line: `revised <path> <a> accepted <r> rejected <n> new requirements` and nothing else.
