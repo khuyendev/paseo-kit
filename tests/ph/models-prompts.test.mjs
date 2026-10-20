@@ -178,3 +178,25 @@ test("PHCL-14 list-price cost from the project table", () => {
   walk(SHIP_DIR);
   assert.ok(!shipped.includes("model-prices.json"));
 });
+
+test("PHCL-26 flow-list include: quoted items keep spaces, ' # ', commas and apostrophes; a trailing comment is dropped", () => {
+  const p = makeTempProject({
+    git: false,
+    files: {
+      ".agents/agents/lists.md": "---\ninclude: [\"docs/a # b.md\", \"docs/c,d.md\", 'docs/it''s.md', docs/plain.md] # real comment\ntools: [Read, \"Grep\"]\n---\nBody.\n",
+      "docs/a # b.md": "A\n",
+      "docs/c,d.md": "CD\n",
+      "docs/it's.md": "IT\n",
+      "docs/plain.md": "P\n",
+    },
+  });
+  const def = loadAgentDef(p.root, "lists");
+  assert.deepEqual(def.includes, [
+    { rel: "docs/a # b.md", text: "A" },
+    { rel: "docs/c,d.md", text: "CD" },
+    { rel: "docs/it's.md", text: "IT" },
+    { rel: "docs/plain.md", text: "P" },
+  ]);
+  assert.equal(def.tools, "Read, Grep");
+  assert.deepEqual(splitFrontMatter("---\nx: [a, \"b\\\"c\", d] # z\ny: [] \n---\n").meta, { x: ["a", 'b"c', "d"], y: [] });
+});

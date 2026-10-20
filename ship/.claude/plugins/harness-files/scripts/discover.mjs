@@ -21,7 +21,16 @@ export const TRUSTED_FIXED = [
 
 const readText = (file) => fs.readFileSync(file, "utf8").replace(/^﻿/, ""); // BOM-aware, as lib/io.mjs readText (CONF-02)
 const sha256 = (text) => crypto.createHash("sha256").update(text).digest("hex");
-const textDigest = (file) => sha256(fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n"));
+const textDigest = (file) => {
+  const bytes = fs.readFileSync(file);
+  const normalized = Buffer.allocUnsafe(bytes.length);
+  let length = 0;
+  for (let i = 0; i < bytes.length; i++) {
+    if (bytes[i] === 13 && bytes[i + 1] === 10) continue;
+    normalized[length++] = bytes[i];
+  }
+  return sha256(normalized.subarray(0, length));
+};
 const isTest = (name) => /\.test\.|\.spec\.|^test_/.test(name);
 
 export function trustedSet(root) {

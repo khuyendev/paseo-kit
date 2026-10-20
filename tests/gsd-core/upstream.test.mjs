@@ -232,7 +232,8 @@ test("GSDC-53 inventory covers every installed method file; generated workflow e
   for (const e of inv.entries) assert.ok(fs.existsSync(path.join(KIT, "ship", e.installed)), `${e.installed} exists`);
   const copy = makeTempDir("paseo kit ship ");
   fs.cpSync(path.join(KIT, "ship/.agents"), path.join(copy, ".agents"), { recursive: true });
-  const workflows = inv.entries.filter((e) => e.kind === "skill-workflow").map((e) => e.installed);
+  fs.cpSync(path.join(KIT, "ship/.claude/skills"), path.join(copy, ".claude/skills"), { recursive: true });
+  const workflows = inv.entries.filter((e) => e.kind === "skill-workflow" && e.source !== "kit-authored").map((e) => e.installed);
   for (const rel of workflows) fs.appendFileSync(path.join(copy, rel), "one altered line\n");
   const altered = await gsd(KIT, ["upstream", "check", "--target", copy]);
   for (const rel of workflows) assert.ok(altered.json.problems.includes(`generated file stale or hand-edited: ${rel}`), rel);

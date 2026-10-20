@@ -1,7 +1,7 @@
 // Plan checks: structure (GSDC-18), verify-command probe (GSDC-19), failure directions (GSDC-20), decision and
 // requirement coverage (GSDC-21, GSDC-22) and disjoint write sets (GSDC-23). Adapter data only through hooks.
 import { done, mentions, readIf, unavailable } from "./common.mjs";
-import { HookError, builtinResolve, callHook, classify, covers, filesUnder, overlaps, ownsPath, sharedPaths, targetsOf } from "./adapter-hooks.mjs";
+import { HookError, builtinResolve, callHook, classify, covers, filesUnder, overlaps, ownsPath, pathKey, physicalPath, sharedPaths, targetsOf } from "./adapter-hooks.mjs";
 import { phaseFile, readPlans } from "./planning.mjs";
 import { loadRoadmap, roadmapPhase } from "./roadmap.mjs";
 
@@ -32,7 +32,7 @@ export async function planStructure(g, phase, plan) {
   const warnings = [];
   if (plan.error) errors.push(`Frontmatter parse error: ${plan.error}`);
   const fm = plan.fm;
-  if (!plan.error) for (const f of REQUIRED_PLAN_FIELDS) if (!(f in fm)) errors.push(`Missing required frontmatter field: ${f}`);
+  if (!plan.error) for (const f of REQUIRED_PLAN_FIELDS) if (!Object.hasOwn(fm, f)) errors.push(`Missing required frontmatter field: ${f}`);
   errors.push(...truncation(plan.text, plan.body));
   const tasks = plan.tasks;
   if (!tasks.length) errors.push("No <task> elements found");
@@ -226,6 +226,10 @@ export async function ownershipProblems(g, plans) {
       else paths.push(p);
     }
     owned.set(plan.id, paths);
+    for (const p of [...plan.filesModified, ...paths.filter((x) => !/[*?[{]/.test(x))]) {
+      const problem = identityProblem(g.codeRoot, p);
+      if (problem) add(plan, problem.kind, `${plan.id}: ${p} ${problem.message}`, { file: p });
+    }
     for (const f of plan.filesModified) {
       candidates.add(f);
       if (paths.length && !paths.some((p) => covers(p, f))) add(plan, "outside-owns", `${plan.id}: files_modified outside owns: ${f}`, { file: f });
@@ -236,14 +240,26 @@ export async function ownershipProblems(g, plans) {
     }
   }
   const shared = await sharedPaths(g, [...candidates]);
+  const sharedKeys = new Set([...shared].map(pathKey));
   for (const plan of plans) {
-    for (const f of plan.filesModified) if (shared.has(f)) add(plan, "shared-file", `${plan.id}: files_modified holds shared file ${f} (declare it in <shared_changes>)`, { file: f });
+    for (const f of plan.filesModified) if (sharedKeys.has(pathKey(f))) add(plan, "shared-file", `${plan.id}: files_modified holds shared file ${f} (declare it in <shared_changes>)`, { file: f });
     for (const p of owned.get(plan.id)) {
-      const hit = [...shared].find((s) => s === p || covers(p, s));
+      const hit = [...shared].find((s) => covers(p, s));
       if (hit) add(plan, "owns-shared", `${plan.id}: owns ${p} covers shared path ${hit}`, { file: hit });
     }
   }
   return { problems, owned };
+}
+
+// A path that leaves the code root, lexically or through a link/junction, or reaches its file under another name
+// (a link alias) cannot be compared for disjointness (GSDC-23, INV-52).
+function identityProblem(codeRoot, p) {
+  const key = pathKey(p);
+  if (key === null) return { kind: "invalid-path", message: "is absolute or leaves the code root" };
+  const phys = physicalPath(codeRoot, p);
+  if (phys === null) return { kind: "invalid-path", message: "resolves outside the code root through a link" };
+  if (pathKey(phys) !== key) return { kind: "aliased-path", message: `resolves through a link to ${phys}; name the physical path` };
+  return null;
 }
 
 // Same-wave overlap of owns or files_modified (also used by waves and outline check).
@@ -256,7 +272,8 @@ export function waveOverlaps(plans, ownedOf) {
       for (let j = i + 1; j < group.length; j++) {
         const a = group[i];
         const b = group[j];
-        const files = a.filesModified.filter((f) => b.filesModified.includes(f));
+        const keysB = new Set(b.filesModified.map(pathKey));
+        const files = a.filesModified.filter((f) => pathKey(f) !== null && keysB.has(pathKey(f)));
         if (files.length) problems.push({ kind: "overlapping-files", wave, plans: [a.id, b.id], message: `wave ${wave}: ${a.id} and ${b.id} both modify ${files.join(", ")}` });
         const oa = ownedOf(a);
         const ob = ownedOf(b);

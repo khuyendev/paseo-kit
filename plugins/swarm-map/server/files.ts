@@ -30,15 +30,40 @@ function keyOf(path: string): string {
   return path.replace(/\\/g, "/").toLowerCase();
 }
 
+function normalize(path: string): string {
+  const [head, ...rest] = path.split("/");
+  const out: string[] = [];
+  for (const seg of rest) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") out.pop();
+    else out.push(seg);
+  }
+  return `${head}/${out.join("/")}`;
+}
+
+// The file a touch names (PANL-37, CR-PNL-07): absolute paths as they are, Git-Bash `/c/x` as `C:/x` when the cwd
+// is a Windows path, a relative path against the agent's cwd; null for a relative path without a cwd, which the
+// ledger then keeps per agent and never merges with another agent's file.
+export function resolveTouchPath(file: string, cwd: string | null): string | null {
+  const f = file.replace(/\\/g, "/");
+  const bash = /^\/([A-Za-z])(\/|$)/.exec(f);
+  if (bash && cwd !== null && /^[A-Za-z]:/.test(cwd)) return normalize(`${bash[1].toUpperCase()}:/${f.slice(3)}`);
+  if (/^[A-Za-z]:\//.test(f) || f.startsWith("/")) return normalize(f);
+  if (!cwd) return null;
+  return normalize(`${cwd.replace(/\\/g, "/").replace(/\/+$/, "")}/${f}`);
+}
+
 const isWrite = (op: FileOp) => op === "edit" || op === "write";
+const recentWriters = (e: Entry, nowMs: number) => [...e.writers.values()].filter((at) => nowMs - Date.parse(at) <= HANDOFF_WINDOW_MS).length;
 
 export class FileLedger {
   private readonly entries = new Map<string, Entry>();
 
   // Records one touch; returns the handoff it causes. A repeated touch is a no-op, and a touch not newer than the
-  // holder's never moves the holder (timelines of different agents are read in any order).
-  record(path: string, touch: FileTouch): Handoff | null {
-    const key = keyOf(path);
+  // holder's never moves the holder (timelines of different agents are read in any order). `scope` (an agent id)
+  // keeps a path that could not be resolved apart from every other agent's.
+  record(path: string, touch: FileTouch, scope: string | null = null): Handoff | null {
+    const key = scope === null ? keyOf(path) : `${scope}\0${keyOf(path)}`;
     const e = this.entries.get(key);
     if (!e) {
       const writers = new Map<string, string>(isWrite(touch.op) ? [[touch.agentId, touch.at]] : []);
@@ -56,7 +81,7 @@ export class FileLedger {
 
   writersOf(path: string, nowMs: number): number {
     const e = this.entries.get(keyOf(path));
-    return e ? [...e.writers.values()].filter((at) => nowMs - Date.parse(at) <= HANDOFF_WINDOW_MS).length : 0;
+    return e ? recentWriters(e, nowMs) : 0;
   }
 
   // Holds of drawn agents touched within FILE_HOLD_MS, newest first: HOLDS_PER_AGENT per agent plus every file
@@ -79,7 +104,7 @@ export class FileLedger {
         at: e.last.at,
         prevAgentId: prev?.agentId ?? null,
         prevOp: prev?.op ?? null,
-        writers: this.writersOf(e.path, nowMs),
+        writers: recentWriters(e, nowMs),
       });
     }
     out.sort((a, b) => b.at.localeCompare(a.at));

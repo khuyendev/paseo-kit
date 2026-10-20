@@ -130,3 +130,44 @@ test("PANL-10 the smoke script checks every SDK call the plugins use, read-only"
   for (const event of ["agent.created", "agent.archived", "agent.turn_started", "agent.turn_ended", "agent.permission_requested", "agent.permission_resolved"]) assert.ok(smoke.includes(`"${event}"`), event);
   assert.doesNotMatch(smoke.replace(/^\s*\/\/.*$/gm, ""), /\.(send|run|archive|create|respondToPermission|setTitle|cancel)\s*\(/);
 });
+
+// The deployed loading path (CR-PNL-01): Paseo compiles each plugin from its own folder into one CommonJS bundle
+// and evaluates the string, so `import.meta`, imports from outside the folder and run-time imports of kit files
+// all break there while plain Node imports work. Uses the installed Paseo compiler offline (no daemon).
+async function hostCompiler() {
+  const { findCliDir } = await import(pathToFileURL(path.join(KIT_DIR, "ship", ".agents", "harness", "paseo-client", "locate.mjs")).href);
+  let cli;
+  try {
+    cli = findCliDir(process.env);
+  } catch {
+    return null;
+  }
+  const dir = path.join(cli, "node_modules", "@getpaseo", "server", "dist", "server", "server", "plugins");
+  if (!fs.existsSync(path.join(dir, "compiler.js"))) return null;
+  const version = JSON.parse(fs.readFileSync(path.join(cli, "package.json"), "utf8")).version;
+  const { compilePlugin } = await import(pathToFileURL(path.join(dir, "compiler.js")).href);
+  const { evaluateBundle } = await import(pathToFileURL(path.join(dir, "bundle-evaluator.js")).href);
+  return { version, compilePlugin, evaluateBundle };
+}
+
+test("PANL-02 both plugins compile and load through the Paseo host bundler and register their handlers", { timeout: 120_000 }, async (t) => {
+  const host = await hostCompiler();
+  if (!host) return t.skip("the npm-installed Paseo CLI is not present");
+  if (host.version !== TESTED_PASEO_CLI) return t.skip(`installed Paseo ${host.version} is not the tested ${TESTED_PASEO_CLI}`);
+  const { fakeServer } = await import("./fake-paseo.mjs");
+  const want = { "planning-panel": ["planning.board", "planning.file", "planning.index", "planning.plan"], "swarm-map": ["swarm.agent-detail", "swarm.snapshot"] };
+  for (const id of IDS) {
+    const root = path.join(PLUGINS, id);
+    const bundles = await host.compilePlugin({ client: path.join(root, "index.client.tsx"), server: path.join(root, "index.server.ts") });
+    assert.ok(bundles.clientBundle, `${id}: client bundle`);
+    const server = fakeServer();
+    const dispose = host.evaluateBundle(bundles.serverBundle)(server);
+    assert.deepEqual([...server.handlers.keys()].sort(), want[id], id);
+    dispose();
+  }
+});
+
+test("PANL-14 the swarm map's frontmatter parser is the planning panel's, byte for byte", () => {
+  const read = (id) => fs.readFileSync(path.join(PLUGINS, id, "server", "frontmatter.ts"), "utf8").replace(/\r\n/g, "\n");
+  assert.equal(read("swarm-map"), read("planning-panel"), "copy plugins/planning-panel/server/frontmatter.ts to plugins/swarm-map/server/");
+});

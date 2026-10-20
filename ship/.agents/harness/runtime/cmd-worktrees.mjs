@@ -5,6 +5,7 @@ import { safeName } from "../lib/paths.mjs";
 import { RUNS_DIR } from "./cmd-agents.mjs";
 import { classify, listHarnessWorktrees, ownerOf, removeWorktree, repoTop, runGit } from "./worktrees.mjs";
 
+
 // Spawned agents named in worktree names, mapped to whether a non-archived agent of that name still exists.
 async function agentLiveness(ctx, names, line) {
   const live = new Map();
@@ -15,7 +16,7 @@ async function agentLiveness(ctx, names, line) {
     // Every live agent of the daemon, not only the caller's pool: another orchestrator's worker may own the worktree.
     agents = await session.findAgents();
   } catch (e) {
-    line(`note daemon not reachable (${errText(e)}): worktrees of spawned agents are kept`);
+    line(`note daemon agent list unavailable (${errText(e)}): worktrees of spawned agents are kept`);
     return live;
   }
   for (const name of names) live.set(name, agents.some((a) => !a.archivedAt && safeName(a.labels?.["harness.name"] ?? "") === name));

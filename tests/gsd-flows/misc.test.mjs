@@ -103,8 +103,7 @@ test("GSDF-64 a debug invocation renders goal, scope and budget; a second sessio
   const p = r.calls[0].prompt;
   for (const s of ["<runtime_adapter>", "Goal: find_and_fix", "Edit scope (owns): [\"Path:src/login/\"]", "Budget left: 3 turns, 120 minutes."]) assert.ok(p.includes(s), s);
   assert.equal(r.calls[0].opts.agentType, "gsd-debugger");
-  w.write("_workspace/_runs/wf_other/run.json", JSON.stringify({ status: "running" }));
-  w.write("_workspace/locks/debug.lock", JSON.stringify({ runId: "wf_other" }));
+  w.write("_workspace/locks/debug.lock", JSON.stringify({ runId: "wf_other", pid: process.pid }));
   const second = await debug(w, { checkpointAnswer: { id: "c1", response: "a" } }, () => ({ status: "continue" }));
   assert.deepEqual([second.result.status, second.calls.length], ["refused", 0]);
 });

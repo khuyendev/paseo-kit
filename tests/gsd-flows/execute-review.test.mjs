@@ -61,7 +61,7 @@ test("GSDF-48 normal findings never block: deferred.md gets them and the review 
 
 test("GSDF-49 batch event order with and without batch_review; the wave results say verify skipped; a red tracer starts no later wave", async () => {
   const order = async (batchReview) => {
-    const w = makeExecWorld({ overlay: { gsd: { execution_mode: "batch", batch_review: batchReview }, adapter: { commands: { build: null, test: FLAG_TEST, build_timeout_s: 30, test_timeout_s: 30, gates: [], verify: {} } } } });
+    const w = makeExecWorld({ overlay: { gsd: { execution_mode: "batch", batch_review: batchReview }, adapter: { commands: { build: [NODE, "-e", "process.exit(0)"], test: FLAG_TEST, build_timeout_s: 30, test_timeout_s: 30, gates: [], verify: {} } } } });
     const r = await exec(w, {}, { "exec-01-02": async (p, o, n, calls) => { w.write("fail.flag", "src/01-02/impl.js"); } });
     return r;
   };
@@ -89,7 +89,7 @@ test("GSDF-50 the fixer runtime block follows fixer_verifies_itself; unresolved 
     assert.equal(fx.opts.timeoutS, (60 + 5) * 60);
     assert.equal(fx.opts.role, "fixer");
   }
-  assert.match(prompts[true], /run the build \(null\) and the tests \(.*\) yourself, at most 3 times and within 60 minutes; stop early when two consecutive attempts do not reduce the failure count/);
+  assert.match(prompts[true], /run the build \(\[.*\]\) and the tests \(.*\) yourself, at most 3 times and within 60 minutes; stop early when two consecutive attempts do not reduce the failure count/);
   assert.match(prompts[false], /Do not run the build or the tests: the orchestrator's gate verifies/);
   const w = makeExecWorld({ waves: [[task("01-01")]] });
   const un = await exec(w, {}, { "review-": () => ({ findings: [finding("F1")] }), "fix-review": () => ({ status: "unresolved", attempts: 3, remaining_failures: 2, evidence: "build red" }) });
@@ -99,14 +99,14 @@ test("GSDF-50 the fixer runtime block follows fixer_verifies_itself; unresolved 
 });
 
 test("GSDF-51 a failure in one plan's file goes to that plan's executor session only; unplaced ones to one integration fixer", async () => {
-  const w = makeExecWorld({ overlay: { adapter: { commands: { build: null, test: FLAG_TEST, build_timeout_s: 30, test_timeout_s: 30, gates: [], verify: {} } } } });
+  const w = makeExecWorld({ overlay: { adapter: { commands: { build: [NODE, "-e", "process.exit(0)"], test: FLAG_TEST, build_timeout_s: 30, test_timeout_s: 30, gates: [], verify: {} } } } });
   w.write("lib.txt", "l\n");
   w.git("add", "-A"); w.git("commit", "-qm", "lib");
   const r = await exec(w, {}, { "exec-01-02": () => { w.write("fail.flag", "src/01-01/impl.js"); } });
   const fixes = labels(r).filter((l) => l.startsWith("fix-01") || l.startsWith("integration-fix"));
   assert.deepEqual(fixes, ["fix-01-01-1"]);
   assert.equal(r.calls.find((c) => c.opts.label === "fix-01-01-1").opts.session, "executor:01-01");
-  const u = makeExecWorld({ overlay: { adapter: { commands: { build: null, test: FLAG_TEST, build_timeout_s: 30, test_timeout_s: 30, gates: [], verify: {} } } } });
+  const u = makeExecWorld({ overlay: { adapter: { commands: { build: [NODE, "-e", "process.exit(0)"], test: FLAG_TEST, build_timeout_s: 30, test_timeout_s: 30, gates: [], verify: {} } } } });
   u.write("lib.txt", "l\n"); u.git("add", "-A"); u.git("commit", "-qm", "lib");
   const r2 = await exec(u, {}, { "exec-01-02": () => { u.write("fail.flag", "lib.txt"); } });
   const fx = r2.calls.find((c) => c.opts.label === "integration-fix-1");
@@ -114,7 +114,7 @@ test("GSDF-51 a failure in one plan's file goes to that plan's executor session 
 });
 
 test("GSDF-52 a cross-plan request reaches the owner plan's next fix prompt; an unowned path becomes a shared change", async () => {
-  const w = makeExecWorld({ overlay: { adapter: { commands: { build: null, test: FLAG_TEST, build_timeout_s: 30, test_timeout_s: 30, gates: [], verify: {} } } } });
+  const w = makeExecWorld({ overlay: { adapter: { commands: { build: [NODE, "-e", "process.exit(0)"], test: FLAG_TEST, build_timeout_s: 30, test_timeout_s: 30, gates: [], verify: {} } } } });
   const run = executor(w);
   const r = await exec(w, {}, {
     "exec-01-01": async (p, o, n, calls) => { const v = await run(p, o, n, calls); w.write("fail.flag", "src/01-02/impl.js"); return { ...v, requests: [{ path: "src/01-02/api.js", change: "export x", reason: "needed" }, { path: "config/app.json", change: "add key", reason: "shared" }] }; },
@@ -153,6 +153,9 @@ test("GSDF-54 branching phase starts from origin/<default>, not HEAD; a failed f
   assert.equal(w.git("merge-base", "--is-ancestor", "main", "HEAD").status, 1);
   assert.equal(w.git("merge-base", "--is-ancestor", originHead, "HEAD").status, 0);
   assert.ok(r.logs.includes("log branch gsd/phase-01-core from origin/main"));
+  assert.equal(r.result.status, "executed", JSON.stringify(r.result));
+  assert.ok(labels(r).includes("exec-01-01"));
+  assert.equal(JSON.parse(w.read(`${PHASE_DIR}/commits.json`)).length, 1);
   const f = makeExecWorld({ waves: [[task("01-01")]], overlay: { gsd: { branching: "phase" } } });
   f.git("remote", "add", "origin", path.join(makeTempDir(), "missing.git"));
   const bad = await exec(f);

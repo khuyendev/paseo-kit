@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { test } from "node:test";
 import { withAlpha } from "../../plugins/planning-panel/client/color.ts";
 import { formatClock, formatRelative, formatShortDate } from "../../plugins/planning-panel/client/format.ts";
 import { parseInline, parseMarkdown, resolveTarget } from "../../plugins/planning-panel/client/markdown.ts";
-import { responseMatches, splitView, trailReducer } from "../../plugins/planning-panel/client/nav.ts";
+import { detailView, phasesShown, responseMatches, splitView, trailReducer } from "../../plugins/planning-panel/client/nav.ts";
 import { chosenWorkspace, hostMemory, rememberSelection, searchProjects, showPicker, toProjects } from "../../plugins/planning-panel/client/projects.ts";
 import { register } from "../../plugins/planning-panel/client/register.ts";
 import { computeStats } from "../../plugins/planning-panel/client/stats.ts";
 import { ancestors, buildTree, filterFiles } from "../../plugins/planning-panel/client/tree.ts";
+import { KIT_DIR } from "../helpers/temp.mjs";
+
+const PANEL = path.join(KIT_DIR, "plugins", "planning-panel");
 
 test("PANL-02 planning client registers a sidebar surface, a workspace panel and Open Planning", () => {
   const calls = [];
@@ -87,6 +92,21 @@ test("PANL-19 computeStats: phases done/open, blocked plans, null percentages un
   assert.deepEqual([t.phases.pct, t.plans.pct], [null, null]);
 });
 
+test("PANL-19 an unparseable SUMMARY is not done and withholds the plan percentage (CR-PNL-06)", () => {
+  const now = Date.parse("2026-10-20T12:00:00");
+  const file = (path, kind, planId, extra = {}) => ({ path, kind, planId, mtimeMs: now, title: path, phase: null, wave: 1, dependsOn: [], requirements: [], status: null, error: null, ...extra });
+  const files = [
+    file("phases/01-x/01-01-PLAN.md", "plan", "01-01"),
+    file("phases/01-x/01-01-SUMMARY.md", "summary", "01-01", { error: { message: "unterminated flow", line: 2 } }),
+    file("phases/01-x/01-02-PLAN.md", "plan", "01-02", { dependsOn: ["01-01"] }),
+    file("phases/01-x/superseded/01-02-SUMMARY.md", "summary", null, { status: "complete" }),
+  ];
+  const s = computeStats({ files, phases: [{ id: "01", dir: "phases/01-x", name: "x", status: "EXECUTED" }], scope: "complete" }, now);
+  assert.deepEqual(s.plans, { total: 2, done: 0, pct: null });
+  assert.deepEqual(s.summariesByStatus, [{ status: "(unparsed)", count: 1 }]);
+  assert.deepEqual(s.blocked, [{ planId: "01-02", waitingOn: ["01-01"] }]);
+});
+
 test("PANL-20 a checkout and a worktree make one project with the checkout as default; selection survives remounts", () => {
   const ws = (id, kind, extra = {}) => ({ id, projectId: "p1", projectDisplayName: "Proj", projectRootPath: "C:/src/proj", name: id, workspaceKind: kind, ...extra });
   const projects = toProjects([ws("wt", "worktree"), ws("main", "local_checkout"), ws("gone", "checkout", { archivingAt: "x" })]);
@@ -146,4 +166,31 @@ test("PANL-23 planning format helpers", () => {
   assert.match(d, /5/);
   assert.doesNotMatch(d, /4/, "date-only strings are local dates");
   assert.match(formatClock(now), /^\d\d:\d\d:\d\d$/);
+});
+
+test("PANL-16 detail panes: failure, unreachable with no data, stale body after a failed refetch, loading (CR-PNL-08)", () => {
+  const ok = { ok: true };
+  assert.deepEqual(detailView({ data: undefined, isError: false, isPlaceholderData: false }, false), { state: "loading" });
+  assert.deepEqual(detailView({ data: undefined, isError: true, isPlaceholderData: false }, false), { state: "unreachable" }, "an initial rejection never loads forever");
+  assert.deepEqual(detailView({ data: ok, isError: true, isPlaceholderData: false }, true), { state: "ready", stale: true }, "a refetch rejection marks the shown body");
+  assert.deepEqual(detailView({ data: ok, isError: false, isPlaceholderData: false }, true), { state: "ready", stale: false }, "reconnected");
+  assert.deepEqual(detailView({ data: { ok: false }, isError: false, isPlaceholderData: false }, false), { state: "failure" });
+  assert.deepEqual(detailView({ data: ok, isError: true, isPlaceholderData: true }, true), { state: "unreachable" }, "another item's cached body is never shown");
+});
+
+test("PANL-17 open details poll and Refresh rereads them (CR-PNL-08)", () => {
+  const data = fs.readFileSync(path.join(PANEL, "client", "data.ts"), "utf8");
+  for (const hook of ["usePlan", "useFile"]) assert.match(data, new RegExp(`export function ${hook}\\([^)]*\\) \\{\\n[^\\n]*\\n[^\\n]*refetchInterval: LIST_POLL_MS`), hook);
+  const panel = fs.readFileSync(path.join(PANEL, "client", "panel.tsx"), "utf8");
+  assert.match(panel, /\["planning-plan", "planning-file"\]\.map\(\(k\) => queryClient\.refetchQueries/);
+});
+
+test("PANL-21 a board card shows its phase's plans, never sends a folder to the file reader (CR-PNL-09)", () => {
+  const phases = [{ id: "1" }, { id: "2" }];
+  assert.deepEqual(phasesShown(phases, "2"), [{ id: "2" }]);
+  assert.deepEqual(phasesShown(phases, null), phases);
+  assert.deepEqual(phasesShown(phases, "9"), phases, "a vanished phase shows all");
+  const views = fs.readFileSync(path.join(PANEL, "client", "views.tsx"), "utf8");
+  assert.doesNotMatch(views, /kind: "file", path: `?\$?\{?phase\.dir/);
+  assert.match(views, /onPress=\{\(\) => onShowPhase\(phase\.id\)\}/);
 });

@@ -26,13 +26,17 @@ function hostOf(value) {
   }
 }
 
-// [{needle, placeholder}] longest first, so an overlapping shorter secret never splits a longer one.
+// [{needle, placeholder}] longest first, so an overlapping shorter secret never splits a longer one. The length
+// floor applies to values only: a secret URL's host is scrubbed and checked whatever its length (MACH-13).
 function needlesOf(secrets) {
   const needles = [];
+  const add = (needle, key) => {
+    if (!needles.some((n) => n.needle === needle)) needles.push({ needle, placeholder: `{{secret:${key}}}` });
+  };
   for (const { key, value } of secrets) {
-    for (const needle of [value, hostOf(value)]) {
-      if (needle && needle.length >= MIN_SCRUB_CHARS && !needles.some((n) => n.needle === needle)) needles.push({ needle, placeholder: `{{secret:${key}}}` });
-    }
+    if (value.length >= MIN_SCRUB_CHARS) add(value, key);
+    const host = hostOf(value);
+    if (host) add(host, key);
   }
   return needles.sort((a, b) => b.needle.length - a.needle.length);
 }
@@ -66,7 +70,7 @@ function exportProvider(p, { worker, cfg, ctx }) {
   return out;
 }
 
-// The structural leak check: every secret env field a placeholder, no long secret or secret host as a whole token.
+// The structural leak check: every secret env field a placeholder, no secret value of 8+ characters and no secret host as a whole token.
 function leaks(tpl, text, needles) {
   const fieldLeak = Object.values(tpl.providers).some((p) => secretFields(p).some(([, v]) => !isPlaceholder(v)));
   const escaped = (needle) => JSON.stringify(needle).slice(1, -1);

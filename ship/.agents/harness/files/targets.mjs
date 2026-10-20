@@ -43,6 +43,9 @@ export function canonicalPath(abs) {
   }
 }
 
+// The physical file of abs: two spellings through a junction or symlink are one file (CR-FIL-02).
+export const fileKey = (abs) => pathKey(canonicalPath(abs));
+
 export const isFile = (p) => {
   try {
     return fs.statSync(p).isFile();

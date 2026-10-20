@@ -649,6 +649,206 @@
       "source": "kit-authored",
       "transformations": [],
       "overlay": null
+    },
+    {
+      "installed": ".claude/skills/gsd-debug/SKILL.md",
+      "kind": "skill-workflow",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "kit skill wrapper"
+    },
+    {
+      "installed": ".claude/skills/gsd-discuss/SKILL.md",
+      "kind": "skill-workflow",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "kit skill wrapper"
+    },
+    {
+      "installed": ".claude/skills/gsd-execute/SKILL.md",
+      "kind": "skill-workflow",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "kit skill wrapper"
+    },
+    {
+      "installed": ".claude/skills/gsd-forensics/SKILL.md",
+      "kind": "skill-workflow",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "kit skill wrapper"
+    },
+    {
+      "installed": ".claude/skills/gsd-map-codebase/SKILL.md",
+      "kind": "skill-workflow",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "kit skill wrapper"
+    },
+    {
+      "installed": ".claude/skills/gsd-new-project/SKILL.md",
+      "kind": "skill-workflow",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "kit skill wrapper"
+    },
+    {
+      "installed": ".claude/skills/gsd-pause/SKILL.md",
+      "kind": "skill-workflow",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "kit skill wrapper"
+    },
+    {
+      "installed": ".claude/skills/gsd-plan/SKILL.md",
+      "kind": "skill-workflow",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "kit skill wrapper"
+    },
+    {
+      "installed": ".claude/skills/gsd-progress/SKILL.md",
+      "kind": "skill-workflow",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "kit skill wrapper"
+    },
+    {
+      "installed": ".claude/skills/gsd-quick/SKILL.md",
+      "kind": "skill-workflow",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "kit skill wrapper"
+    },
+    {
+      "installed": ".claude/skills/gsd-research/SKILL.md",
+      "kind": "skill-workflow",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "kit skill wrapper"
+    },
+    {
+      "installed": ".claude/skills/gsd-undo/SKILL.md",
+      "kind": "skill-workflow",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "kit skill wrapper"
+    },
+    {
+      "installed": ".claude/skills/gsd-verify/SKILL.md",
+      "kind": "skill-workflow",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "kit skill wrapper"
+    },
+    {
+      "installed": ".agents/workflows/gsd-debug.js",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "workflow script (kit plumbing)"
+    },
+    {
+      "installed": ".agents/workflows/gsd-execute.js",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "workflow script (kit plumbing)"
+    },
+    {
+      "installed": ".agents/workflows/gsd-map-codebase.js",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "workflow script (kit plumbing)"
+    },
+    {
+      "installed": ".agents/workflows/gsd-new-project.js",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "workflow script (kit plumbing)"
+    },
+    {
+      "installed": ".agents/workflows/gsd-plan-review.js",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "workflow script (kit plumbing)"
+    },
+    {
+      "installed": ".agents/workflows/gsd-plan.js",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "workflow script (kit plumbing)"
+    },
+    {
+      "installed": ".agents/workflows/gsd-quick.js",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "workflow script (kit plumbing)"
+    },
+    {
+      "installed": ".agents/workflows/gsd-research.js",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "workflow script (kit plumbing)"
+    },
+    {
+      "installed": ".agents/workflows/gsd-verify.js",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "workflow script (kit plumbing)"
+    },
+    {
+      "installed": ".agents/workflows/gsd-overlay.md",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "workflow overlay (kit plumbing)"
+    },
+    {
+      "installed": ".agents/workflows/lib/",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "workflow script helpers (kit plumbing)"
+    },
+    {
+      "installed": ".agents/workflows/lenses/",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "review lenses (kit plumbing)"
     }
   ],
   "extra_verbs": {}

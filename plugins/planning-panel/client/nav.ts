@@ -47,3 +47,22 @@ export function responseMatches(
 export function liveText(failed: boolean, updatedAtMs: number, clock: (ms: number) => string): string {
   return failed ? "Reconnecting" : `Live · ${clock(updatedAtMs)}`;
 }
+
+// What a detail pane shows (PANL-16, PANL-17, CR-PNL-08): the body only for a matching ok response (stale when the
+// latest refetch failed, so cached text is marked), a typed failure, an unreachable daemon with retry, or loading.
+export type DetailView = { state: "ready"; stale: boolean } | { state: "failure" } | { state: "unreachable" } | { state: "loading" };
+
+export function detailView(q: { data: { ok: boolean } | undefined; isError: boolean; isPlaceholderData: boolean }, matches: boolean): DetailView {
+  const d = q.data;
+  if (d && !q.isPlaceholderData) {
+    if (!d.ok) return { state: "failure" };
+    if (matches) return { state: "ready", stale: q.isError };
+  }
+  return q.isError ? { state: "unreachable" } : { state: "loading" };
+}
+
+// The Phases section, all phases or the one a board card opened (CR-PNL-09: a card never opens its folder as a file).
+export function phasesShown<P extends { id: string }>(phases: readonly P[], focus: string | null): P[] {
+  const one = focus === null ? [] : phases.filter((p) => p.id === focus);
+  return one.length ? one : [...phases];
+}

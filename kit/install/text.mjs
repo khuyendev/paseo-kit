@@ -4,6 +4,8 @@ export const START_PREFIX = "<!-- PASEO-HARNESS-KIT START";
 export const START_LINE = "<!-- PASEO-HARNESS-KIT START: kit-owned; project text belongs outside these markers -->";
 export const END_LINE = "<!-- PASEO-HARNESS-KIT END -->";
 export const GITIGNORE_START = "# >>> paseo-harness-kit: generated paths (edit outside this block)";
+// Recognized by this stable prefix whatever the explanation after it, so older kits' blocks are replaced (CR-INS-03).
+export const GITIGNORE_START_PREFIX = "# >>> paseo-harness-kit";
 export const GITIGNORE_END = "# <<< paseo-harness-kit";
 export const GITIGNORE_PATHS = ["/_workspace/", "/.claude/worktrees/"];
 export const IMPORT_LINE = "@AGENTS.md";
@@ -50,11 +52,13 @@ export function dropBlock(text) {
   return block.status === "ok" ? text.slice(0, block.start) + text.slice(block.end) : null;
 }
 
+const isGitignoreStart = (line) => line === GITIGNORE_START_PREFIX || line.startsWith(`${GITIGNORE_START_PREFIX}:`) || line.startsWith(`${GITIGNORE_START_PREFIX} `);
+
 export function putGitignoreBlock(text) {
   const eol = text == null ? "\n" : eolOf(text);
   const blockLines = [GITIGNORE_START, ...GITIGNORE_PATHS, GITIGNORE_END];
   if (!text) return blockLines.join(eol) + eol;
-  const block = findBlock(text, (l) => l.trimEnd() === GITIGNORE_START, (l) => l.trimEnd() === GITIGNORE_END);
+  const block = findBlock(text, isGitignoreStart, (l) => l.trimEnd() === GITIGNORE_END);
   if (block.status === "malformed") throw new Error(`.gitignore has broken "${GITIGNORE_START}" markers; fix them by hand`);
   if (block.status === "ok") {
     const endText = /^[^\r\n]*/.exec(text.slice(block.bodyEnd))[0];

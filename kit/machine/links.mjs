@@ -71,7 +71,8 @@ export function linkLines(states) {
   });
 }
 
-// Rename the old link aside, create the new one, restore the old one when creation fails, then drop the aside copy.
+// Rename the old link aside and create the new one, restoring the old one when creation fails. The aside copy is
+// returned and kept until the record is committed (CR-MAC-03).
 function repoint(dest, target) {
   const aside = `${dest}.kit-old-${process.pid}`;
   fs.renameSync(dest, aside);
@@ -81,31 +82,51 @@ function repoint(dest, target) {
     fs.renameSync(aside, dest);
     throw e;
   }
-  fs.unlinkSync(aside);
+  return aside;
 }
 
-// mode "link" or "unlink"; returns {lines, failures}. The record is written only when it changed.
+// Undo one disk change of this run; returns a failure line naming the recovery path, or null.
+function undo({ kind, dest, aside, target }) {
+  try {
+    if (kind === "created") fs.unlinkSync(dest);
+    else if (kind === "repointed") {
+      fs.unlinkSync(dest);
+      fs.renameSync(aside, dest);
+    } else fs.symlinkSync(target, dest, LINK_TYPE);
+    return null;
+  } catch (e) {
+    if (kind === "created") return `failed undo ${dest}: ${errText(e)}; remove this kit-made link yourself`;
+    if (kind === "repointed") return `failed undo ${dest}: ${errText(e)}; the previous link is kept at ${aside}`;
+    return `failed undo ${dest}: ${errText(e)}; it linked to ${target}`;
+  }
+}
+
+// mode "link" or "unlink"; returns {lines, failures}. The record is written only when it changed; when that write
+// fails every disk change of this run is undone, so disk and record never disagree about a kit-made link (INV-03).
 export function applyLinks(states, { record, recordFile, target, mode }) {
   const lines = [];
+  const done = [];
   let failures = 0;
   let links = record.links.slice();
   const forget = (dest) => (links = links.filter((l) => !samePath(l.dest, dest)));
-  for (const { dest, state } of states) {
+  for (const { dest, state, link } of states) {
     try {
       if (state === "owner") lines.push(`note ${dest}: owner entry kept`);
       else if (mode === "unlink") {
         if (state === "missing") continue;
         fs.unlinkSync(dest);
+        done.push({ kind: "removed", dest, target: link });
         forget(dest);
         lines.push(`link: removed ${dest}`);
       } else if (state === "missing") {
         fs.mkdirSync(path.dirname(dest), { recursive: true });
         fs.symlinkSync(target, dest, LINK_TYPE);
+        done.push({ kind: "created", dest });
         forget(dest);
         links.push({ dest, target });
         lines.push(`link: created ${dest} -> ${target}`);
       } else if (state === "kit-old") {
-        repoint(dest, target);
+        done.push({ kind: "repointed", dest, aside: repoint(dest, target) });
         forget(dest);
         links.push({ dest, target });
         lines.push(`link: re-pointed ${dest} -> ${target}`);
@@ -115,6 +136,28 @@ export function applyLinks(states, { record, recordFile, target, mode }) {
       lines.push(`failed link ${dest}: ${errText(e)}`);
     }
   }
-  if (JSON.stringify(links) !== JSON.stringify(record.links)) writeJsonAtomic(recordFile, { version: 1, links });
+  try {
+    if (JSON.stringify(links) !== JSON.stringify(record.links)) writeJsonAtomic(recordFile, { version: 1, links });
+  } catch (e) {
+    failures++;
+    lines.push(`failed link record ${recordFile}: ${errText(e)}; undoing the link changes of this run`);
+    for (const change of done.reverse()) {
+      const failed = undo(change);
+      if (failed) {
+        failures++;
+        lines.push(failed);
+      } else lines.push(`link: undone ${change.dest}`);
+    }
+    return { lines, failures };
+  }
+  for (const { aside } of done) {
+    if (!aside) continue;
+    try {
+      fs.unlinkSync(aside);
+    } catch (e) {
+      failures++;
+      lines.push(`failed link ${aside}: ${errText(e)}; remove this old link copy yourself`);
+    }
+  }
   return { lines, failures };
 }

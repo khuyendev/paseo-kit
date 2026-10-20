@@ -285,3 +285,30 @@ test("FTOL-09 during execution a target outside the checked set fails as unplann
   assert.match(out.text, /ERROR b\.txt: unplanned or changed target: .*b\.txt; nothing authorized for this path/);
   assert.match(out.text, /1\| a/);
 });
+
+test("FTOL-02 an edit with newText alone is refused with its field path before staging (CR-FIL-04)", () => {
+  const s = scratch({ "f.txt": "x" });
+  const c = client({ cwd: s.root });
+  assert.throws(() => c.stage("edit_multiple_files", { files: [{ path: "f.txt", edits: [{ oldText: "x", newText: "y" }, { newText: "y" }] }] }),
+    (e) => e.message === "edit_multiple_files.files[0].edits[1] needs oldText, or from/to or after with the file entry's tag");
+  assert.equal(listing(path.join(c.stateRoot, sessionHash("session-a"))), null);
+});
+
+test("FTOL-13 a continuation whose reply was lost gives the same page and next token again (CR-FIL-06)", () => {
+  const s = scratch({ "f.txt": "x" });
+  const c = client({ cwd: s.root });
+  c.call("read_ranges", { ranges: [{ path: "f.txt" }] });
+  const dir = path.join(c.stateRoot, sessionHash("session-a"));
+  const text = "A".repeat(PAGE_CHARS) + "B".repeat(PAGE_CHARS) + "C".repeat(10000);
+  const token = (page) => /CONTINUATION ([a-f0-9]{64})/.exec(page)?.[1];
+  const first = token(pageResult(dir, "edit_multiple_files", { text }).text);
+  c.stage("edit_multiple_files", { continuation: first }); // stage reply lost: its result ticket never reaches the mod
+  const b1 = c.call("edit_multiple_files", { continuation: first }).text;
+  const b2 = c.call("edit_multiple_files", { continuation: first }).text; // collected reply lost: asked again
+  assert.equal(b1, b2);
+  assert.ok(b1.startsWith("B".repeat(PAGE_CHARS)));
+  const last = token(b1);
+  const c1 = c.call("edit_multiple_files", { continuation: last }).text;
+  assert.equal(c.call("edit_multiple_files", { continuation: last }).text, c1);
+  assert.equal(c1, "C".repeat(10000));
+});

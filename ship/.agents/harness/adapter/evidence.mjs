@@ -1,13 +1,20 @@
-// ADPT-17: the gate-evidence contract. Evidence certifies green only when it parses, is complete, every step
-// passed, every obligation that names targets really executed them, and its inputs equal the current code.
+// ADPT-17: the gate-evidence contract. Evidence certifies green only when it parses, every requested step is
+// present, every step passed with exit 0 and a log, every obligation that names targets really executed them,
+// and its inputs (HEAD and file hashes) equal the current code. The requested steps come from the current
+// plans and config (requiredSteps), never from the evidence being checked (CR-HAR-03).
 import fs from "node:fs";
 import path from "node:path";
 import { readJson } from "../lib/io.mjs";
 import { sha256 } from "../lib/hash.mjs";
 import { errText } from "../lib/cli.mjs";
 import { runArgv } from "../lib/proc.mjs";
+import { gateObligation } from "./contract.mjs";
 
 export const STEP_OUTCOMES = Object.freeze(["passed", "failed", "timeout", "unavailable", "not_configured"]);
+
+// Step names shared by the gate writer and every reader.
+export const gateStepName = (name) => `gate-${name}`;
+export const obligationStepName = (planId, task, kind) => `${planId}-${task ?? "task"}-${kind}`;
 
 // `{head, files: {<rel>: sha256 of the bytes | null when missing}}` of the code root now.
 export async function currentInputs(codeRoot, relFiles) {
@@ -20,6 +27,28 @@ export async function currentInputs(codeRoot, relFiles) {
   return { head: git.code === 0 ? git.stdout.trim() : null, files };
 }
 
+// INV-53: why a passed run is no proof for its named targets, or null. `executed` = {count|null, targets};
+// count null (no evidence parser) is accepted only for an exit-code-sufficient kind.
+export function executionProblem({ targets = [], executed, exitCodeSufficient = false }) {
+  if (!targets.length) return null;
+  if (executed.count === null) return exitCodeSufficient ? null : `no executed list for ${targets.length} named target(s)`;
+  if (!executed.count) return `executed 0 of ${targets.length} target(s)`;
+  const missing = targets.filter((t) => !executed.targets.includes(t));
+  return missing.length ? `target(s) ${missing.join(", ")} not executed` : null;
+}
+
+function stepProblem(s, i) {
+  if (!s || typeof s !== "object" || typeof s.name !== "string" || !Array.isArray(s.argv)) return `steps[${i}] needs name and argv`;
+  if (!STEP_OUTCOMES.includes(s.outcome)) return `steps[${i}].outcome must be one of ${STEP_OUTCOMES.join("|")}`;
+  if (!(s.exitCode === null || Number.isInteger(s.exitCode))) return `steps[${i}].exitCode must be an integer or null`;
+  const ex = s.executed;
+  if (!ex || !(ex.count === null || (Number.isInteger(ex.count) && ex.count >= 0)) || !Array.isArray(ex.targets)) return `steps[${i}].executed must be {count, targets}`;
+  // A step that never ran has no log; a passed one always has.
+  if (!(typeof s.log === "string" || (s.log === null && s.outcome !== "passed"))) return `steps[${i}].log must be a path`;
+  if (s.outcome === "passed" && s.exitCode !== 0) return `steps[${i}] is passed with exit code ${s.exitCode}`;
+  return null;
+}
+
 function shapeProblem(ev) {
   if (!ev || typeof ev !== "object" || Array.isArray(ev)) return "not an object";
   if (ev.v !== 1) return `v ${JSON.stringify(ev.v)} is not 1`;
@@ -28,11 +57,8 @@ function shapeProblem(ev) {
   if (!inputs || typeof inputs !== "object" || !("head" in inputs) || !inputs.files || typeof inputs.files !== "object") return "inputs must be {head, files}";
   if (!Array.isArray(ev.steps)) return "steps must be an array";
   for (const [i, s] of ev.steps.entries()) {
-    if (!s || typeof s.name !== "string" || !Array.isArray(s.argv)) return `steps[${i}] needs name and argv`;
-    if (!STEP_OUTCOMES.includes(s.outcome)) return `steps[${i}].outcome must be one of ${STEP_OUTCOMES.join("|")}`;
-    const ex = s.executed;
-    if (!ex || !(ex.count === null || (Number.isInteger(ex.count) && ex.count >= 0)) || !Array.isArray(ex.targets)) return `steps[${i}].executed must be {count, targets}`;
-    if (typeof s.log !== "string") return `steps[${i}].log must be a path`;
+    const p = stepProblem(s, i);
+    if (p) return p;
   }
   return null;
 }
@@ -40,7 +66,21 @@ function shapeProblem(ev) {
 const sameInputs = (a, b) => (a.head ?? null) === (b.head ?? null) && JSON.stringify(sortKeys(a.files)) === JSON.stringify(sortKeys(b.files));
 const sortKeys = (o) => Object.fromEntries(Object.entries(o).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)));
 
-// `requested`: [{name, targets?: [string], exitCodeSufficient?: bool}] (a plain string = a step without targets).
+// The steps a gate run of `plans` ([{id, verify: [{task, kind, command, target?}]}]) must prove under the current
+// config: adapter gates, build, test and every obligation with its targets. An obligation that cannot be
+// prepared (unknown kind, parser fault) carries `unresolvable` and makes any evidence invalid.
+export async function requiredSteps(cfg, { codeRoot, phaseDir, plans = [] }) {
+  const steps = [...(cfg.adapter.commands.gates ?? []).map((g) => ({ name: gateStepName(g.name) })), { name: "build" }, { name: "test" }];
+  for (const p of plans) for (const ob of p.verify ?? []) {
+    const o = await gateObligation(cfg, { codeRoot, phaseDir, kind: ob.kind, command: ob.command, target: ob.target });
+    const name = obligationStepName(p.id, ob.task, ob.kind);
+    steps.push({ name, targets: o.targets, exitCodeSufficient: o.exitCodeSufficient, ...(o.outcome === "unavailable" ? { unresolvable: o.reason } : {}) });
+  }
+  return steps;
+}
+
+// `requested`: [{name, targets?, exitCodeSufficient?, unresolvable?}] (a plain string = a step without targets),
+// normally from requiredSteps. `inputs`: the current {head, files} over the same scope as the writer's.
 // Returns {verdict: green|failed|invalid|incomplete|stale, reasons: [string]}.
 export function evidenceVerdict(evidenceFile, { codeRoot, requested, inputs }) {
   let ev;
@@ -51,24 +91,21 @@ export function evidenceVerdict(evidenceFile, { codeRoot, requested, inputs }) {
   }
   const shape = shapeProblem(ev);
   if (shape) return { verdict: "invalid", reasons: [shape] };
-  const missingLogs = ev.steps.filter((s) => !fs.existsSync(path.resolve(codeRoot, s.log))).map((s) => `${s.name}: log ${s.log} does not exist`);
+  const wanted = requested.map((r) => (typeof r === "string" ? { name: r } : r));
+  const unresolvable = wanted.filter((r) => r.unresolvable).map((r) => `${r.name}: ${r.unresolvable}`);
+  if (unresolvable.length) return { verdict: "invalid", reasons: unresolvable };
+  const missingLogs = ev.steps.filter((s) => s.log !== null && !fs.existsSync(path.resolve(codeRoot, s.log))).map((s) => `${s.name}: log ${s.log} does not exist`);
   if (missingLogs.length) return { verdict: "invalid", reasons: missingLogs };
   const steps = new Map(ev.steps.map((s) => [s.name, s]));
-  const wanted = requested.map((r) => (typeof r === "string" ? { name: r } : r));
   const absent = wanted.filter((r) => !steps.has(r.name)).map((r) => `step ${r.name} missing`);
   if (absent.length) return { verdict: "incomplete", reasons: absent };
   if (!sameInputs(ev.inputs, inputs)) return { verdict: "stale", reasons: ["inputs differ from the current code"] };
-  const reasons = [];
+  const reasons = ev.steps.filter((s) => s.outcome !== "passed").map((s) => `${s.name}: ${s.outcome}`);
   for (const r of wanted) {
     const s = steps.get(r.name);
-    if (s.outcome !== "passed") {
-      reasons.push(`${r.name}: ${s.outcome}`);
-      continue;
-    }
-    const targets = r.targets ?? [];
-    if (!targets.length || (r.exitCodeSufficient && s.executed.count === null)) continue;
-    if (!s.executed.count) reasons.push(`${r.name}: executed 0 of ${targets.length} target(s)`);
-    else for (const t of targets.filter((t) => !s.executed.targets.includes(t))) reasons.push(`${r.name}: target ${t} not executed`);
+    if (s.outcome !== "passed") continue;
+    const problem = executionProblem({ targets: r.targets, executed: s.executed, exitCodeSufficient: r.exitCodeSufficient });
+    if (problem) reasons.push(`${r.name}: ${problem}`);
   }
   return { verdict: reasons.length ? "failed" : "green", reasons };
 }

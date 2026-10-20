@@ -5,6 +5,7 @@ import test from "node:test";
 import { loadConfigLenient } from "../../ship/.agents/harness/config.mjs";
 import { connect } from "../../ship/.agents/harness/paseo-client/index.mjs";
 import { runDoctor } from "../../ship/.agents/harness/runtime/doctor.mjs";
+import { SHIP_DIR, installRuntime } from "../helpers/temp.mjs";
 import { TIERS, setup } from "./setup.mjs";
 
 const PLENTY = () => 64 * 2 ** 30;
@@ -112,9 +113,75 @@ test("PHCL-04 doctor low-RAM note and mod lines", async () => {
   has(old, /^problem Claude Code 2\.1\.100 \(the harness-files mod needs >= 2\.1\.296/);
 });
 
-test("PHCL-04 GSDC-47 doctor runs gsd upstream check and reports its summary", async () => {
+// The GSD method text as the installer lays it down in a project: the runtime, the snapshot and every inventory file.
+function installGsd(s) {
+  installRuntime(s.root);
+  for (const dir of ["agents", "gsd"]) fs.cpSync(path.join(SHIP_DIR, ".agents", dir), s.project.path(`.agents/${dir}`), { recursive: true });
+  const inventory = JSON.parse(fs.readFileSync(path.join(SHIP_DIR, ".agents", "gsd", "inventory.json"), "utf8"));
+  for (const { installed } of inventory.entries) {
+    const from = path.join(SHIP_DIR, ...installed.split("/"));
+    if (fs.existsSync(from)) fs.cpSync(from, s.project.path(installed), { recursive: true });
+  }
+}
+
+test("PHCL-04 GSDC-47 doctor checks the GSD install of the selected project, not the runtime's own tree", async () => {
   const s = setup();
   paseoConfig(s, GOOD_PROVIDERS([]));
+  const bare = await doctor(s);
+  hasNot(bare, /^ok gsd upstream/);
+  has(bare, /^problem gsd upstream /);
+  installGsd(s);
   const r = await doctor(s);
   has(r, /^ok gsd upstream check: 0 problems, \d+ warnings; \d+ references followed, \d+ verbs mapped$/);
+  const generated = fs.readdirSync(s.project.path(".agents/gsd/generated"), { recursive: true }).find((f) => f.endsWith(".md"));
+  fs.appendFileSync(s.project.path(`.agents/gsd/generated/${generated}`), "\nhand edit\n");
+  const stale = await doctor(s);
+  assert.equal(stale.code, 2);
+  has(stale, /^problem gsd upstream generated file stale or hand-edited: /);
+  has(stale, /^problem gsd upstream check: [1-9]\d* problems/);
+  has(stale, /^ok agent types in /);
+});
+
+test("PHCL-04 a project-owned agent beside the GSD agents passes the upstream check; an edited managed one fails", async () => {
+  const s = setup();
+  installGsd(s);
+  s.project.write(".agents/agents/qa-inspector.md", "---\ntools: Read\n---\nInspect.\n");
+  has(await doctor(s), /^ok gsd upstream check: 0 problems/);
+  const managed = fs.readdirSync(s.project.path(".agents/agents")).find((f) => f.startsWith("gsd-"));
+  fs.appendFileSync(s.project.path(`.agents/agents/${managed}`), "\nhand edit\n");
+  has(await doctor(s), /^problem gsd upstream /);
+});
+
+test("PHCL-04 doctor isolates failing checks: malformed settings or plugin registry is one problem, later checks run", async () => {
+  const s = setup();
+  s.project.write(".claude/settings.json", "{ broken");
+  const r = await doctor(s);
+  assert.equal(r.code, 2);
+  has(r, /^problem file mod: /);
+  has(r, /^problem paseo config .* not found/);
+  has(r, /^ok adapter and gsd sections present/);
+  has(r, /^\S+ gsd upstream /);
+  assert.match(r.out.at(-1), /^note this check does not verify tools loaded into a running session/);
+  const t = setup();
+  fs.mkdirSync(path.join(t.env.CLAUDE_CONFIG_DIR, "plugins"), { recursive: true });
+  fs.writeFileSync(path.join(t.env.CLAUDE_CONFIG_DIR, "plugins", "installed_plugins.json"), "not json");
+  const u = await doctor(t);
+  assert.equal(u.code, 2);
+  has(u, /^problem file mod: /);
+  assert.match(u.out.at(-1), /^note this check does not verify tools loaded into a running session/);
+});
+
+test("PHCL-04 doctor with a broken overlay and a GSD install checks GSD integrity independently and continues", async () => {
+  const s = setup();
+  installGsd(s);
+  s.project.write(".agents/harness.config.json", "{ broken");
+  const r = await doctor(s);
+  assert.equal(r.code, 2);
+  has(r, /^ok gsd upstream check: 0 problems/);
+  has(r, /^problem invalid harness config/);
+  has(r, /^ok agent types in /);
+  fs.appendFileSync(s.project.path(".agents/agents/gsd-executor.md"), "\nhand edit\n", "utf8");
+  const stale = await doctor(s);
+  has(stale, /^problem gsd upstream generated file stale or hand-edited:/);
+  has(stale, /^ok agent types in /);
 });

@@ -13,6 +13,7 @@ export const RUNS_DIR = "_workspace/_runs";
 const SEND_NOW_WAIT_MS = 60000;
 const SEND_POLL_MS = 500;
 const SEND_POLL_MAX_MS = 15000;
+const TURN_ENDED = new Set(["idle", "error"]);
 
 async function send(ctx) {
   const text = readPrompt(ctx);
@@ -23,7 +24,10 @@ async function send(ctx) {
     const now = await session.fetchAgent(a.id);
     if (now?.status === "running") {
       if (ctx.opts.now) await session.cancel(a.id);
-      await session.waitForFinish(a.id, ctx.opts.now ? SEND_NOW_WAIT_MS : ctx.cfg.wait_timeout_s * 1000);
+      const waitMs = ctx.opts.now ? SEND_NOW_WAIT_MS : ctx.cfg.wait_timeout_s * 1000;
+      const st = await session.waitForFinish(a.id, waitMs);
+      // PHCL-11, INV-55: deliver only once the running turn has ended; a timed-out wait would land in that turn.
+      if (!TURN_ENDED.has(st?.status)) throw new Error(`turn still ${st?.status ?? "unknown"} after ${waitMs / 1000} s; not sent`);
     }
     await session.sendPrompt(a.id, text);
     // Wait until the agent reports running, so a `ph watch` started right after does not see the stale idle state.

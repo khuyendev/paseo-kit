@@ -12,10 +12,12 @@ import { ClockContext, useClockSource } from "./anim.ts";
 import { type Effect, type EffectContext, effectsFor, nextEffectId } from "./effects.ts";
 import { type Layout, type Point, computeLayout, createSlotBook, fileAnchor, pathToAgent } from "./geometry.ts";
 import { Burst, FlowDots, Link, Packet, Sparks } from "./links.tsx";
-import { type AppearMode, AgentNode, BrainNode, type Ghost, GhostNode, HubNode } from "./nodes.tsx";
+import { AgentNode, BrainNode, type Ghost, GhostNode, HubNode } from "./nodes.tsx";
 import { type Colors, DECOR, agentState, stateColor } from "./palette.ts";
 import { ActivityFeed, Inspector, type InspectorTarget, Legend } from "./panels.tsx";
 import {
+  type AppearMode,
+  EMPTY_BOOK,
   ERRORS_SHOWN,
   NEW_BADGE_MS,
   RECENT_HOURS,
@@ -23,6 +25,7 @@ import {
   START_FEED,
   type Selection,
   actionsPerMinute,
+  appearance,
   applySnapshot,
   capEffects,
   effectEvents,
@@ -156,6 +159,7 @@ function SwarmMap({ c, compact }: { c: Colors; compact: boolean }) {
   const [feed, setFeed] = useState(START_FEED);
   const [effects, setEffects] = useState<Shown[]>([]);
   const [data, setData] = useState<SwarmSnapshot | null>(null);
+  const [modes, setModes] = useState<ReadonlyMap<string, AppearMode>>(new Map());
 
   const snapshotRpc = useRpc(swarmSnapshotRpc);
   const feedRef = useRef(feed);
@@ -173,18 +177,15 @@ function SwarmMap({ c, compact }: { c: Colors; compact: boolean }) {
   const layout = useMemo(() => computeLayout(data?.brains ?? [], slots, nowMs), [data, slots, nowMs]);
 
   // Appearance bookkeeping (PANL-49): everything boots in once; agents seen later spring in with NEW; a filter
-  // change re-boots without NEW and without ghosts.
-  const known = useRef(new Set<string>()).current;
+  // change re-boots without NEW and without ghosts. Modes travel with the snapshot that first draws a node.
+  const book = useRef(EMPTY_BOOK);
   const born = useRef(new Map<string, number>()).current;
-  const booted = useRef(false);
   const viewKey = String(recentOnly);
-  const shownViewKey = useRef(viewKey);
   const prevLayout = useRef<Layout | null>(null);
   const lastToolAt = useRef(new Map<string, number>()).current;
   const lastPos = useRef(new Map<string, Point>()).current;
 
-  const viewChangedNow = shownViewKey.current !== viewKey;
-  const appear = (id: string): AppearMode => (!booted.current ? "boot" : known.has(id) ? "none" : viewChangedNow ? "boot" : "spawn");
+  const appear = (id: string): AppearMode => modes.get(id) ?? "none";
   const newIds = new Set([...born].filter(([, t]) => nowMs - t < NEW_BADGE_MS).map(([id]) => id));
 
   const onEffectDone = useCallback((e: Shown) => {
@@ -196,13 +197,16 @@ function SwarmMap({ c, compact }: { c: Colors; compact: boolean }) {
 
   useEffect(() => {
     if (!res || !res.ok) return;
-    const viewChanged = shownViewKey.current !== viewKey;
+    const booted = book.current.booted;
+    const viewChanged = booted && book.current.viewKey !== viewKey;
     const now = Date.parse(res.generatedAt);
     const current = computeLayout(res.brains, slots, now);
     const onMap = (id: string) => current.byAgent.has(id) || current.byBrain.has(id);
     const applied = applySnapshot(feedRef.current, res, onMap);
     const list: Shown[] = [];
-    for (const p of current.agents) if (!known.has(p.agent.id) && booted.current && !viewChanged) born.set(p.agent.id, now);
+    const ids = [...current.agents.map((p) => p.agent.id), ...current.brains.map((b) => `b-${b.key}`), ...current.hubs.map((h) => `h-${h.id}`)];
+    const next = appearance(book.current, ids, viewKey);
+    for (const p of current.agents) if (next.modes.get(p.agent.id) === "spawn") born.set(p.agent.id, now);
     const prev = prevLayout.current;
     if (prev && !viewChanged) {
       const archived = new Set(applied.live.filter((e) => e.kind === "archive").map((e) => e.agentId));
@@ -213,21 +217,16 @@ function SwarmMap({ c, compact }: { c: Colors; compact: boolean }) {
         list.push({ id: nextEffectId(), type: "ghost", ghost: { agent: p.agent, x: p.x, y: p.y, hubX: hub?.x ?? p.x, hubY: hub?.y ?? p.y, reason } });
       }
     }
-    if (booted.current && !viewChanged) {
+    if (booted && !viewChanged) {
       const ctx: EffectContext = { lastToolAt, lastPos };
       for (const e of effectEvents(applied.live)) list.push(...effectsFor(e, current, c, ctx, now));
     }
-    for (const p of current.agents) {
-      known.add(p.agent.id);
-      lastPos.set(p.agent.id, fileAnchor(current, p.agent.id) ?? { x: p.x, y: p.y });
-    }
-    for (const b of current.brains) known.add(`b-${b.key}`);
-    for (const h of current.hubs) known.add(`h-${h.id}`);
+    for (const p of current.agents) lastPos.set(p.agent.id, fileAnchor(current, p.agent.id) ?? { x: p.x, y: p.y });
     for (const [id, t] of born) if (now - t > NEW_BADGE_MS) born.delete(id);
     prevLayout.current = current;
-    shownViewKey.current = viewKey;
-    booted.current = true;
+    book.current = next.book;
     setFeed(applied.state);
+    setModes(next.modes);
     setData(res);
     if (list.length > 0) setEffects((cur) => capEffects([...cur, ...list]));
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -22,7 +22,7 @@ export function makeExecWorld({ waves = [[task("01-01"), task("01-02")]], overla
       files[`src/${t.plan}/.keep`] = "";
     }
   });
-  const commands = { build: null, test: TEST_ARGV, build_timeout_s: 30, test_timeout_s: 30, gates: [], verify: {} };
+  const commands = { build: [NODE, "-e", "process.exit(0)"], test: TEST_ARGV, build_timeout_s: 30, test_timeout_s: 30, gates: [], verify: {} };
   const w = makeWorld({ files, overlay: { ...overlay, gsd: { isolation: "shared", ...overlay.gsd }, adapter: { commands, ...overlay.adapter } } });
   const git = (...args) => spawnSync("git", args, { cwd: w.root, encoding: "utf8", windowsHide: true });
   w.git = git;
@@ -42,7 +42,14 @@ export function makeExecWorld({ waves = [[task("01-01"), task("01-02")]], overla
     }
     return { plans: list, runnable: list.filter((p) => p.ready).map((p) => p.id) };
   });
-  w.gsd.on("check evaluation-scope", (argv) => w.scope[argv[argv.indexOf("--plan") + 1]] ?? { status: "resolved", commits: [], files: [] });
+  // As the real verb: a plan's commits come from commits.json (wave commits mapped to plans) unless a test scripts them.
+  w.gsd.on("check evaluation-scope", (argv) => {
+    const id = argv[argv.indexOf("--plan") + 1];
+    if (w.scope[id]) return w.scope[id];
+    const map = (() => { try { return JSON.parse(w.read(`${PHASE_DIR}/commits.json`)); } catch { return []; } })();
+    const mine = map.filter((e) => Object.hasOwn(e.plans ?? {}, id));
+    return { status: "resolved", commits: mine.map((e) => ({ sha: e.sha })), files: [...new Set(mine.flatMap((e) => e.plans[id]))] };
+  });
   w.gsd.on("normalize-test-command", ([cmd]) => ({ command: cmd }));
   w.gsd.on("state wave", (argv, input) => { w.events.push(`state wave ${argv[argv.indexOf("--wave") + 1]} ${JSON.parse(input).verify}`); return { updated: ["wave log"] }; });
   w.gsd.on("commit", (argv) => {

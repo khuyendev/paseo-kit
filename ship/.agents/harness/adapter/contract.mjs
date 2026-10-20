@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { toSlash } from "../lib/paths.mjs";
+import { invokeHook } from "./hooks.mjs";
 
 const BUILTIN_RUNNERS = new Set(["build", "cmd"]);
 
@@ -154,3 +155,28 @@ export const agentTypeFor = (cfg, role, genericType) => cfg.adapter.agents[role]
 
 // ADPT-09 / GSDF-20: the wiring stage runs only when the adapter maps an architect.
 export const wiringEnabled = (cfg) => Boolean(cfg.adapter.agents.architect);
+
+// ADPT-03/15 for the post-wave gate (CR-HAR-02): kind, argument, targets and the exact runner argv of one plan
+// obligation `{kind, command, target?}`. A failed parser or a missing runner is `unavailable` and nothing runs.
+// Resolves {outcome: ready|unavailable|not_configured, kind, argument, targets, argv, timeoutS, exitCodeSufficient, evidenceParser, reason}.
+export async function gateObligation(cfg, { codeRoot, phaseDir, kind, command = "", target }) {
+  const entry = cfg.adapter.verify_vocabulary[kind];
+  const text = String(command).trim();
+  const argument = entry && text.startsWith(entry.prefix) ? text.slice(entry.prefix.length).trim() : text;
+  const base = { kind, argument, targets: [], argv: null, timeoutS: null, exitCodeSufficient: Boolean(entry?.exit_code_sufficient), evidenceParser: entry?.evidence_parser ?? null, reason: null };
+  if (!entry) return { ...base, outcome: "unavailable", reason: `kind ${kind} not in adapter.verify_vocabulary` };
+  let targets = target ? [String(target)] : defaultTargets(argument);
+  if (entry.parser) {
+    const parsed = await invokeHook(cfg, { codeRoot, script: entry.parser, op: "parse", phaseDir, kind, argument });
+    if (!parsed.ok) return { ...base, outcome: "unavailable", reason: parsed.reason };
+    targets = parsed.response.targets;
+  }
+  let run;
+  try {
+    run = obligationCommand(cfg, { kind, argument, targets });
+  } catch (e) {
+    return { ...base, targets, outcome: "unavailable", reason: e.message };
+  }
+  if (!run.configured) return { ...base, targets, outcome: "not_configured", reason: `no command for kind ${kind}` };
+  return { ...base, targets, outcome: "ready", argv: run.argv, timeoutS: run.timeoutS };
+}

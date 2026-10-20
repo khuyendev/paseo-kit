@@ -67,7 +67,7 @@ if (lock.code !== 0) return { status: "refused", reason: `another debug session 
 try {
   return await debugSession();
 } finally {
-  await flow(["unlock", "debug", runId]);
+  await flow(["unlock", "debug", lock.json.token]);
 }
 
 async function status() {

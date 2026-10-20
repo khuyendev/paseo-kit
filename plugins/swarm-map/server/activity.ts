@@ -4,7 +4,7 @@
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import type { Activity, ActivityKind, AgentMessage, FileOp } from "../shared/swarm.ts";
 import { type TimelineEntry, toActivity } from "./describe.ts";
-import type { FileLedger, Handoff } from "./files.ts";
+import { type FileLedger, type Handoff, resolveTouchPath } from "./files.ts";
 import {
   ERROR_RETRY_MS,
   FIRST_TAIL_LIMIT,
@@ -27,6 +27,8 @@ export interface AgentActivity {
 
 export interface ActivityTarget {
   id: string;
+  // Relative file paths of the agent's tool calls are resolved against it (CR-PNL-07).
+  cwd: string | null;
   status: string;
   updatedAt: string;
   attention: string | null;
@@ -108,7 +110,7 @@ export class ActivityCache {
   // Inspector details: from the cache; an agent never read gets one read. Returns the read error, if any.
   async detail(paseo: Paseo, agentId: string, nowMs: number): Promise<{ activity: AgentActivity; error: string | null }> {
     if (!this.entries.has(agentId)) {
-      await this.read(paseo, { id: agentId, status: "unknown", updatedAt: "", attention: null }, nowMs, NO_HOOKS);
+      await this.read(paseo, { id: agentId, cwd: null, status: "unknown", updatedAt: "", attention: null }, nowMs, NO_HOOKS);
     }
     const e = this.entries.get(agentId);
     return { activity: e ?? EMPTY, error: e?.error ?? null };
@@ -166,7 +168,8 @@ export class ActivityCache {
       if (FILE_OPS.has(act.kind)) {
         const byPeer = new Map<string, Handoff[]>();
         for (const file of act.files) {
-          const handoff = this.ledger.record(file, { agentId: agent.id, op: act.kind as FileOp, at: act.at });
+          const abs = resolveTouchPath(file, agent.cwd);
+          const handoff = this.ledger.record(abs ?? file, { agentId: agent.id, op: act.kind as FileOp, at: act.at }, abs === null ? agent.id : null);
           if (handoff) byPeer.set(handoff.prev.agentId, [...(byPeer.get(handoff.prev.agentId) ?? []), handoff]);
         }
         if (known) for (const group of byPeer.values()) hooks.onHandoff(agent.id, act, group);

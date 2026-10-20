@@ -179,8 +179,12 @@ const appendEntry = (state, section, text) => {
   state.sections.set(section, lines);
 };
 
-export function initState(g, { milestone }) {
-  return writeShared(g, () => {
+export function initState(g, opts) {
+  return writeShared(g, () => initStateLocked(g, opts));
+}
+
+// Caller holds the shared-file writer lock.
+export function initStateLocked(g, { milestone }) {
     const file = sharedFile(g.codeRoot, "STATE.md");
     if (fs.existsSync(file)) throw fail("STATE.md already exists");
     const roadmap = loadRoadmap(g.codeRoot, g.cfg);
@@ -191,8 +195,32 @@ export function initState(g, { milestone }) {
     state.sections.set("Current state", ["-"]);
     writeTextAtomic(file, renderState(state));
     return { created: path.relative(g.codeRoot, file).replace(/\\/g, "/") };
-  });
 }
+
+const stdinRecord = (sub, input) => {
+  let rec;
+  try {
+    rec = JSON.parse(input);
+  } catch (e) {
+    throw fail(`state ${sub}: stdin is not valid JSON (${e.message})`);
+  }
+  if (!rec || typeof rec !== "object" || Array.isArray(rec)) throw fail(`state ${sub}: stdin must be a JSON object`);
+  return rec;
+};
+
+const listText = (v) => (Array.isArray(v) ? v.map(String).join(", ") : String(v ?? ""));
+
+const STDIN_RECORDS = {
+  wave: (r) => {
+    if (!Array.isArray(r.plans) || !r.plans.length || r.verify === undefined) throw fail("state wave: stdin record needs plans[] and verify");
+    return `plans ${listText(r.plans)}; verify ${r.verify}${r.evidence ? `; evidence ${listText(r.evidence)}` : ""}`;
+  },
+  override: (r) => {
+    if (!String(r.reason ?? "").trim()) throw fail("state override: stdin record needs a reason");
+    const issues = Array.isArray(r.issues) ? r.issues.map(String) : [];
+    return [`owner override: ${r.reason}`, ...issues.map((i) => `accepted issue: ${i}`)].join("\n");
+  },
+};
 
 // `state <sub>` writers; each returns {updated[]}.
 export function stateVerb(g, sub, opts) {
@@ -205,8 +233,12 @@ export function stateVerb(g, sub, opts) {
   if (sub === "init") return done(initState(g, { milestone: opts.milestone }));
   const text = () => {
     if (opts["text-file"]) return fs.readFileSync(path.resolve(g.harnessRoot, opts["text-file"]), "utf8").replace(/^\uFEFF/, "");
-    if (opts.text === undefined) throw fail(`state ${sub} needs --text or --text-file`);
-    return opts.text;
+    if (opts.text !== undefined) return opts.text;
+    // The GSD scripts send wave and override records as stdin JSON (GSDC-10, D-65).
+    const render = STDIN_RECORDS[sub];
+    const input = render ? String(g.stdin() ?? "").trim() : "";
+    if (!input) throw fail(`state ${sub} needs --text, --text-file${render ? " or a stdin JSON record" : ""}`);
+    return render(stdinRecord(sub, input));
   };
   const writers = {
     position: (s, r) => setPosition(s, r, { phase: opts.phase, plan: opts.plan, status: checkStatus(opts.status), activity: opts.activity }),

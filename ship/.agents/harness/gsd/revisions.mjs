@@ -5,14 +5,27 @@ import path from "node:path";
 import { writeJsonAtomic, readJsonIf } from "../lib/io.mjs";
 import { sha256, textDigest } from "../lib/hash.mjs";
 import { done, fail, none, nowIso, readIf, rel } from "./common.mjs";
+import { loadAgentDef } from "../runtime/agents.mjs";
 import { headOf } from "./git.mjs";
 import { phaseFile, planPath, planIds } from "./planning.mjs";
 import { loadRequirements } from "./requirements.mjs";
 import { loadRoadmap, roadmapPhase } from "./roadmap.mjs";
 
-export const RESEARCHER_ROLE_FILES = [".agents/agents/gsd-phase-researcher.md", ".agents/gsd/overlays/kit-core.md", ".agents/gsd/overlays/gsd-phase-researcher.md"];
+const RESEARCHER = "gsd-phase-researcher";
 export const RESEARCH_FRAGMENT = ".agents/gsd/upstream/capabilities/research/fragments/plan-pre.md";
 export const FIXED_KEYS = new Set(["research", "inputs", "freeze", "plans", "checked", "handoff"]);
+
+// The researcher's effective role text: its definition plus every include, resolved as prompt assembly resolves
+// them, so an edited or added include changes the research revision (INV-22). A definition that does not load
+// (missing include) still hashes its own text, which lists the includes.
+function researcherRoleFiles(g) {
+  const agent = `.agents/agents/${RESEARCHER}.md`;
+  try {
+    return [agent, ...loadAgentDef(g.harnessRoot, RESEARCHER).includes.map((i) => i.rel)];
+  } catch {
+    return [agent];
+  }
+}
 
 const backticked = (text) => [...String(text ?? "").matchAll(/`([^`\s]+)`/g)].map((m) => m[1]).filter((p) => /[/.]/.test(p) && !/^https?:/.test(p));
 
@@ -33,7 +46,7 @@ export function keyFiles(g, phase, key) {
     const refs = /<canonical_refs>([\s\S]*?)<\/canonical_refs>/.exec(readIf(ctxFile) ?? "")?.[1];
     for (const p of backticked(refs)) out.push(code(p));
     for (const p of g.cfg.adapter.instructions) out.push(code(p));
-    for (const p of [...RESEARCHER_ROLE_FILES, RESEARCH_FRAGMENT]) out.push(harness(p));
+    for (const p of [...researcherRoleFiles(g), RESEARCH_FRAGMENT]) out.push(harness(p));
     return out;
   };
   const inputs = () => [...research(), inPhase(`${phase.padded}-RESEARCH.md`), inPhase("research-attempt.json")];

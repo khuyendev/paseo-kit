@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { KIT_DIR, SHIP_DIR } from "../helpers/temp.mjs";
+import { KIT_DIR, SHIP_DIR, makeTempDir } from "../helpers/temp.mjs";
 import { textDigest } from "../../ship/.agents/harness/lib/hash.mjs";
 
 const FIXTURES = path.join(KIT_DIR, "tests", "harness", "fixtures");
@@ -14,10 +14,10 @@ const lf = (p) => fs.readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 const METHOD_FILES = PROV.files.map((f) => f.file).filter((f) => f.endsWith(".md") && !f.endsWith("NOTICE.md"));
 
 // Rebuilds the shipped file from the source and the regions; any line outside a region must be unchanged and
-// every region must equal its recorded replacement.
-function checkFile(rel) {
+// every region must equal its recorded replacement. `shipped` defaults to the file in ship/ (read only).
+function checkFile(rel, shipped = lf(path.join(SKILLS, rel))) {
   const src = lf(path.join(SOURCE, rel)).split("\n");
-  const out = lf(path.join(SKILLS, rel)).split("\n");
+  const out = shipped.replace(/\r\n/g, "\n").split("\n");
   const regions = PROV.regions.filter((r) => r.file === rel).sort((a, b) => a.from - b.from);
   let s = 0;
   let d = 0;
@@ -45,16 +45,14 @@ test("HARN-01 shipped method files equal the source copy outside inventoried ada
   for (const rel of METHOD_FILES) checkFile(rel);
 });
 
-test("HARN-01 a hunk outside the inventory fails the diff check", () => {
+test("HARN-01 a hunk outside the inventory fails the diff check (on a temporary copy; ship/ is never written)", () => {
   const rel = "harness/references/qa-agent-guide.md";
   const file = path.join(SKILLS, rel);
-  const original = fs.readFileSync(file, "utf8");
-  try {
-    fs.writeFileSync(file, original.replace("## ", "## Changed "), "utf8");
-    assert.throws(() => checkFile(rel), /differs/);
-  } finally {
-    fs.writeFileSync(file, original, "utf8");
-  }
+  const before = fs.readFileSync(file);
+  const copy = path.join(makeTempDir(), "qa-agent-guide.md");
+  fs.writeFileSync(copy, before.toString("utf8").replace("## ", "## Changed "), "utf8");
+  assert.throws(() => checkFile(rel, fs.readFileSync(copy, "utf8")), /differs/);
+  assert.ok(fs.readFileSync(file).equals(before), "the shipped file is unchanged");
 });
 
 test("HARN-02 shipped method text has no old paths, sync step, other harnesses or Backlog", () => {

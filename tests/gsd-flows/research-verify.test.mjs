@@ -92,9 +92,9 @@ test("GSDF-55 the report file's status wins; no file, an unchanged report and st
   assert.match(same.result.reason, /unchanged from the previous report/);
   const w2 = verifyWorld();
   w2.write("src/a.js", "a\n");
-  w2.write(`${PHASE_DIR}/evidence/w1-1.json`, JSON.stringify({ v: 1, waveId: "w1", inputs: { head: null, files: { "src/a.js": "old" } }, steps: [] }));
+  w2.write(`${PHASE_DIR}/evidence/w1-1.json`, JSON.stringify({ v: 1, waveId: "w1", at: "2026-10-20T00:00:00Z", inputs: { head: null, scopes: ["src"], files: { "src/a.js": "old" } }, steps: [] }));
   const st = await verify(w2, writes(w2, "passed"), { evidence: [`${PHASE_DIR}/evidence/w1-1.json`] });
-  assert.match(st.calls[0].prompt, /Stale or invalid evidence \(NOT proof[^\n]*w1-1\.json \(stale\)/);
+  assert.match(st.calls[0].prompt, /Stale or invalid evidence \(NOT proof[^\n]*w1-1\.json \(incomplete\)/);
   assert.match(st.calls[0].prompt, /Gate evidence \(current; proof of what ran\): none/);
 });
 

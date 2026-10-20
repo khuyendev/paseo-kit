@@ -27,18 +27,19 @@ export function verifyArtifacts(g, plans) {
   const results = items.map((a) => {
     const issues = [];
     const abs = inRoot(g.codeRoot, a.path);
-    if (!abs) return { ...a, passed: false, status: "path_rejected", issues: ["path outside the code root"] };
-    if (!fs.existsSync(abs)) return { ...a, passed: false, status: "missing", issues: ["file does not exist"] };
-    if (isDir(abs)) return { ...a, passed: false, status: "directory", issues: ["path is a directory"] };
+    if (!abs) return { ...a, exists: false, passed: false, status: "path_rejected", issues: ["path outside the code root"] };
+    if (!fs.existsSync(abs)) return { ...a, exists: false, passed: false, status: "missing", issues: ["file does not exist"] };
+    if (isDir(abs)) return { ...a, exists: true, passed: false, status: "directory", issues: ["path is a directory"] };
     const text = readIf(abs) ?? "";
     const lines = text.split(/\r?\n/).length;
     if (a.min_lines && lines < Number(a.min_lines)) issues.push(`${lines} lines < min_lines ${a.min_lines}`);
     for (const c of asArray(a.contains)) if (!text.includes(String(c))) issues.push(`does not contain ${c}`);
     for (const e of asArray(a.exports)) if (!text.includes(String(e))) issues.push(`does not export ${e}`);
-    return { ...a, passed: issues.length === 0, status: issues.length ? "failed" : "passed", issues };
+    return { ...a, exists: true, passed: issues.length === 0, status: issues.length ? "failed" : "passed", issues };
   });
   const allPassed = results.length > 0 && results.every((r) => r.passed);
-  return done({ all_passed: allPassed, checked: results.length, results }, allPassed ? 0 : 1);
+  // passed/total/artifacts: the field names the generated verifier reads (GSDC-35, adapter layer for D-111).
+  return done({ all_passed: allPassed, checked: results.length, passed: results.filter((r) => r.passed).length, total: results.length, results, artifacts: results }, allPassed ? 0 : 1);
 }
 
 // Patterns that could run away or depend on lookaround are not run (ReDoS guard).
@@ -50,31 +51,32 @@ export function verifyKeyLinks(g, plans, allPlans) {
   const results = items.map((k) => {
     const base = { plan: k.plan, from: k.from, to: k.to, via: k.via ?? null, pattern: k.pattern ?? null };
     const from = inRoot(g.codeRoot, k.from);
-    if (!from) return { ...base, status: "path_rejected", verified: false };
-    if (k.to && /[/\\.]/.test(String(k.to)) && !inRoot(g.codeRoot, k.to)) return { ...base, status: "path_rejected", verified: false };
+    if (!from) return { ...base, status: "path_rejected", verified: false, detail: "source path rejected: outside the code root" };
+    if (k.to && /[/\\.]/.test(String(k.to)) && !inRoot(g.codeRoot, k.to)) return { ...base, status: "path_rejected", verified: false, detail: "target path rejected: outside the code root" };
     const src = readIf(from);
     if (src === null) {
       const promised = allPlans.some((p) => p.wave >= k.wave && p.filesModified.includes(String(k.from)));
-      return { ...base, status: promised ? "pending" : "source_missing", verified: false };
+      return { ...base, status: promised ? "pending" : "source_missing", verified: false, detail: promised ? "source not written yet (promised by a plan)" : "Source file not found" };
     }
     if (k.pattern) {
-      if (unsafePattern(String(k.pattern))) return { ...base, status: "pattern_neutralized", verified: false };
+      if (unsafePattern(String(k.pattern))) return { ...base, status: "pattern_neutralized", verified: false, detail: "Pattern not verified (lookaround, backreference or over 500 chars)" };
       let re;
       try {
         re = new RegExp(String(k.pattern));
       } catch {
-        return { ...base, status: "pattern_invalid", verified: false };
+        return { ...base, status: "pattern_invalid", verified: false, detail: "Pattern is not a valid regular expression" };
       }
-      const target = k.to ? readIf(inRoot(g.codeRoot, k.to) ?? "") : null;
-      const ok = re.test(src) || (target !== null && re.test(target));
-      return { ...base, status: ok ? "verified" : "not_found", verified: ok };
+      // The link is the source's call/import of the target: a match only in the target proves the target's own
+      // symbol, not the wiring (GSDC-35, INV-36).
+      const ok = re.test(src);
+      return { ...base, status: ok ? "verified" : "not_found", verified: ok, detail: ok ? "Pattern found in source" : `Pattern "${k.pattern}" not found in source` };
     }
     const ok = src.includes(String(k.to ?? ""));
-    return { ...base, status: ok ? "verified" : "not_found", verified: ok };
+    return { ...base, status: ok ? "verified" : "not_found", verified: ok, detail: ok ? "Target referenced in source" : "Target not referenced in source" };
   });
   const hard = results.filter((r) => !["verified", "pending", "pattern_neutralized"].includes(r.status));
   const allVerified = results.length > 0 && hard.length === 0 && results.every((r) => r.verified);
-  return done({ all_verified: allVerified, results }, hard.length ? 1 : 0);
+  return done({ all_verified: allVerified, verified: results.filter((r) => r.verified).length, total: results.length, results, links: results }, hard.length ? 1 : 0);
 }
 
 // --- read verbs ---

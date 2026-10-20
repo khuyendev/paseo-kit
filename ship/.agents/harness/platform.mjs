@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { cmdWord } from "./lib/proc.mjs";
+import { cmdShim } from "./lib/proc.mjs";
 
 // INST-23: the one Node gate. minVersion is the oldest Node the shipped runtime runs on; capabilities are the Node APIs
 // it uses beyond that version's baseline, each with a presence probe. The test-runner floor (tests/) is not a gate.
@@ -43,7 +43,13 @@ export function runClaude(args, opts = {}, env = process.env) {
   const options = { env, windowsHide: true, ...opts };
   if (/\.[cm]?js$/i.test(cli)) return spawnSync(process.execPath, [cli, ...args], options);
   if (process.platform === "win32" && !/\.(exe|com)$/i.test(cli)) {
-    return spawnSync([cli, ...args].map(cmdWord).join(" "), { ...options, shell: true });
+    let shim;
+    try {
+      shim = cmdShim([cli, ...args]);
+    } catch (error) {
+      return { status: null, stdout: "", stderr: "", error };
+    }
+    return spawnSync(shim.file, shim.args, { ...options, ...shim.options });
   }
   return spawnSync(cli, args, options);
 }

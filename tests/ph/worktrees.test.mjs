@@ -98,7 +98,7 @@ test("PHCL-32 not a git repo exits 1; none prints no harness worktrees; a live a
   const down = setup({ git: true, fake: { down: "refused" } });
   down.project.git("worktree", "add", path.join(wtDir(down), "rev-20261020-101010_abcd"), "-b", "harness/rev-20261020-101010_abcd");
   const d = await down.ph(["worktrees"]);
-  assertLine(d, /^note daemon not reachable \(Cannot connect to daemon at fake: refused\): worktrees of spawned agents are kept$/);
+  assertLine(d, /^note daemon agent list unavailable \(Cannot connect to daemon at fake: refused\): worktrees of spawned agents are kept$/);
   assertLine(d, /^owner unknown {10}harness\/rev-/);
 });
 
@@ -109,4 +109,43 @@ test("PHCL-32 a live agent of another orchestrator keeps its worktree; an archiv
   assertLine(await s.ph(["worktrees", "--prune"]), /^in use {17}harness\/rev-/);
   s.fake.agents.get(other.id ?? other).archivedAt = "2026-10-20T00:00:00Z";
   assertLine(await s.ph(["worktrees", "--prune"]), "worktrees: 1 listed, 1 removed");
+});
+
+// The daemon pages agent listings (200 per page); this pages the fake's listing two agents at a time.
+function pageListing(fake, { failPage = null } = {}) {
+  const plain = fake.client.fetchAgents.bind(fake.client);
+  fake.client.fetchAgents = async (options = {}) => {
+    const { page, ...rest } = options;
+    const all = (await plain(rest)).entries;
+    const start = page?.cursor ? Number(page.cursor) : 0;
+    if (failPage !== null && start / 2 === failPage) throw new Error("page fetch failed");
+    const hasMore = start + 2 < all.length;
+    return { entries: all.slice(start, start + 2), pageInfo: { hasMore, nextCursor: hasMore ? String(start + 2) : null } };
+  };
+}
+
+test("PHCL-32 prune reads every page of the daemon listing: a live owner on page two keeps its worktree", async () => {
+  const s = setup({ git: true });
+  s.project.git("worktree", "add", path.join(wtDir(s), "rev-20261020-101010_abcd"), "-b", "harness/rev-20261020-101010_abcd");
+  for (let i = 0; i < 3; i++) s.fake.addAgent({ parent: "0ther000-1111-4222-8333-444455556666", title: `x${i}` });
+  s.fake.addAgent({ parent: "0ther000-1111-4222-8333-444455556666", title: "rev", labels: { "harness.name": "rev" } });
+  pageListing(s.fake);
+  const r = await s.ph(["worktrees", "--prune"]);
+  assertExit(r, 0);
+  assertLine(r, /^in use {17}harness\/rev-/);
+  assertLine(r, "worktrees: 1 listed, 0 removed");
+  assert.ok(s.fake.callsOf("fetchAgents").length >= 3);
+  assert.deepEqual(branches(s), ["harness/rev-20261020-101010_abcd"]);
+});
+
+test("PHCL-32 a failed later page leaves ownership unknown and removes nothing", async () => {
+  const s = setup({ git: true });
+  s.project.git("worktree", "add", path.join(wtDir(s), "rev-20261020-101010_abcd"), "-b", "harness/rev-20261020-101010_abcd");
+  for (let i = 0; i < 4; i++) s.fake.addAgent({ parent: "0ther000-1111-4222-8333-444455556666", title: `x${i}` });
+  pageListing(s.fake, { failPage: 1 });
+  const r = await s.ph(["worktrees", "--prune"]);
+  assertLine(r, /^note daemon agent list unavailable \(page fetch failed\): worktrees of spawned agents are kept$/);
+  assertLine(r, /^owner unknown {10}harness\/rev-/);
+  assertLine(r, "worktrees: 1 listed, 0 removed");
+  assert.deepEqual(branches(s), ["harness/rev-20261020-101010_abcd"]);
 });

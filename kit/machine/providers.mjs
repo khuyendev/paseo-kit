@@ -8,11 +8,18 @@ const pairsOf = (cfg) => Object.entries(cfg.agent_providers);
 const isList = (v) => v === undefined || v === null || Array.isArray(v);
 const listOf = (v) => (Array.isArray(v) ? v : []);
 
-// Per template provider: missing, or the template model entries it lacks (MACH-03).
-export function modelPlan(live, tpl) {
+// Template entries of the providers named by agent_providers: the only providers the kit creates, adds models to or
+// checks (MACH-18, INV-05). Other template entries only contribute link dirs (MACH-16).
+const kitEntries = (tpl, cfg) => {
+  const names = new Set(pairsOf(cfg).flat());
+  return Object.entries(tpl.providers).filter(([name]) => names.has(name));
+};
+
+// Per kit template provider: missing, or the template model entries it lacks (MACH-03).
+export function modelPlan(live, tpl, cfg) {
   const providers = providersOf(live);
   const plan = [];
-  for (const [name, p] of Object.entries(tpl.providers)) {
+  for (const [name, p] of kitEntries(tpl, cfg)) {
     if (!providers[name]) plan.push({ name, missing: true, add: [] });
     else {
       const have = new Set(modelIds(providers[name]));
@@ -24,9 +31,9 @@ export function modelPlan(live, tpl) {
 }
 
 // Model ids a kit provider holds that the template no longer ships: reported, never removed (D-15).
-export function retiredModels(live, tpl) {
+export function retiredModels(live, tpl, cfg) {
   const providers = providersOf(live);
-  return Object.entries(tpl.providers).flatMap(([name, p]) => {
+  return kitEntries(tpl, cfg).flatMap(([name, p]) => {
     const shipped = new Set(modelIds(p));
     return providers[name] ? modelIds(providers[name]).filter((id) => id && !shipped.has(id)).map((id) => ({ name, id })) : [];
   });
@@ -53,7 +60,7 @@ export function patchProviders(live, tpl, cfg, { home, secret }) {
       throw new Fail(`Paseo provider ${name}: disallowedTools is not a list; fix it in Paseo first`);
     }
   }
-  for (const [name, p] of Object.entries(tpl.providers)) {
+  for (const [name, p] of kitEntries(tpl, cfg)) {
     if (workers.has(name) || providers[name]) continue;
     providers[name] = render(p, { home, secret });
     changes.push(`added provider ${name}`);
@@ -71,7 +78,7 @@ export function patchProviders(live, tpl, cfg, { home, secret }) {
       changes.push(`added provider ${worker}`);
     } else throw new Fail(`cannot add the worker provider ${worker}: no live provider ${main} and no template entry`);
   }
-  for (const [name, p] of Object.entries(tpl.providers)) {
+  for (const [name, p] of kitEntries(tpl, cfg)) {
     const live = providers[name];
     if (live.models !== undefined && !Array.isArray(live.models)) throw new Fail(`Paseo provider ${name}: models is not a list`);
     const have = new Set(modelIds(live));

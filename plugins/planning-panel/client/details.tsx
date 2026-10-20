@@ -1,13 +1,16 @@
 // Plan pane and file reader (PANL-16, PANL-17). A body is rendered only when the response matches the open item
-// (workspace, relative path, plan id); otherwise the loading state shows, never an older body.
+// (workspace, relative path, plan id); otherwise the loading state shows, never an older body. A failed request
+// shows an unreachable state with retry, or marks a shown body as stale (CR-PNL-08).
 import { copyText } from "@getpaseo/plugin/client/react-native";
 import { View } from "react-native";
+import type { ReactNode } from "react";
 import type { PlanningIndex } from "../shared/planning.ts";
 import { linkContext, useFile, usePlan } from "./data.ts";
+import { formatClock } from "./format.ts";
 import { Badge, IconButton, MetaRow, Section, StatePanel, T, useKit } from "./kit.tsx";
 import type { Target } from "./markdown.ts";
 import { Markdown } from "./markdown-view.tsx";
-import { responseMatches } from "./nav.ts";
+import { type DetailView, detailView, responseMatches } from "./nav.ts";
 
 interface PaneProps {
   workspaceId: string;
@@ -33,6 +36,36 @@ function Toolbar({ title, copyId, copyPath, canGoBack, onBack, onClose }: { titl
   );
 }
 
+interface DetailQuery {
+  error: Error | null;
+  dataUpdatedAt: number;
+  refetch: () => Promise<unknown>;
+}
+
+// A pane that cannot draw its body: typed failure, unreachable daemon (with retry) or loading.
+function Status({ view, q, toolbar, what, failure }: { view: DetailView; q: DetailQuery; toolbar: ReactNode; what: string; failure: ReactNode }) {
+  const retry = <IconButton icon="RefreshCw" label="Retry" onPress={() => void q.refetch()} />;
+  if (view.state === "failure") return <View style={{ gap: 10 }}>{toolbar}{failure}</View>;
+  if (view.state === "unreachable")
+    return (
+      <View style={{ gap: 10 }}>
+        {toolbar}
+        <StatePanel icon="WifiOff" tone="danger" title="Daemon not reachable" body={q.error?.message ?? `could not load the ${what}`} />
+        {retry}
+      </View>
+    );
+  return <View style={{ gap: 10 }}>{toolbar}<StatePanel icon="Loader" busy title={`Loading ${what}`} /></View>;
+}
+
+function StaleNote({ q }: { q: DetailQuery }) {
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+      <T tone="warning" size={12} style={{ flex: 1 }}>{`Reconnecting · showing what was read at ${formatClock(q.dataUpdatedAt)}`}</T>
+      <IconButton icon="RefreshCw" label="Retry" onPress={() => void q.refetch()} />
+    </View>
+  );
+}
+
 function List({ items }: { items: string[] }) {
   return <T size={13} selectable>{items.length ? items.join(", ") : "—"}</T>;
 }
@@ -43,12 +76,14 @@ export function PlanPane(props: PaneProps & { planId: string }) {
   const q = usePlan(workspaceId, planId);
   const d = q.data;
   const toolbar = <Toolbar title={`Plan ${planId}`} copyId={planId} copyPath={path ?? planId} canGoBack={props.canGoBack} onBack={props.onBack} onClose={props.onClose} />;
-  if (d && !d.ok && !q.isPlaceholderData) return <View style={{ gap: 10 }}>{toolbar}<StatePanel icon="CircleAlert" tone="danger" title={d.code} body={d.message} /></View>;
-  if (!d || !d.ok || q.isPlaceholderData || !responseMatches({ workspaceId, planId, path }, d)) return <View style={{ gap: 10 }}>{toolbar}<StatePanel icon="Loader" busy title="Loading plan" /></View>;
+  const view = detailView(q, responseMatches({ workspaceId, planId, path }, d));
+  if (view.state !== "ready" || !d || !d.ok)
+    return <Status view={view} q={q} toolbar={toolbar} what="plan" failure={d && !d.ok ? <StatePanel icon="CircleAlert" tone="danger" title={d.code} body={d.message} /> : null} />;
   const truths = (d.mustHaves as { truths?: unknown } | null)?.truths;
   return (
     <View style={{ gap: 12 }}>
       {toolbar}
+      {view.stale ? <StaleNote q={q} /> : null}
       {d.goal ? <T selectable>{d.goal}</T> : null}
       <Section title="Plan">
         <MetaRow label="Completion">
@@ -93,11 +128,13 @@ export function FileReader(props: PaneProps & { path: string }) {
   const q = useFile(workspaceId, path);
   const d = q.data;
   const toolbar = <Toolbar title={path.split("/").pop() ?? path} copyPath={path} canGoBack={props.canGoBack} onBack={props.onBack} onClose={props.onClose} />;
-  if (d && !d.ok && !q.isPlaceholderData) return <View style={{ gap: 10 }}>{toolbar}<StatePanel icon="FileX" tone="danger" title={d.code} body={d.message} /></View>;
-  if (!d || !d.ok || q.isPlaceholderData || !responseMatches({ workspaceId, path }, d)) return <View style={{ gap: 10 }}>{toolbar}<StatePanel icon="Loader" busy title="Loading file" /></View>;
+  const view = detailView(q, responseMatches({ workspaceId, path }, d));
+  if (view.state !== "ready" || !d || !d.ok)
+    return <Status view={view} q={q} toolbar={toolbar} what="file" failure={d && !d.ok ? <StatePanel icon="FileX" tone="danger" title={d.code} body={d.message} /> : null} />;
   return (
     <View style={{ gap: 12 }}>
       {toolbar}
+      {view.stale ? <StaleNote q={q} /> : null}
       {d.error ? <T tone="danger" size={12}>{`frontmatter line ${d.error.line}: ${d.error.message}`}</T> : null}
       {d.properties.length > 0 ? (
         <Section title="Properties">

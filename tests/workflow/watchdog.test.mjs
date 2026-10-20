@@ -233,3 +233,21 @@ test("FLOW-38 a workflow run with the watchdog off logs no watchdog line", async
   assert.equal(r.code, 0, r.stderr);
   assert.ok(!r.out.some((l) => l.startsWith("log watchdog")));
 });
+
+test("FLOW-29 FLOW-35 an interrupted long shell call stays tool time: no stop of the retry turn", async () => {
+  const r = await rig({ agent_nudge_s: 0, agent_stop_s: 1800, agent_tool_stuck_s: 900 });
+  await r.at(950 * S);
+  r.call("Bash", { type: "shell", command: "sleep 9999" }, "running", "sh");
+  await r.at(1850 * S);
+  await r.st.retry;
+  assert.equal(r.s.fake.callsOf("cancelAgent").length, 1);
+  await r.at(1860 * S);
+  assert.equal(r.st.stopReason, null);
+  assert.equal(r.s.fake.callsOf("archiveAgent").length, 0);
+  assert.equal(modelMs(r.st, r.clock.now()), 960 * S);
+  // A late terminal event of the interrupted call neither reopens nor double-counts it.
+  r.call("Bash", { type: "shell", command: "sleep 9999" }, "completed", "sh");
+  assert.equal(r.st.calls.size, 0);
+  assert.equal(modelMs(r.st, r.clock.now()), 960 * S);
+  r.hub.close();
+});

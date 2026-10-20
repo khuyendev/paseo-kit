@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readJson, writeJsonAtomic, writeTextAtomic } from "../lib/io.mjs";
 import { textDigest } from "../lib/hash.mjs";
-import { toSlash } from "../lib/paths.mjs";
+import { isInside as isInsideReal, toSlash } from "../lib/paths.mjs";
 import { done, escapeRe, fail, lf, today } from "./common.mjs";
 
 export const INSTALL_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
@@ -70,11 +70,24 @@ function layout(target) {
 
 const readPin = (L) => (fs.existsSync(L.pinFile) ? readJson(L.pinFile) : null);
 
-function lstatFile(file) {
-  const st = fs.lstatSync(file, { throwIfNoEntry: false });
-  if (!st) return "missing";
-  if (st.isSymbolicLink()) return "symlink";
-  return st.isFile() ? "file" : "other";
+// A relative path inside a root: forward slashes only, no empty, `.` or `..` segment, not absolute (INV-40).
+export const safeRel = (rel) => {
+  const s = String(rel ?? "");
+  return s !== "" && !s.includes("\\") && !s.startsWith("/") && !/^[A-Za-z]:/.test(s) && s.split("/").every((seg) => seg && seg !== "." && seg !== "..");
+};
+
+// The kind of root/rel without following a link or junction anywhere on the way (an ancestor link is refused too).
+function lstatInside(root, rel) {
+  if (!safeRel(rel)) return "unsafe";
+  const parts = rel.split("/");
+  for (let i = 1; i <= parts.length; i++) {
+    const st = fs.lstatSync(path.join(root, ...parts.slice(0, i)), { throwIfNoEntry: false });
+    if (!st) return "missing";
+    if (st.isSymbolicLink()) return "symlink";
+    if (i < parts.length && !st.isDirectory()) return "missing";
+    if (i === parts.length) return st.isFile() ? "file" : "other";
+  }
+  return "other";
 }
 
 // Seeds (inventory sources) plus every file they reach, up to depth 3, that exists in the clone.
@@ -86,7 +99,8 @@ function reachable(clone, seeds) {
     const next = [];
     for (const rel of frontier) {
       if (files.has(rel)) continue;
-      const kind = lstatFile(path.join(clone, ...rel.split("/")));
+      const kind = lstatInside(clone, rel);
+      if (kind === "unsafe") throw fail(`refusing a path that is absolute or leaves the upstream clone: ${rel}`);
       if (kind === "symlink") throw fail(`refusing symlink in the upstream clone: ${rel}`);
       if (kind !== "file") {
         if (depth === 0) throw fail(`upstream clone lacks ${rel}`);
@@ -109,14 +123,19 @@ export function vendor(L, clone, commitArg) {
   if (head.commit !== want) throw fail(`upstream clone HEAD ${head.commit} differs from the pin ${want}`);
   const seeds = L.inventory.entries.filter((e) => e.source !== "kit-authored").map((e) => e.source);
   const { files, absent } = reachable(clone, [...new Set(seeds)]);
+  // Every source is read and checked before the snapshot is touched.
+  const realClone = fs.realpathSync.native(clone);
+  const texts = new Map();
   for (const rel of files) {
-    const buf = fs.readFileSync(path.join(clone, ...rel.split("/")));
+    const real = fs.realpathSync.native(path.join(clone, ...rel.split("/")));
+    if (!isInsideReal(real, realClone)) throw fail(`refusing a file outside the upstream clone: ${rel}`);
+    const buf = fs.readFileSync(real);
     if (buf.includes(0)) throw fail(`refusing binary file from the upstream clone: ${rel}`);
+    texts.set(rel, buf.toString("utf8"));
   }
   fs.rmSync(L.snapshot, { recursive: true, force: true });
   const hashes = {};
-  for (const rel of files) {
-    const text = fs.readFileSync(path.join(clone, ...rel.split("/")), "utf8");
+  for (const [rel, text] of texts) {
     writeTextAtomic(path.join(L.snapshot, ...rel.split("/")), text);
     hashes[rel] = textDigest(text);
   }
@@ -141,6 +160,10 @@ export function snapshotProblems(L) {
   const problems = [];
   if (pin.vendored_commit !== pin.commit) problems.push(`pin mismatch: UPSTREAM.json commit ${pin.commit} but the snapshot was vendored from ${pin.vendored_commit}`);
   for (const [rel, hash] of Object.entries(pin.files ?? {})) {
+    if (!safeRel(rel)) {
+      problems.push(`UPSTREAM.json names a path outside the snapshot: ${rel}`);
+      continue;
+    }
     const file = path.join(L.snapshot, ...rel.split("/"));
     if (!fs.existsSync(file)) problems.push(`snapshot file missing: ${rel}`);
     else if (textDigest(fs.readFileSync(file, "utf8")) !== hash) problems.push(`snapshot file edited: ${rel}`);
@@ -222,6 +245,7 @@ export function generate(L) {
   const out = new Map();
   for (const e of L.inventory.entries) {
     if (e.source === "kit-authored" || !e.transformations.length) continue;
+    if (!safeRel(e.installed) || !safeRel(e.source)) throw fail(`inventory entry outside its root: ${e.installed} <- ${e.source}`);
     const src = lf(read(e.source));
     if (e.kind === "agent") out.set(e.installed, agentText(pin, e, src));
     else if (e.transformations.includes("anchor-extraction")) {
@@ -274,7 +298,7 @@ export function check(L, known, { verbose = false } = {}) {
   const problems = snapshotProblems(L);
   const warnings = [];
   const pin = readPin(L);
-  const snapshotFiles = new Set(Object.keys(pin?.files ?? {}));
+  const snapshotFiles = new Set(Object.keys(pin?.files ?? {}).filter(safeRel));
   const absent = new Set(pin?.absent_upstream ?? []);
   let fresh = new Map();
   if (!problems.length) {
@@ -289,20 +313,7 @@ export function check(L, known, { verbose = false } = {}) {
     if (!fs.existsSync(file)) problems.push(`generated file missing: ${rel}`);
     else if (lf(fs.readFileSync(file, "utf8")) !== lf(text)) problems.push(`generated file stale or hand-edited: ${rel}`);
   }
-  const listed = new Set(L.inventory.entries.map((e) => e.installed));
-  for (const dir of [".agents/agents", ".agents/gsd/generated", ".agents/gsd/overlays"]) {
-    const walk = (abs) => {
-      for (const e of fs.existsSync(abs) ? fs.readdirSync(abs, { withFileTypes: true }) : []) {
-        const p = path.join(abs, e.name);
-        if (e.isDirectory()) walk(p);
-        else {
-          const rel = toSlash(path.relative(L.target, p));
-          if (!listed.has(rel)) problems.push(`installed GSD method file not in the inventory: ${rel}`);
-        }
-      }
-    };
-    walk(L.abs(dir));
-  }
+  problems.push(...installedProblems(L, fresh));
   let followed = 0;
   const verbTexts = [...fresh.values()];
   const seen = new Set();
@@ -328,6 +339,55 @@ export function check(L, known, { verbose = false } = {}) {
   const verbs = new Set(verbTexts.flatMap((t) => scanVerbs(t, known)));
   for (const v of [...verbs].sort()) if (!known.has(v)) problems.push(`unmapped gsd-tools verb "${v}" (add a verb-table row with a reason)`);
   return { problems, warnings, references: followed, verbs: verbs.size, verbose };
+}
+
+// Kit-owned namespaces: every file there must be in the inventory. `.agents/agents` also holds project agents
+// (ADPT, D-109), so only the kit's gsd-* names are enforced there.
+const KIT_ONLY = [
+  { dir: ".agents/gsd/generated", owned: () => true },
+  { dir: ".agents/gsd/overlays", owned: () => true },
+  { dir: ".agents/agents", owned: (name) => name.startsWith("gsd-") },
+];
+
+const agentIncludes = (text) => {
+  const { head } = splitFrontMatter(text);
+  const block = /^include:\s*\n((?:[ \t]+-[^\n]*\n?)*)/m.exec(head)?.[1] ?? "";
+  return [...block.matchAll(/^[ \t]+-\s*(.+?)\s*$/gm)].map((m) => m[1].replace(/^["']|["']$/g, ""));
+};
+
+// GSDC-53: every inventory entry exists with its type (generated or not), every agent include exists, and the
+// kit-owned namespaces hold nothing unlisted.
+function installedProblems(L, fresh) {
+  const problems = [];
+  const listed = new Set(L.inventory.entries.map((e) => e.installed));
+  for (const e of L.inventory.entries) {
+    const isDir = e.installed.endsWith("/");
+    const rel = e.installed.replace(/\/$/, "");
+    if (!safeRel(rel)) {
+      problems.push(`inventory entry outside the install root: ${e.installed}`);
+      continue;
+    }
+    const st = fs.statSync(L.abs(rel), { throwIfNoEntry: false });
+    const present = st && (isDir ? st.isDirectory() : st.isFile());
+    if (!present && !fresh.has(e.installed)) problems.push(`installed GSD method file missing: ${e.installed}`);
+    if (e.kind !== "agent" || (!present && !fresh.has(e.installed))) continue;
+    const includes = fresh.has(e.installed) ? (e.include ?? []) : agentIncludes(fs.readFileSync(L.abs(rel), "utf8"));
+    for (const inc of includes) if (!safeRel(inc) || !fs.statSync(L.abs(inc), { throwIfNoEntry: false })?.isFile()) problems.push(`agent include missing: ${e.installed} -> ${inc}`);
+  }
+  for (const { dir, owned } of KIT_ONLY) {
+    const walk = (abs) => {
+      for (const d of fs.existsSync(abs) ? fs.readdirSync(abs, { withFileTypes: true }) : []) {
+        const p = path.join(abs, d.name);
+        if (d.isDirectory()) walk(p);
+        else {
+          const rel = toSlash(path.relative(L.target, p));
+          if (!listed.has(rel) && owned(d.name)) problems.push(`installed GSD method file not in the inventory: ${rel}`);
+        }
+      }
+    };
+    walk(L.abs(dir));
+  }
+  return problems;
 }
 
 function diffStat(before, after) {
@@ -360,6 +420,12 @@ function optionsOf(args, names) {
     else throw fail(`unknown argument ${args[i]}`);
   }
   return opts;
+}
+
+export async function checkTarget(target) {
+  const L = layout(target);
+  const { VERBS } = await import("./commands.mjs");
+  return check(L, new Set([...Object.keys(VERBS), ...Object.keys(L.inventory.extra_verbs ?? {})]));
 }
 
 export async function upstreamVerb(g, sub, args) {

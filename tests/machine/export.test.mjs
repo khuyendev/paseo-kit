@@ -79,6 +79,32 @@ test("MACH-13 a forced leak exits 1 and leaves the old template unchanged", asyn
   assert.equal(templateText(m), old);
 });
 
+test("MACH-13 a short secret-URL host is scrubbed in a description and label (CR-MAC-01)", async () => {
+  const m = await liveWith((p) => {
+    for (const n of ["circle", "circle-agent"]) p[n].env.ANTHROPIC_BASE_URL = "https://api.ai/v1";
+    p.circle.description = "Uses api.ai";
+    p.circle.label = "api.ai circle";
+  });
+  const r = await m.run(["export"]);
+  assert.equal(r.code, 0, r.err.join("\n"));
+  assert.equal(templateText(m).includes("api.ai"), false);
+  const tpl = readTemplate(m);
+  assert.equal(tpl.providers.circle.description, "Uses {{secret:ANTHROPIC_BASE_URL}}");
+  assert.equal(tpl.providers.circle.label, "{{secret:ANTHROPIC_BASE_URL}} circle");
+});
+
+test("MACH-13 a short secret-URL host leaking through metadataGeneration exits 1 and keeps the old template", async () => {
+  const m = await liveWith((p, live) => {
+    for (const n of ["circle", "circle-agent"]) p[n].env.ANTHROPIC_BASE_URL = "https://api.ai/v1";
+    live.agents.metadataGeneration = { providers: [{ provider: "circle", model: "api.ai" }] };
+  });
+  const old = templateText(m);
+  const r = await m.run(["export"]);
+  assert.equal(r.code, 1);
+  assert.equal(r.err[0], "failed: a secret would be written into the template; not written");
+  assert.equal(templateText(m), old);
+});
+
 test("MACH-13 a provider of agent_providers missing from the live config fails", async () => {
   const m = await liveWith((p) => delete p["circle-agent"]);
   const r = await m.run(["export"]);

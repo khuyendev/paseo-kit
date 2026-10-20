@@ -3,13 +3,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { writeJsonAtomic, writeTextAtomic } from "../lib/io.mjs";
+import { samePath } from "../lib/paths.mjs";
 import { done, fail, idList, isFile, lf, nowIso, readIf, rel, today } from "./common.mjs";
 import { comparePhase, findPhase, haltIds, listFiles, padPhase, phasesDir, planIds, readPlans, sharedFile, summaryIds, summaryPath } from "./planning.mjs";
 import { loadRequirements, requirementView, setComplete } from "./requirements.mjs";
 import { annotateSection, insertPhase, loadRoadmap, parseRoadmap, phaseJson, removePhaseText, renumberText, roadmapPhase, setChecklist, setProgressRow, slugify } from "./roadmap.mjs";
-import { advanceState, initState, writeShared } from "./state.mjs";
+import { advanceState, initStateLocked, parseState, writeShared } from "./state.mjs";
 import { completionFile, phaseStatus, readVerification } from "./status.mjs";
 import { frontmatter } from "./yaml.mjs";
+import { validateDraft } from "./draft.mjs";
 
 export function findPhaseVerb(g, ref) {
   const phase = findPhase(g.codeRoot, ref);
@@ -63,6 +65,10 @@ export function roadmapVerb(g, sub, args) {
 // GSDF-95: the approved roadmapper draft becomes ROADMAP, the REQUIREMENTS traceability and a fresh STATE, through the
 // single writer (GSDC-12). The drafts stay in place as the record of what was approved.
 function installDraft(g) {
+  return writeShared(g, () => installDraftLocked(g));
+}
+
+function installDraftLocked(g) {
   const drafts = path.join(path.dirname(sharedFile(g.codeRoot, "ROADMAP.md")), "drafts");
   const draft = readIf(path.join(drafts, "ROADMAP.md"));
   if (draft === null) throw fail("no .planning/drafts/ROADMAP.md");
@@ -78,15 +84,17 @@ function installDraft(g) {
   const known = new Set(parsed.phases.map((p) => p.padded));
   const bad = Object.entries(trace).filter(([, ph]) => !known.has(padPhase(String(ph).replace(/^Phase\s+/i, ""))));
   if (bad.length) throw fail(`traceability names phases missing from the draft: ${bad.map(([id, ph]) => `${id} -> ${ph}`).join(", ")}`);
-  const result = writeShared(g, () => {
+  const reqFile = sharedFile(g.codeRoot, "REQUIREMENTS.md");
+  const reqText = readIf(reqFile);
+  const validation = validateDraft(reqText ?? "", draft, trace, g.cfg.gsd.requirement_id_regex);
+  if (!validation.ok) throw fail(validation.problems.join("; "));
+  const result = (() => {
     writeTextAtomic(sharedFile(g.codeRoot, "ROADMAP.md"), lf(draft));
-    const reqFile = sharedFile(g.codeRoot, "REQUIREMENTS.md");
-    const reqText = readIf(reqFile);
     if (reqText !== null) writeTextAtomic(reqFile, withTraceability(reqText, trace));
     return { roadmap: rel(g.codeRoot, sharedFile(g.codeRoot, "ROADMAP.md")), phases: parsed.phases.length, traced: Object.keys(trace).length, requirements: reqText !== null };
-  });
+  })();
   const stateCreated = !fs.existsSync(sharedFile(g.codeRoot, "STATE.md"));
-  if (stateCreated) initState(g, {});
+  if (stateCreated) initStateLocked(g, {});
   return { ...result, state: stateCreated ? "initialised" : "kept" };
 }
 
@@ -158,14 +166,29 @@ export function phaseInsert(g, after, name, { goal } = {}) {
 }
 
 const STARTED_ARTIFACTS = ["plan", "summary", "verification", "uat", "outline"];
+const PLACEHOLDERS = new Set([".keep", ".gitkeep"]);
+
+// Anything but a placeholder is owner work (CONTEXT, RESEARCH, checkpoints, attempts, notes): never deleted (GSDC-15).
+const ownerFiles = (dir) => fs.readdirSync(dir).filter((n) => !PLACEHOLDERS.has(n));
+
+function activePhase(g) {
+  const text = readIf(sharedFile(g.codeRoot, "STATE.md"));
+  if (text === null) return null;
+  const st = parseState(text);
+  if (st.error) throw fail(`STATE.md frontmatter: ${st.error}; cannot tell whether the phase is in the future`);
+  return st.fm.active_phase === null || st.fm.active_phase === undefined ? null : String(st.fm.active_phase);
+}
 
 export function phaseRemove(g, ref) {
   return writeShared(g, () => {
     const roadmap = loadRoadmap(g.codeRoot, g.cfg);
     const entry = roadmapPhase(roadmap, ref);
     if (!entry) throw fail(`phase ${ref} has no ROADMAP entry`);
+    const active = activePhase(g);
+    if (active !== null && comparePhase(entry.number, active) <= 0) throw fail(`phase ${entry.number} is not in the future (STATE active phase ${active}); only a future phase can be removed`);
     const phase = findPhase(g.codeRoot, ref);
-    if (phase && STARTED_ARTIFACTS.some((k) => listFiles(phase, k).length)) throw fail(`phase ${entry.number} has started (plans or reports exist); only an unstarted future phase can be removed`);
+    const owned = phase ? ownerFiles(phase.dir) : [];
+    if (owned.length) throw fail(`phase ${entry.number} has work on disk (${owned.join(", ")}); only an empty future phase can be removed`);
     if (entry.number.includes(".") === false && roadmap.phases.some((p) => p.number.startsWith(`${entry.number}.`))) throw fail(`phase ${entry.number} has inserted phases; remove those first`);
     const later = roadmap.phases.filter((p) => comparePhase(p.number, entry.number) > 0);
     for (const p of later) {
@@ -179,18 +202,25 @@ export function phaseRemove(g, ref) {
         mapping.set(p.number, [String(Number(head) - 1), ...rest].join("."));
       }
     }
+    // Preflight every rename before any write: a destination may only be a directory this removal frees.
+    const moves = [...mapping].sort((a, b) => comparePhase(a[0], b[0])).map(([from, to]) => ({ from, to, ph: findPhase(g.codeRoot, from) })).filter((m) => m.ph);
+    const freed = [phase?.dir, ...moves.map((m) => m.ph.dir)].filter(Boolean);
+    for (const m of moves) {
+      m.target = path.join(phasesDir(g.codeRoot), `${padPhase(m.to)}${m.ph.slug ? `-${m.ph.slug}` : ""}`);
+      if (fs.existsSync(m.target) && !freed.some((d) => samePath(d, m.target))) throw fail(`renumbering ${m.from} -> ${m.to} would overwrite ${rel(g.codeRoot, m.target)}`);
+    }
     let text = removePhaseText(roadmap.text, roadmap, entry);
     text = renumberText(text, mapping);
     writeTextAtomic(sharedFile(g.codeRoot, "ROADMAP.md"), text);
     const reqFile = sharedFile(g.codeRoot, "REQUIREMENTS.md");
     const reqText = readIf(reqFile);
     if (reqText !== null && mapping.size) writeTextAtomic(reqFile, renumberText(reqText, mapping));
-    if (phase) fs.rmSync(phase.dir, { recursive: true });
+    if (phase) {
+      for (const n of fs.readdirSync(phase.dir)) fs.rmSync(path.join(phase.dir, n));
+      fs.rmdirSync(phase.dir);
+    }
     const renamed = [];
-    for (const [from, to] of [...mapping].sort((a, b) => comparePhase(a[0], b[0]))) {
-      const ph = findPhase(g.codeRoot, from);
-      if (!ph) continue;
-      const target = path.join(phasesDir(g.codeRoot), `${padPhase(to)}${ph.slug ? `-${ph.slug}` : ""}`);
+    for (const { from, to, ph, target } of moves) {
       fs.renameSync(ph.dir, target);
       for (const name of fs.readdirSync(target)) if (name.startsWith(`${ph.padded}-`)) fs.renameSync(path.join(target, name), path.join(target, `${padPhase(to)}-${name.slice(ph.padded.length + 1)}`));
       renamed.push({ from, to });
@@ -268,17 +298,20 @@ export function requirementsVerb(g, sub, args) {
 
 // --- uat-passed (GSDC-16) ---
 
+// The `### N. Name` tests plus every other `###` heading under `## Tests` (malformed: never silently dropped).
 export function parseUat(text) {
   const tests = [];
   const re = /^###\s+(\d+)\.\s*(.+?)\s*$/gm;
   const body = String(text ?? "").replace(/\r\n?/g, "\n");
   const heads = [...body.matchAll(re)];
   heads.forEach((m, i) => {
-    const chunk = body.slice(m.index, heads[i + 1]?.index ?? body.length);
+    const chunk = body.slice(m.index, heads[i + 1]?.index ?? body.length).split(/^##\s/m)[0];
     const result = /^result:\s*\[?([a-z_]+)\]?/m.exec(chunk)?.[1] ?? "pending";
     tests.push({ number: Number(m[1]), name: m[2], result, blocked_by: /^blocked_by:\s*(.+)$/m.exec(chunk)?.[1]?.trim() ?? null });
   });
-  return tests;
+  const section = /^##\s+Tests\s*$([\s\S]*?)(?=^##\s|(?![\s\S]))/m.exec(body)?.[1] ?? "";
+  const malformed = section.split("\n").filter((l) => /^###/.test(l) && !/^###\s+\d+\.\s*\S/.test(l)).map((l) => l.trim());
+  return { tests, malformed };
 }
 
 export function uatPassed(g, phase, { requireVerification, uatOnly }) {
@@ -286,7 +319,10 @@ export function uatPassed(g, phase, { requireVerification, uatOnly }) {
   const blockers = [];
   const checks = [];
   for (const name of uatFiles) {
-    const tests = parseUat(readIf(path.join(phase.dir, name)));
+    const { tests, malformed } = parseUat(readIf(path.join(phase.dir, name)));
+    // GSDC-16: an empty, draft or malformed UAT is no passed human verification.
+    if (!tests.length) blockers.push({ file: name, reason: "no recognized test (### N. Name)" });
+    for (const h of malformed) blockers.push({ file: name, reason: `unrecognized test heading: ${h}` });
     for (const t of tests) {
       checks.push({ file: name, ...t });
       if (t.result !== "pass") blockers.push({ file: name, test: t.number, name: t.name, result: t.result, blocked_by: t.blocked_by });

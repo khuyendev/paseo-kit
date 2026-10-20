@@ -3,13 +3,21 @@
 // shown: in place while the read is unchanged, else at the one place that matches (moved). Changed lines are never
 // edited.
 import { hashLine, NOT_RETAINED } from "./store.mjs";
-import { pathKey } from "./targets.mjs";
+import { fileKey, pathKey } from "./targets.mjs";
 import { renderLines } from "./reader.mjs";
 
 const CONTEXT = 2;
 const SHOW_LINES = 20;
 const MAX_LISTED = 10;
 const MAX_PLACES = 20;
+
+function sameFile(a, b) {
+  try {
+    return fileKey(a) === fileKey(b);
+  } catch {
+    return false;
+  }
+}
 
 export const isLineEdit = (e) => e.from !== undefined || e.to !== undefined || e.after !== undefined;
 const span = (a, b) => (a === b ? `line ${a}` : `lines ${a}-${b}`);
@@ -41,7 +49,7 @@ function locate(store, p, cur, curH, e, pick) {
   if (!e.tag) return { retag: true, why: "a line edit needs the tag of the read_ranges entry that showed the lines, on the file entry" };
   const snap = store.read(e.tag);
   if (!snap) return { retag: true, why: `unknown tag ${e.tag} (expired, or from an earlier server process); read the lines again with read_ranges` };
-  if (pathKey(snap.abs) !== pathKey(p.abs)) return { retag: true, why: `tag ${e.tag} is a read of ${snap.abs}, not of this file` };
+  if (pathKey(snap.abs) !== pathKey(p.abs) && !sameFile(snap.abs, p.abs)) return { retag: true, why: `tag ${e.tag} is a read of ${snap.abs}, not of this file` };
   const insert = e.after !== undefined;
   const a = insert ? e.after + 1 : e.from;
   const b = insert ? e.after : e.to ?? e.from;

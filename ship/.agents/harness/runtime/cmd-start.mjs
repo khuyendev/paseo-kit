@@ -118,14 +118,18 @@ async function collect(ctx, session, live, blocks, spec) {
     inFlight++;
   }
 
+  // CR-PHC-02: the inFlight reservation is released exactly once per admitted block, whether or not it got an agent;
+  // liveCount keeps only agents that may still be live (kept, unarchived, or a failed create whose archive failed).
   async function runBlock(b) {
     let agent = null;
+    let admitted = false;
     try {
       await admit();
+      admitted = true;
       try {
         agent = await startAgent(ctx, session, { ...spec(b), kind: "oneshot" });
       } catch (e) {
-        liveCount--;
+        if (!(e.agentId && e.archived === false)) liveCount--;
         throw e;
       }
       ctx.out(`${agent.id} ${b.name}`);
@@ -148,7 +152,7 @@ async function collect(ctx, session, live, blocks, spec) {
           ctx.out(failedLine(`archive ${b.name}`, e));
         }
       }
-      if (agent) inFlight--;
+      if (admitted) inFlight--;
       changed();
     }
   }

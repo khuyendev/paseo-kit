@@ -75,7 +75,8 @@ export async function startAgent(ctx, session, spec) {
       sel: spec.sel, prompt, title: spec.name, name: spec.name, swarm: spec.swarm, cwd: wt?.path ?? spec.workdir ?? ctx.root, readOnly,
     });
   } catch (e) {
-    if (wt) discardWorktree(wt);
+    // An unconfirmed archive leaves a live worker using this tree (CR-FND-02).
+    if (wt && (!e.agentId || e.archived === true)) discardWorktree(wt);
     throw e;
   }
 }

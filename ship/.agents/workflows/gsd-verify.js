@@ -56,18 +56,34 @@ const REPORT = `${phaseDir}/${nn}-VERIFICATION.md`;
 
 // ---- gate evidence (GSDF-55, ADPT-17): stale or invalid evidence is listed as stale, never as proof ----
 phase("Evidence");
+// The planned obligations of every handoff wave: the expected steps of each evidence file come from the plans, not
+// from the evidence (CR-GSF-11).
+const planned = [];
+for (const pre of ["", "gap-"]) for (let k = 1; ; k++) {
+  const r = await flow(["read", `${phaseDir}/handoff/${pre}w${k}.args.json`]);
+  if (!r.json?.exists) break;
+  const h = JSON.parse(r.json.text);
+  for (const t of h.tasks ?? []) planned.push({ id: t.plan, owns: t.owns ?? [], verify: t.verify ?? [], waveId: h.waveId ?? `${pre}w${k}`, batch: `${pre}batch` });
+}
 const checkedEvidence = [];
 for (const p of evidence) {
-  const c = await flow(["evidence-check", p]);
+  const c = await flow(["evidence-check", p], { plans: planned });
   checkedEvidence.push({ path: p, status: c.json?.status ?? "invalid", reason: c.json?.reason ?? null });
   if (c.code !== 0) log(`evidence ${p} is ${c.json?.status ?? "invalid"}: ${c.json?.reason ?? ""}`);
 }
 const current = checkedEvidence.filter((e) => e.status === "current").map((e) => e.path);
 const stale = checkedEvidence.filter((e) => e.status !== "current");
 const checkedHash = (await gsd(["revisions", "hash", phaseDir, "checked"])).json?.hash ?? "none";
-const inputDigest = await sha(JSON.stringify({ checked: checkedHash, baseline: a.baseline ?? null, evidence: checkedEvidence.map(({ path, status }) => ({ path, status })) }));
-// The previous report's identity as verification status reports it (the same sha the readback compares).
-const before = (await gsd(["verification", "status", phaseDir])).json?.sha ?? (await fileSha(REPORT));
+const evidenceIdentities = [];
+for (const e of checkedEvidence) evidenceIdentities.push({ ...e, sha: await fileSha(e.path) });
+const judgedInputs = await flow(["digest"], { owns: planned.flatMap((p) => p.owns).filter((p) => !String(p).includes("VERIFICATION.md")), files: [".planning/ROADMAP.md", ".planning/REQUIREMENTS.md", `${phaseDir}/${nn}-CONTEXT.md`, `${phaseDir}/${nn}-WIRING.md`] });
+if (judgedInputs.code !== 0) return { status: "failed", reason: "verification input digest unavailable" };
+const inputDigest = await sha(JSON.stringify({ checked: checkedHash, baseline: a.baseline ?? null, evidence: evidenceIdentities, code: judgedInputs.json.hash }));
+// The previous report's identity as verification status reports it (the same sha the readback compares). A resumed
+// attempt keeps the identity it recorded before its dispatch; the report on disk may already be its own (CR-GSF-12).
+const shown = await gsd(["attempt", "show", phaseDir, "--kind", "verify"]);
+const resumed = shown.code === 0 && shown.json?.runId === runId && shown.json?.inputDigest === inputDigest;
+const before = resumed ? (shown.json.before ?? null) : ((await gsd(["verification", "status", phaseDir])).json?.sha ?? (await fileSha(REPORT)));
 const attempt = (await gsd(["attempt", "record", phaseDir, "--kind", "verify"], { runId, inputDigest, before })).json;
 if (!attempt?.key) return { status: "failed", reason: "attempt record verify failed" };
 
@@ -77,7 +93,9 @@ async function readback(returned) {
   if (st.code !== 0) return { status: "failed", reason: `${REPORT} is invalid: ${st.json?.error ?? st.json?.reason ?? st.json?.status}` };
   if (before && st.json.sha === before) return { status: "failed", reason: `${REPORT} is unchanged from the previous report` };
   if (returned && returned !== st.json.status) log(`verifier returned ${returned} but ${REPORT} says ${st.json.status}; the file wins`);
-  await gsd(["attempt", "record", phaseDir, "--kind", "verify"], { runId, inputDigest, before, done: true, result: st.json.sha });
+  if (attempt.done && attempt.result !== st.json.sha) return { status: "failed", reason: `${REPORT} differs from this attempt's accepted report` };
+  const accepted = await gsd(["attempt", "record", phaseDir, "--kind", "verify"], { runId, inputDigest, before, done: true, result: st.json.sha });
+  if (accepted.code !== 0) return { status: "failed", reason: `verification attempt could not record report ${st.json.sha}` };
   return { status: st.json.status, path: REPORT, score: st.json.score ?? null, gaps: st.json.gaps ?? [], humanVerification: st.json.human_verification ?? [], sha: st.json.sha };
 }
 

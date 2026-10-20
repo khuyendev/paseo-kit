@@ -150,7 +150,7 @@ test("GSDF-30 executing the gap wave marks waveExecuted before the first executo
   assert.equal(r.result.status, "executed");
   const g2 = makeExecWorld({ waves: [[task("01-03")]], prefix: "gap-", meta: { "01-03": { gap: true } } });
   g2.attempts.gap = { ...g.attempts.gap };
-  const again = await exec(g2, { gapsOnly: true });
+  const again = await runScript("gsd-execute", { root: g2.root, runId: "wf_fresh", args: { phaseDir: PHASE_DIR, gapsOnly: true }, gsd: g2.gsd, agent: executor(g2) });
   assert.equal(again.calls.length, 0);
   assert.match(again.result.reason, /capped at one wave/);
 });

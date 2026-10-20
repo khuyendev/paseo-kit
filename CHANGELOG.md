@@ -31,3 +31,13 @@ First release of the from-scratch kit (owner decisions D-109, D-110, D-111, appr
 - Harness method skills carried unchanged except inventoried adapter regions: `harness`, `harness-evolve`,
   `ai-orchestrator` (HARN-17, D-111).
 - Paseo plugins (not installed into projects): swarm map and planning panel.
+- Owner-authorized review/fix pass, 2026-10-20 (the approved specification and final-integration task): closed
+  cross-area cleanup, pagination, byte-hashing, doctor, adapter evidence and roadmap-coverage defects; completed
+  batch-worktree accepted-dependency seeding. Regressions exercise actual runtime consumers with offline fakes.
+- Area fixes harden install containment and retirement, machine secret scrubbing and link rollback, file-tool
+  recovery and alias handling, hook concurrency, workflow sessions/deadlines, GSD resume/review/commit gates,
+  and read-only panel loading/aggregation. GSD research routing adapter wording now offers explicit refresh for
+  stale/blocked reports (GSDF-13); protected harness method and vendored GSD bodies remain unchanged (D-111).
+- Evidence: full offline `npm test`, all four former TODO tests activated, source-provenance and vanilla scans,
+  plugin type/host-bundle checks and release check; details and manual-only acceptance still owed are recorded
+  in `.planning/integration/code-final.md`. No live generator acceptance is claimed.

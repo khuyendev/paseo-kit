@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { contextOutput, DAY_MS, isScript, loadHookConfig, pruneOlderThan, readJsonFile, readTailText, runHook, sha256 } from "./lib/hook_common.mjs";
+import { contextOutput, DAY_MS, isScript, loadHookConfig, publishExclusive, pruneOlderThan, readJsonFile, readTailText, runHook, sha256 } from "./lib/hook_common.mjs";
 
 const STATE_PREFIX = "ph-context-guard-";
 
@@ -54,44 +54,35 @@ export function reminderText({ pct, used, window }, cfg) {
     + `You will be reminded again at the next ${cfg.step_pct}% step.`;
 }
 
-function readState(dir) {
-  try {
-    const s = readJsonFile(path.join(dir, "state.json"));
-    if (Number.isInteger(s.band) && Number.isInteger(s.epoch)) return s;
-  } catch {}
-  return { band: -1, epoch: 0 };
-}
+const RECORD_RE = /^(\d+)\.json$/;
+const MAX_TRANSITIONS = 50;
 
-// Best effort: a lost state write only means the claim files decide (a claimed band stays silent).
-function writeState(dir, state) {
-  const tmp = path.join(dir, `state.${process.pid}.${Date.now()}.tmp`);
-  try {
-    fs.writeFileSync(tmp, JSON.stringify(state), "utf8");
-    fs.renameSync(tmp, path.join(dir, "state.json"));
-  } catch {
-    fs.rmSync(tmp, { force: true });
+// The session state is a chain of immutable records `<seq>.json` ({band}); the highest seq is the current band.
+export function readHead(dir) {
+  let seq = 0;
+  for (const name of fs.readdirSync(dir)) {
+    const m = RECORD_RE.exec(name);
+    if (m) seq = Math.max(seq, Number(m[1]));
   }
+  if (!seq) return { seq, band: -1 };
+  const { band } = readJsonFile(path.join(dir, `${seq}.json`));
+  if (!Number.isInteger(band)) throw new Error(`context guard state ${seq} has no band`);
+  return { seq, band };
 }
 
-// HOOK-09: the decision to remind is one exclusive create of `claim-e<epoch>-b<band>`; a downward move lowers the
-// stored band and opens a new epoch, so a later climb claims fresh names. No PID or mtime recovery: a crash after the
-// claim loses that one reminder.
-export function claimBand(dir, band) {
+// HOOK-09: every band change, up or down, is one exclusive publish of record seq+1; the winner of an upward change
+// reminds, a loser retries from the record that beat it. One transition per decision closes the reset-versus-climb
+// lost update and the crash residue that kept later climbs silent (CR-HOK-01). No PID or mtime recovery: a crash
+// after the publish loses that one reminder, and the next downward change re-arms it. Records are never pruned
+// inside the chain (a freed seq could be won twice); the whole session dir goes after 24 h.
+export function claimBand(dir, band, head = null) {
   fs.mkdirSync(dir, { recursive: true });
-  const state = readState(dir);
-  if (band < state.band) {
-    writeState(dir, { band, epoch: state.epoch + 1 });
-    return false;
+  for (let i = 0; i < MAX_TRANSITIONS; i++) {
+    const cur = i === 0 && head ? head : readHead(dir);
+    if (band === cur.band) return false;
+    if (publishExclusive(path.join(dir, `${cur.seq + 1}.json`), JSON.stringify({ band }))) return band > cur.band;
   }
-  if (band === state.band || band < 0) return false;
-  try {
-    fs.writeFileSync(path.join(dir, `claim-e${state.epoch}-b${band}`), "", { flag: "wx" });
-  } catch {
-    return false;
-  }
-  writeState(dir, { band, epoch: state.epoch });
-  pruneOlderThan(dir, 0, (name) => name.startsWith("claim-e") && !name.startsWith(`claim-e${state.epoch}-`));
-  return true;
+  return false;
 }
 
 // HOOK-12: identity first; a non-main session returns before any config, transcript or state read.

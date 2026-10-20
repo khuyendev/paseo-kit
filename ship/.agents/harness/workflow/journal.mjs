@@ -10,7 +10,7 @@ export const DEFAULT_RUNS_DIR = path.join("_workspace", "_runs");
 export const RUN_FILES = Object.freeze({ script: "script.js", args: "args.json", run: "run.json", journal: "journal.jsonl", log: "log.txt", result: "result.json" });
 
 // Options that change what the agent does; label, phase, keep, role and session are not part of the key (FLOW-15).
-const CACHE_KEY_OPTIONS = ["schema", "agentType", "model", "effort", "isolation", "readOnly", "cwd"];
+const CACHE_KEY_OPTIONS = ["schema", "agentType", "model", "effort", "isolation", "readOnly", "cwd", "worktreeSeed"];
 
 // `identity` is the host's resolution of the call: role-text hash and the resolved provider/model and effort, so an
 // edited definition or role table invalidates the cached calls it affects.

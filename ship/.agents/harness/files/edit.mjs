@@ -6,7 +6,7 @@ import { guessPath } from "./guess.mjs";
 import { isLineEdit, lineEdits, lineFix, lineLabel, skip } from "./lines.mjs";
 import { BINARY_PROBE_BYTES } from "./reader.mjs";
 import { NOT_RETAINED } from "./store.mjs";
-import { absolutePath, pathKey } from "./targets.mjs";
+import { absolutePath, fileKey } from "./targets.mjs";
 
 // shortest matching start or end worth reporting or pairing, shortest newText worth looking for, most places listed,
 // characters quoted at a difference, most positions paired into a suggestion, allowed length difference of a
@@ -171,6 +171,8 @@ function fail(env, p, oldText, newText, label, d, id) {
 
 // one oldText edit against the file state p: apply it, skip it (already in the file) or fail it with a diagnosis
 function attempt(env, p, oldText, newText, label, id, ...sigs) {
+  // CR-FIL-04: an empty oldText (also one retained by an earlier version) would never advance the count
+  if (!oldText) return fail(env, p, "", newText, label, { why: "oldText is empty (for a line edit give from/to or after, with the tag on the file entry)" }, id);
   const n = count(p.text, oldText);
   if (n !== 1) return fail(env, p, oldText, newText, label, diagnose(env, p, oldText, newText, n), id);
   const at = p.text.indexOf(oldText);
@@ -185,12 +187,14 @@ function hasMixedEndings(raw) {
   return crlf > 0 && crlf !== raw.split("\n").length - 1;
 }
 
-// The file state of abs for this call (a file listed again continues from the earlier entries' text), or a reason.
+// The file state of abs for this call (a file listed again, under any spelling, continues from the earlier entries'
+// text), or a reason.
 function load(env, abs) {
-  const known = env.byFile.get(pathKey(abs));
-  if (known) return { p: known };
   try {
     env.guard(abs);
+    const key = fileKey(abs);
+    const known = env.byFile.get(key);
+    if (known) return { p: known };
     const stat = fs.statSync(abs);
     if (stat.isDirectory()) return { reason: "is a folder, not a file" };
     const raw = fs.readFileSync(abs);
@@ -200,7 +204,7 @@ function load(env, abs) {
     const crlf = text.includes("\r\n");
     const base = crlf ? lf(text) : text;
     const p = { abs, crlf, base, text: base, applied: 0, failed: 0, sigs: [] };
-    env.byFile.set(pathKey(abs), p);
+    env.byFile.set(key, p);
     return { p };
   } catch (e) {
     return { reason: e.code === "ENOENT" ? "file not found" : e.message };
@@ -210,6 +214,9 @@ function load(env, abs) {
 function retryFix(env, fx) {
   const { run, store } = env;
   const id = String(fx.id);
+  // CR-FIL-03: a fix runs at most once per call; its ID is consumed only when the call commits
+  if (env.reserved.has(id)) return skip(run, id, "this fix ID is listed again in this call; it was handled once");
+  env.reserved.add(id);
   const e = store.fix(id);
   if (!e) {
     run.failed.push(`${id}: unknown fix id (or expired); IDs are session-bound, used once, and retained up to 500 failures or 8 MiB (oldest evicted); resend the edit`);
@@ -228,7 +235,7 @@ function retryFix(env, fx) {
   const newText = fx.newText !== undefined ? lf(fx.newText) : e.newText;
   const firstSig = store.sign(p.abs, "text", e.oldText, e.newText); // a later resend of the edit as first sent is a skip
   if (fx.oldText !== undefined) return attempt(env, p, lf(fx.oldText), newText, label, id, firstSig);
-  if (fx.occurrence !== undefined && e.occurrences) {
+  if (fx.occurrence !== undefined && e.occurrences && e.oldText) {
     const at = [];
     for (let i = p.text.indexOf(e.oldText); i !== -1; i = p.text.indexOf(e.oldText, i + e.oldText.length)) at.push(i);
     if (at.length === e.occurrences && fx.occurrence <= at.length) return apply(env, p, at[fx.occurrence - 1], e.oldText.length, newText, id, firstSig);
@@ -278,7 +285,7 @@ const RETRY = "Fix a failed edit in a later call by its id in fixes, in the form
 export function editMultiple({ files = [], fixes = [], dryRun = false, atomic = false }, ctx) {
   if (!files.length && !fixes.length) return { isError: true, text: "nothing written: give files, fixes or both" };
   const run = { failed: [], skipped: [], moved: [], failedEdits: 0, used: [] };
-  const env = { ...ctx, run, byFile: new Map(), queue: [] };
+  const env = { ...ctx, run, byFile: new Map(), queue: [], reserved: new Set() };
   for (const fx of fixes) retryFix(env, fx); // fixes of earlier failures first: they finish the earlier call
   for (const f of [...files, ...env.queue]) editEntry(env, f); // then the {id, path} file fixes queued above
   const states = [...env.byFile.values()].filter((p) => p.applied);
@@ -295,7 +302,7 @@ export function editMultiple({ files = [], fixes = [], dryRun = false, atomic = 
     run.failedEdits && `failed:\n${run.failed.join("\n")}`,
   ].filter(Boolean);
   if (run.failedEdits && (atomic || !plan.length)) {
-    if (!plan.length && !dryRun) consume();
+    if (!plan.length && !dryRun && !atomic) consume(); // CR-FIL-05: an atomic abort keeps every ID
     return { isError: true, text: [`nothing written${atomic && plan.length ? " (atomic: true)" : ""}: ${run.failedEdits} edit(s) failed. ${RETRY}`, ...report].join("\n") };
   }
   if (!dryRun) {
@@ -324,11 +331,12 @@ export function writeMultiple({ files }, ctx) {
       const abs = absolutePath(f.path, ctx.cwd);
       ctx.guard(abs);
       if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) throw new Error(`${f.path}: is a folder, not a file`);
-      if (seen.has(pathKey(abs))) {
+      const key = fileKey(abs);
+      if (seen.has(key)) {
         errors.push(`${f.path}: listed twice`);
         continue;
       }
-      seen.add(pathKey(abs));
+      seen.add(key);
       plan.push({ abs, text: f.content });
     } catch (e) {
       errors.push(e.message.startsWith(f.path) ? e.message : `${f.path}: ${e.message}`);

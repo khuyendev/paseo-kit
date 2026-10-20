@@ -6,13 +6,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { SHIP_DIR } from "../helpers/temp.mjs";
+import { createWorktree } from "../../ship/.agents/harness/runtime/worktrees.mjs";
+import { AGENT_OPTIONS } from "../../ship/.agents/harness/workflow/engine.mjs";
 
 const WORKFLOWS = path.join(SHIP_DIR, ".agents", "workflows");
 const flowMod = await import(pathToFileURL(path.join(WORKFLOWS, "lib", "gsd-flow.mjs")).href);
 const configMod = await import(pathToFileURL(path.join(SHIP_DIR, ".agents", "harness", "config.mjs")).href);
 const AsyncFunction = (async () => {}).constructor;
 // FLOW-04 options plus `detail` and `timeoutS` (as the engine).
-const AGENT_OPTS = new Set(["label", "phase", "schema", "agentType", "role", "model", "effort", "isolation", "readOnly", "cwd", "keep", "session", "detail", "timeoutS"]);
+const AGENT_OPTS = new Set(AGENT_OPTIONS);
 const GROUPS = new Set(["research", "revisions", "attempt", "outline", "check", "verify", "verification", "state", "roadmap", "phase", "debug", "requirements", "init"]);
 
 export const NULL = (reason) => ({ __null: reason });
@@ -68,16 +70,26 @@ export async function runScript(name, opts) {
   let depth = 0;
   let n = 0;
   const respond = opts.agent ?? (() => NULL("no responder"));
+  const sessions = new Map();
 
   async function agent(prompt, o = {}) {
     for (const k of Object.keys(o)) if (!AGENT_OPTS.has(k)) throw new Error(`unknown option '${k}'`);
     const call = { n: ++n, prompt, opts: o, running: true };
     calls.push(call);
-    // FLOW-27 stand-in: a real git worktree per call that asks for isolation.
-    if (o.isolation === "worktree") {
+    // As the engine (SESSION_FIXED): a session key keeps its options; a continuation reuses its worktree.
+    if (o.session !== undefined) {
+      const fixed = { agentType: o.agentType ?? null, role: o.role ?? null, readOnly: o.readOnly === true, cwd: o.cwd ?? null, isolation: o.isolation ?? null };
+      const first = sessions.get(o.session);
+      if (first) {
+        for (const [k, v] of Object.entries(fixed)) if (first.fixed[k] !== v) throw new Error(`session ${o.session} cannot change ${k}; use a new session key`);
+        call.worktree = first.worktree;
+      } else sessions.set(o.session, { fixed, worktree: null, call });
+    }
+    // FLOW-27 stand-in: a real git worktree per agent that asks for isolation.
+    if (o.isolation === "worktree" && !call.worktree) {
       call.worktree = `.claude/worktrees/${runId}-${call.n}`;
-      const r = spawnSync("git", ["worktree", "add", "-q", "-b", `harness/${runId}-${call.n}`, call.worktree], { cwd: root, encoding: "utf8", windowsHide: true });
-      if (r.status !== 0) throw new Error(`worktree: ${r.stderr}`);
+      createWorktree(root, configMod.loadConfig(root), `${runId}-${call.n}`, { seed: o.worktreeSeed });
+      if (o.session !== undefined) sessions.get(o.session).worktree = call.worktree;
     }
     let value;
     try { value = await respond(prompt, o, call.n, calls); } finally { call.running = false; }

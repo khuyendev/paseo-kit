@@ -41,9 +41,33 @@ function scalar(raw) {
   return stripComment(text);
 }
 
+// Commas, `]` and comments are syntax only outside quotes, so a quoted item keeps `,` and ` # ` (CR-PHC-07).
 function flowList(text) {
-  const inner = stripComment(text.replace(/\]\s*(#.*)?$/, "")).replace(/^\[/, "");
-  return inner.split(",").map((item) => scalar(item)).filter((item) => item !== "");
+  const items = [];
+  let item = "";
+  let quote = null;
+  for (let i = 1; i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      if (quote === '"' && ch === "\\" && i + 1 < text.length) {
+        item += ch + text[++i];
+        continue;
+      }
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === "," || ch === "]") {
+      items.push(item);
+      item = "";
+      if (ch === "]") break;
+      continue;
+    } else if (ch === "#" && (i === 1 || /\s/.test(text[i - 1]))) {
+      break;
+    }
+    item += ch;
+  }
+  if (item.trim()) items.push(item);
+  return items.map((raw) => scalar(raw)).filter((value) => value !== "");
 }
 
 export function splitFrontMatter(text) {

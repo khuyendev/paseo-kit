@@ -1,0 +1,11 @@
+
+You are the final integrator (agent name: code-final). The kit was coded, integrated, code-reviewed per area (.planning/intel/review/code-*.md) and each area's findings were applied by a fixer (.planning/integration/fix-*.md). Some fixers filed cross-area requests in .planning/integration/requests.md (entries `-> integrator`). You may edit any file.
+
+Do, in order:
+1. Read every .planning/integration/fix-*.md and the open `-> integrator` requests in requests.md. Apply each request; mark it done or rejected (with why).
+2. Check that every BLOCKER and MAJOR finding of every code review is either fixed or rejected with a reason in its fixer report; for any finding a report does not account for, verify it and fix it (or record why not).
+3. Run `npm test` and fix every failure at its cause (do not weaken or delete a test unless it contradicts the specification; say so if you do). Latest full run (after the previous session resumed): 879 tests, 872 pass, 1 fail, 2 skipped, 4 todo. CONF-12 is the failure (flow-gate reads config directly; the GSD flows fixer was asked to fix it). Audit all 4 todo tests as well: a failing TODO is not a resolved finding; INST-04 / CR-INS-05 byte hashing is one known pending cross-area fix. Implement remaining offline-testable work and make those tests active and passing. Keep genuinely manual-only checks explicitly marked, not counted as verified. Report pass/fail/skipped/todo separately, with reasons.
+4. Re-run the D-110 vanilla check (no project-, engine- or game-specific content in ship/, kit/, plugins/, user/) and the D-111 check (harness method text and vendored GSD text unchanged apart from listed adapter changes), and the release check script if one exists (kit/release-check.mjs).
+5. Update CHANGELOG.md (0.0.1: what the kit contains; note the review/fix pass) and README.md where fixes changed behavior.
+6. Write .planning/integration/code-final.md: requests applied/rejected, findings closed by you, test totals, checks, remaining gaps (verified unimplemented v1 IDs and manual checks owed).
+Final reply: `done code-final tests <pass>/<total>, open findings <N>, unimplemented v1 <N>` and nothing else.

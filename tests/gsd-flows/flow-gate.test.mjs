@@ -15,7 +15,7 @@ async function flow(root, argv, input = "") {
   const code = await main(argv, { root, input: typeof input === "string" ? input : JSON.stringify(input), out: (l) => { line = l; } });
   return { code, json: JSON.parse(line) };
 }
-const adapter = (commands, vocab = {}) => ({ adapter: { commands: { build: null, test: null, build_timeout_s: 30, test_timeout_s: 30, gates: [], verify: {}, ...commands }, ...(Object.keys(vocab).length ? { verify_vocabulary: { build: { prefix: "build", parser: null, resolver: null, runner: null, evidence_parser: null, exit_code_sufficient: true }, cmd: { prefix: "cmd:", parser: null, resolver: null, runner: null, evidence_parser: null, exit_code_sufficient: true }, ...vocab } } : {}) } });
+const adapter = (commands, vocab = {}) => ({ adapter: { commands: { build: [NODE, "-e", "process.exit(0)"], test: [NODE, "-e", "process.exit(0)"], build_timeout_s: 30, test_timeout_s: 30, gates: [], verify: {}, ...commands }, ...(Object.keys(vocab).length ? { verify_vocabulary: { build: { prefix: "build", parser: null, resolver: null, runner: null, evidence_parser: null, exit_code_sufficient: true }, cmd: { prefix: "cmd:", parser: null, resolver: null, runner: null, evidence_parser: null, exit_code_sufficient: true }, ...vocab } } : {}) } });
 const plan = (verify = []) => ({ id: "03-01", owns: ["Path:src/a/"], verify });
 
 test("GSDF-44 a failing test leaves the gate red; a test obligation that executed 0 tests fails; a build timeout is reported", async () => {
@@ -59,8 +59,8 @@ test("GSDF-51 failures are attributed by owns, the rest is unplaced; a red adapt
   const r = await flow(p.root, ["gate", PD], { waveId: "w1", plans: [plan([{ task: "1", kind: "cmd", command: `cmd: node -v` }]), { id: "03-02", owns: ["Path:src/b/"], verify: [] }] });
   assert.deepEqual(Object.keys(r.json.byPlan), ["03-01"]);
   const ev = p.readJson(r.json.evidence);
-  assert.equal(ev.steps.find((s) => s.plan === "03-01").outcome, "not_executed");
-  assert.ok(r.json.failures.some((f) => f.outcome === "not_executed"));
+  assert.equal(ev.steps.find((s) => s.plan === "03-01").outcome, "unavailable");
+  assert.match(p.read(ev.steps.find((s) => s.plan === "03-01").log), /not executed: an earlier gate failed/);
   const lint = r.json.failures.find((f) => f.step === "gate-lint");
   assert.deepEqual(lint.files.sort(), ["lib/shared.js", "src/a/x.js"]);
   assert.match(lint.excerpt, /^error src\/a\/x\.js:3/);

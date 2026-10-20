@@ -52,6 +52,15 @@ export function summaryDone(status: string | null): boolean {
   return status === null || !/^(halted|failed)$/i.test(status.trim());
 }
 
+// A plan's completion from its SUMMARY index entry: open without one; unknown when the SUMMARY frontmatter could not
+// be parsed, which never counts as done and withholds percentages (CR-PNL-06, INV-36).
+export type Completion = "done" | "open" | "unknown";
+export function planCompletion(summary: Pick<IndexFile, "status" | "error"> | undefined): Completion {
+  if (!summary) return "open";
+  if (summary.error) return "unknown";
+  return summaryDone(summary.status) ? "done" : "open";
+}
+
 export type Tone = "muted" | "accent" | "warning" | "danger" | "success";
 export const STATUS_TONE: Record<PhaseStatus, Tone> = {
   NOT_STARTED: "muted",
@@ -91,7 +100,8 @@ export type IndexFile = z.infer<typeof indexFileSchema>;
 
 export const indexPhaseSchema = z.object({
   id: z.string(),
-  dir: z.string(),
+  // `.planning/`-relative; null for a ROADMAP phase that has no directory yet.
+  dir: z.string().nullable(),
   name: z.string(),
   status: phaseStatusSchema.nullable(),
 });
@@ -125,13 +135,15 @@ export const waveSchema = z.object({ wave: z.number().nullable(), total: z.numbe
 export const boardPhaseSchema = z.object({
   id: z.string(),
   name: z.string(),
-  dir: z.string(),
+  dir: z.string().nullable(),
   status: phaseStatusSchema.nullable(),
   plans: z.number(),
   summaries: z.number(),
   done: z.number(),
   pct: z.number().nullable(),
   waves: z.array(waveSchema),
+  // SUMMARY files whose frontmatter could not be parsed: their plans count as neither done nor open.
+  unparsed: z.array(z.string()),
 });
 export type BoardPhase = z.infer<typeof boardPhaseSchema>;
 

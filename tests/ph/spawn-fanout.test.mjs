@@ -204,3 +204,28 @@ test("PHCL-26 --type loads the definition; a path-like type is a usage error", a
   assert.ok(!fs.existsSync(path.join(s.root, ".claude", "agents")));
   assertErrLine(await s.ph(["spawn", "--name", "b", "--type", "../x", "--prompt", "w"]), /usage error: invalid agent type/);
 });
+
+test("PHCL-24 PHCL-10 collect: a failed create releases its admission, so later blocks hit the live cap instead of stalling", async () => {
+  const s = setup({ overlay: { max_subagents: 1, max_live_subagents: 1 } });
+  s.fake.setResponder(() => [{ error: "quota exceeded" }]);
+  s.project.write("f.txt", "=== a\nA\n=== b\nB\n=== c\nC\n");
+  s.fake.failNext("createAgent", new Error("boom"));
+  const r = await s.ph(["fanout", "--file", "f.txt", "--collect", "out", "--keep"]);
+  assertExit(r, 2);
+  assertLine(r, /^failed a: .*boom/);
+  assertLine(r, "failed b: agent error: quota exceeded");
+  assertLine(r, "failed c: live agent cap reached (1 of 1)");
+  assert.equal(creates(s.fake).length, 2);
+});
+
+test("PHCL-24 PHCL-10 collect: an archive failure keeps the agent counted live; the next block hits the cap", async () => {
+  const s = setup({ overlay: { max_subagents: 1, max_live_subagents: 1 } });
+  s.project.write("f.txt", "=== a\nA\n=== b\nB\n");
+  s.fake.failNext("archiveAgent", new Error("archive down"));
+  const r = await s.ph(["fanout", "--file", "f.txt", "--collect", "out"]);
+  assertExit(r, 2);
+  assertLine(r, /^collected a -> /);
+  assertLine(r, /^failed archive a: .*archive down/);
+  assertLine(r, "failed b: live agent cap reached (1 of 1)");
+  assert.equal(creates(s.fake).length, 1);
+});

@@ -17,7 +17,7 @@ Args file `_workspace/args/gsd-research.json` with `phaseDir` (`.planning/phases
 
 ## Results
 - `researched` / `reused`: summarise the findings and the open questions for the owner. An `[ASSUMED]` item stays an assumption; never turn it into a locked decision (decisions come only from gsd-discuss).
-- `needs-owner` stage Discuss: finish `gsd-discuss` first. Stage Research: the researcher reported blockers; show them.
+- `needs-owner` stage Discuss: finish `gsd-discuss` first. Stage Research: the researcher reported blockers; show them. Stage Research with `reportStatus` (invalid, blocked, incomplete or stale): no agent ran; show the status and offer `--refresh`.
 - `failed`: a report whose attempt key or digest is not this run's, or no report; show the reason.
 
 The researcher writes only the RESEARCH.md path with `input_digest`, `attempt_key` and the terminal marker; it does not build, test, install or commit, keeps provenance tags, and never reports the package audit as OK (it is not installed). Standalone research ends here: suggest `gsd-plan <N>` as the next command.

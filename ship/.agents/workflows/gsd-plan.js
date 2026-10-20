@@ -46,6 +46,16 @@ async function sha(text) { return (await gsd(["hash"], text ?? "")).json?.hash ?
 async function fileSha(path) { const r = await flow(["read", path]); return r.json?.exists ? sha(r.json.text) : null; }
 // ---- end shared helpers ----
 
+const rawCall = call;
+call = async (prompt, opts) => {
+  // GSDF-03: bind judgments and repairs to current code, planning artifacts and adapter settings.
+  const identity = await flow(["digest"], { files: ["."] });
+  if (identity.code !== 0 || !identity.json?.hash) throw new Error("agent input digest unavailable");
+  const researchPolicy = prompt.includes("<research_input_policy>") ? "" : policyBlock(null);
+  prompt = [prompt, researchPolicy, digestLine("stage", identity.json.hash)].filter(Boolean).join("\n\n");
+  return rawCall(prompt, opts);
+};
+
 const OWNER_MARKERS = ["REVISION_CONFLICT", "PHASE SPLIT RECOMMENDED", "SOURCE AUDIT", "CHECKPOINT REACHED", "PLANNING INCONCLUSIVE"];
 const KNOWN_MARKERS = [...OWNER_MARKERS, "OUTLINE COMPLETE", "PLANNING COMPLETE", "REVISION COMPLETE", "WIRING COMPLETE"];
 const KIT_LENSES = ["fidelity", "integration", "correctness", "source-grounding"];
@@ -119,6 +129,10 @@ const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reas
 
 // ---- preconditions (GSDF-16, GSDF-33) ----
 phase("Preconditions");
+// GSDF-64: no planner writes in the code root while a debug session holds it.
+const lease = await flow(["lock", "debug", runId]);
+if (lease.code !== 0) return result("refused", { reason: `a debug session holds this code root (${lease.json?.holder ?? lease.json?.error ?? "unknown run"}); plan after it ends` });
+try {
 const found = (await gsd(["find-phase", N])).json;
 if (found?.status === "COMPLETE") {
   if (!a.force) return result("refused", { reason: `phase ${N} is complete (see ${P("VERIFICATION.md")}); pass force to replan it` });
@@ -176,6 +190,8 @@ const revisionContext = (plans, issues) => [
   "</revision_context>",
 ].join("\n");
 async function inputsDigest() { return (await gsd(["revisions", "hash", phaseDir, "inputs"])).json?.hash ?? "none"; }
+// CR-GSF-19: skeleton reviews judge the outline, manifest and wiring, which the freeze key covers and inputs does not.
+async function skeletonDigest() { return (await gsd(["revisions", "hash", phaseDir, "freeze"])).json?.hash ?? "none"; }
 async function plannerCall(session, label, body, digestKey, digest, extra = {}) {
   const prompt = [body, POLICY, RETURN_NOTE, digestLine(digestKey, digest)].join("\n\n");
   return call(prompt, { label, session, agentType: agentFor("planner", "gsd-planner"), schema: PLANNER_SCHEMA, ...roleOpts(session === "planner:outline" ? "outline" : "planner"), ...extra });
@@ -293,7 +309,7 @@ async function reviewLane(lane) {
     `Mechanical warnings: ${JSON.stringify(outline?.warnings ?? [])}. Cross-plan edges: ${JSON.stringify(outline?.crossPlan ?? [])}.`,
     "Return JSON {issues: [{plan, dimension, severity (blocker|warning|info), required_property, description, evidence, fix_hint, target (outline|wiring|both)}]}; an empty list when the skeleton holds under this lens.",
     POLICY,
-    digestLine("inputs", await inputsDigest()),
+    digestLine("freeze", await skeletonDigest()),
   ].join("\n\n");
   const opts = { label: `skeleton-${lane.id}`, agentType: agentFor("skeleton_lane", "gsd-skeleton-reviewer"), readOnly: true, schema: ISSUES_SCHEMA, ...roleOpts("skeleton_lane", { model: lane.model, effort: lane.effort }) };
   let r = await call(prompt, opts);
@@ -307,7 +323,8 @@ async function resolutionCheck(lane, open) {
     `Resolution check, read-only, of your own open skeleton issues after a revision. Snapshot: ${files.join(", ")}.`,
     `Open issues (JSON): ${JSON.stringify(open.map(({ id, plan, description, fix_hint }) => ({ id, plan, description, fix_hint })))}`,
     "Return JSON {resolved: [{id, evidence}]} listing only the ids now resolved, each with evidence. Do not raise new issues; an id you do not list stays open.",
-    digestLine("inputs", await inputsDigest()),
+    POLICY,
+    digestLine("freeze", await skeletonDigest()),
   ].join("\n\n");
   return call(prompt, { label: `resolve-${lane.id}`, agentType: agentFor("skeleton_lane", "gsd-skeleton-reviewer"), readOnly: true, schema: RESOLUTION_SCHEMA, ...roleOpts("skeleton_lane", { model: lane.model, effort: lane.effort }) });
 }
@@ -481,7 +498,7 @@ if (planReview) {
 
 // ---- coverage and handoff (GSDF-29, GSDF-36) ----
 phase("Handoff");
-return handoffStage(planIds, docPaths, checked.override);
+return await handoffStage(planIds, docPaths, checked.override);
 
 async function countProbes(scopeIds, gapScoped) {
   const plansFlag = gapScoped ? ["--plans", scopeIds.join(",")] : [];
@@ -520,6 +537,8 @@ async function checkerLoop(scopeIds, gapScoped) {
       "Return JSON {issues: [{plan (null for phase-level), dimension, severity (blocker|warning|info), description, fix_hint}]}.",
       POLICY,
       digestLine("freeze", freezeHash),
+      // The checker judges PLAN contents, which the freeze key does not cover (CR-GSF-19).
+      digestLine("checked", (await gsd(["revisions", "hash", phaseDir, "checked"])).json?.hash ?? "none"),
     ].filter(Boolean).join("\n\n");
     const opts = { label: `checker-${iter}`, agentType: agentFor("checker", "gsd-plan-checker"), readOnly: true, schema: ISSUES_SCHEMA, ...roleOpts("checker") };
     let c = await call(prompt, opts);
@@ -537,7 +556,8 @@ async function checkerLoop(scopeIds, gapScoped) {
       const why = iter >= maxCheckIterations ? `checker cap ${maxCheckIterations} reached with ${all.length} issues` : `stalled: ${all.length} issues, not below ${prev}`;
       if (a.forceProceed) {
         const override = { reason: a.forceProceed.reason, why, remaining: all };
-        await gsd(["state", "override", "--phase", N], { reason: a.forceProceed.reason, issues: all.map((x) => `${x.plan ?? "phase"}: ${x.description}`) });
+        const saved = await gsd(["state", "override", "--phase", N], { reason: a.forceProceed.reason, issues: all.map((x) => `${x.plan ?? "phase"}: ${x.description}`) });
+        if (saved.code !== 0) return { stop: failedCall("state override failed", saved.json?.error ?? `exit ${saved.code}`) };
         log(`override: ${why}; proceeding (${a.forceProceed.reason})`);
         return { passed: true, override };
       }
@@ -623,4 +643,7 @@ async function gapMode() {
   const out = await handoffStage(gapIds, [], checkedGaps.override, ["--plans", gapIds.join(","), "--prefix", "gap", "--no-tracer-split"], { attemptKey: attempt.key });
   if (out.status === "planned") await gsd(["attempt", "record", phaseDir, "--kind", "gap"], { runId, inputDigest, before: beforeSha, done: true, result: { plans: gapIds, waveExecuted: false } });
   return out;
+}
+} finally {
+  await flow(["unlock", "debug", lease.json.token]);
 }

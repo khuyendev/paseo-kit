@@ -10,7 +10,7 @@ import { readJsonIf } from "../lib/io.mjs";
 import { policyLines } from "../lib/provider-policy.mjs";
 import { id8 } from "../lib/paths.mjs";
 import { FILE_PLUGIN_ID, MIN_CLAUDE_VERSION, NODE_REQUIREMENT, claudeVersion, nodeRuntimeProblem, paseoConfigFile, versionAtLeast } from "../platform.mjs";
-import { runGsd } from "../gsd/commands.mjs";
+import { checkTarget } from "../gsd/upstream.mjs";
 import { AGENTS_DIR, listAgentTypes } from "./agents.mjs";
 import { resolveModel } from "./models.mjs";
 
@@ -102,15 +102,16 @@ function adapterLines(ctx, line) {
   if (!missing.length) line("ok", `adapter and gsd sections present; ${files.length} named file(s) exist`);
 }
 
-// GSDC-47: the vendored GSD snapshot and the generated method text are checked on every doctor run.
+// Integrity is independent of the project overlay so doctor can report both faults (CONF-08).
 async function gsdUpstreamLines(ctx, line) {
-  const lines = [];
-  const collect = (l) => lines.push(String(l));
-  const code = await runGsd(["upstream", "check"], { env: ctx.env, root: ctx.root, out: collect, err: collect, write: () => {}, errWrite: () => {} });
-  const summary = lines.find((l) => l.startsWith("check:")) ?? `check exit ${code}`;
-  if (code === 0) return line("ok", `gsd upstream ${summary}`);
-  for (const l of lines.filter((x) => x.startsWith("problem:"))) line("problem", `gsd upstream ${l.slice("problem:".length).trim()}`);
-  line("problem", `gsd upstream ${summary}`);
+  let r;
+  try {
+    r = await checkTarget(ctx.root);
+  } catch (e) {
+    return line("problem", `gsd upstream check not run: ${errText(e)}`);
+  }
+  for (const problem of r.problems) line("problem", `gsd upstream ${problem}`);
+  line(r.problems.length ? "problem" : "ok", `gsd upstream check: ${r.problems.length} problems, ${r.warnings.length} warnings; ${r.references} references followed, ${r.verbs} verbs mapped`);
 }
 
 export async function runDoctor(ctx, { freemem = os.freemem, claudeVersionText = () => claudeVersion(ctx.env) } = {}) {
@@ -119,6 +120,14 @@ export async function runDoctor(ctx, { freemem = os.freemem, claudeVersionText =
     if (kind === "problem") problems++;
     ctx.out(`${kind} ${text}`);
   };
+  // CR-PHC-06: a check that throws (a malformed settings file, a broken registry) is one named problem; the rest run.
+  const guard = async (name, check) => {
+    try {
+      await check();
+    } catch (e) {
+      line("problem", `${name}: ${errText(e)}`);
+    }
+  };
   const nodeProblem = nodeRuntimeProblem();
   line(nodeProblem ? "problem" : "ok", `${nodeProblem ?? `node ${process.versions.node}`} (needs ${NODE_REQUIREMENT})`);
   const caller = ctx.env.PASEO_AGENT_ID?.trim();
@@ -126,7 +135,7 @@ export async function runDoctor(ctx, { freemem = os.freemem, claudeVersionText =
   else line("problem", "PASEO_AGENT_ID is not set: run ph from an agent inside Paseo, so every agent is created as its subagent");
   if (ctx.configError) line("problem", `${errText(ctx.configError)} (the remaining checks use the kit defaults; every other ph command fails until it is fixed)`);
   else line("ok", "harness config valid");
-  await daemonLines(ctx, line);
+  await guard("paseo", () => daemonLines(ctx, line));
   try {
     line("ok", `default_tier ${ctx.cfg.default_tier} -> ${resolveModel(ctx.cfg, ctx.cfg.default_tier).id}`);
   } catch (e) {
@@ -135,13 +144,15 @@ export async function runDoctor(ctx, { freemem = os.freemem, claudeVersionText =
   const overlay = path.join(ctx.root, OVERLAY_REL);
   if (fs.existsSync(overlay)) line("ok", `overlay ${overlay}`);
   else line("note", "overlay none (kit defaults apply)");
-  modLines(ctx, line, claudeVersionText());
-  paseoPolicyLines(ctx, line);
-  adapterLines(ctx, line);
-  await gsdUpstreamLines(ctx, line);
-  const types = listAgentTypes(ctx.root);
-  if (types.length) line("ok", `agent types in ${AGENTS_DIR}/ (${types.length}): ${types.join(", ")}`);
-  else line("note", `no agent types in ${AGENTS_DIR}/`);
+  await guard("file mod", () => modLines(ctx, line, claudeVersionText()));
+  await guard("provider policy", () => paseoPolicyLines(ctx, line));
+  await guard("adapter", () => adapterLines(ctx, line));
+  await guard("gsd upstream", () => gsdUpstreamLines(ctx, line));
+  await guard("agent types", () => {
+    const types = listAgentTypes(ctx.root);
+    if (types.length) line("ok", `agent types in ${AGENTS_DIR}/ (${types.length}): ${types.join(", ")}`);
+    else line("note", `no agent types in ${AGENTS_DIR}/`);
+  });
   const needMb = ctx.cfg.max_subagents * MB_PER_AGENT;
   const freeMb = Math.round(freemem() / 2 ** 20);
   if (freeMb < needMb) line("note", `free RAM ${freeMb} MB is below max_subagents ${ctx.cfg.max_subagents} x ${MB_PER_AGENT} MB = ${needMb} MB; lower max_subagents or free memory`);

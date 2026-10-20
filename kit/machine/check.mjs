@@ -34,13 +34,13 @@ export function runCheck(ctx, { enablePlugins = false } = {}) {
   const claude = claudeGate(ctx, tpl);
   say(claude.ok ? "ok" : "problem", claude.text);
   say("note", "the harness-files mod is activated per project: kit.mjs install|update <project> --enable-plugin, then verify with ph doctor");
-  const plan = modelPlan(live, tpl);
+  const plan = modelPlan(live, tpl, cfg);
   for (const p of plan) {
     say("problem", p.missing ? `Paseo provider ${p.name} is missing from ${ctx.paseoConfig}; run kit.mjs machine apply` : `Paseo provider ${p.name} lacks the models ${p.add.map((m) => m.id).join(", ")}; run kit.mjs machine apply`);
   }
-  if (!plan.length) say("ok", `Paseo providers ${Object.keys(tpl.providers).join(", ")} have every template model`);
+  if (!plan.length) say("ok", `Paseo providers ${[...new Set(Object.entries(cfg.agent_providers).flat())].join(", ")} have every template model`);
   for (const line of policyLines(live, cfg)) say(line.level, line.text);
-  for (const { name, id } of retiredModels(live, tpl)) say("note", `Paseo provider ${name} has the model ${id}, which the template no longer ships; left for the owner to remove in Paseo`);
+  for (const { name, id } of retiredModels(live, tpl, cfg)) say("note", `Paseo provider ${name} has the model ${id}, which the template no longer ships; left for the owner to remove in Paseo`);
   for (const line of pluginLines(live, kitPlugins(ctx.pluginsDir), enablePlugins)) say(line.level, line.text);
   for (const line of linkLines(linkStates(linkDirs(tpl, ctx.home), record, ctx.skillDir))) say(line.level, line.text);
   return problems ? 2 : 0;

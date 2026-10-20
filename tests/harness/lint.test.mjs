@@ -251,3 +251,41 @@ test("HARN-18 workflow scripts and orchestrator skills are checked mechanically"
   assert.ok(!guarded.warns.some((l) => /null guard/.test(l)));
   assert.ok(!guarded.fails.some((l) => /w\.js/.test(l)));
 });
+
+test("HARN-07 scripts in adapter command and checker argv must exist and are linted even outside the history Scope", async () => {
+  const overlay = cleanAdapter().overlay;
+  overlay.adapter.syntax_checkers = { ".js": { argv: ["node", "tools/missing-checker.mjs"], timeout_s: 1, max_parallel: 1 } };
+  overlay.adapter.commands.gates = [{ name: "lint", argv: ["node", "./tools/gate.mjs", "--fix", "src/"] }];
+  const r = lint({ overlay, files: { "tools/gate.mjs": "TaskCreate({ subject: 'x' })\n" } });
+  has(r.fails, /adapter\.syntax_checkers\.\.js: script tools\/missing-checker\.mjs does not exist/);
+  has(r.fails, /tools\/gate\.mjs:1: operational use of the in-session primitive TaskCreate\(/);
+  assert.ok(!r.fails.some((l) => /script (npm|node|src\/|--fix)/.test(l)), "PATH executables and data arguments are no scripts");
+  const res = await runPh(["harness", "lint"], { root: r.root });
+  assert.equal(res.code, 2);
+});
+
+test("HARN-07 a workflow script a generated skill invokes must exist and gets the workflow checks", () => {
+  const skill = SKILL + "\nRun `node .agents/harness/ph.mjs workflow --script tools/flows/run.js --args-file a.json`.\nThen `ph workflow --script tools/flows/gone.js`.\n";
+  const r = lint({ files: { ".claude/skills/web-stack/SKILL.md": skill, "tools/flows/run.js": "const t = Date.now()\nreturn await agent('x')\n" } });
+  has(r.fails, /SKILL\.md:\d+: workflow script tools\/flows\/gone\.js does not exist/);
+  has(r.fails, /tools\/flows\/run\.js:1: the first statement is not `export const meta/);
+  has(r.fails, /tools\/flows\/run\.js:1: Date\.now\(\) breaks resume/);
+});
+
+test("HARN-18 a workflow script without meta still gets the meta and clock checks", async () => {
+  const r = lint({ files: { ".agents/workflows/run.js": "const t = Date.now(); return await agent(\"x\")\n", ...inScope([".agents/workflows/run.js"]) } });
+  has(r.fails, /run\.js:1: the first statement is not `export const meta/);
+  has(r.fails, /run\.js:1: Date\.now\(\) breaks resume/);
+  const late = lint({ files: { ".agents/workflows/late.js": "const x = 1\nexport const meta = { name: 'late', description: 'd' }\n", ...inScope([".agents/workflows/late.js"]) } });
+  has(late.fails, /late\.js:1: the first statement is not `export const meta/);
+  assert.equal((await runPh(["harness", "lint"], { root: r.root })).code, 2);
+});
+
+test("HARN-06 unquoted Use/Call Agent and Workflow imperatives fail like every other primitive", async () => {
+  const skill = SKILL + "\nUse Agent to implement the task.\nCall Workflow to execute the stages.\nAn agent reviews the workflow output.\n";
+  const r = lint({ files: { ".claude/skills/web-stack/SKILL.md": skill } });
+  has(r.fails, /SKILL\.md:\d+: instruction to use the in-session primitive Agent/);
+  has(r.fails, /SKILL\.md:\d+: instruction to use the in-session primitive Workflow/);
+  assert.ok(!r.fails.some((l) => /SKILL\.md:12:/.test(l)) && !r.warns.some((l) => /mentions (Agent|Workflow)/.test(l)), "plain words are no finding");
+  assert.equal((await runPh(["harness", "lint"], { root: r.root })).code, 2);
+});

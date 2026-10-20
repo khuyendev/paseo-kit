@@ -10,7 +10,7 @@ import { errText } from "../lib/cli.mjs";
 export const MAX_ITEMS_PER_CALL = 4096;
 // FLOW-04 options plus `detail` and `timeoutS`, which the GSD scripts need (null reasons never retried, worktree
 // transfers and the fixer/debug deadlines: GSDF-01/45/42/50/67); neither is part of the cache key.
-export const AGENT_OPTIONS = Object.freeze(["label", "phase", "schema", "agentType", "role", "model", "effort", "isolation", "readOnly", "cwd", "keep", "session", "detail", "timeoutS"]);
+export const AGENT_OPTIONS = Object.freeze(["label", "phase", "schema", "agentType", "role", "model", "effort", "isolation", "readOnly", "cwd", "keep", "session", "detail", "timeoutS", "worktreeSeed"]);
 const SHELL_OPTIONS = new Set(["cwd", "input", "timeoutS", "tailChars"]);
 // Fixed by a session's first call (FLOW-47); model and effort may change.
 const SESSION_FIXED = ["agentType", "roleHash", "role", "readOnly", "cwd", "isolation", "provider"];
@@ -45,6 +45,7 @@ function checkAgentOptions(opts) {
   for (const k of ["label", "phase", "agentType", "role", "model", "effort", "cwd"]) {
     if (opts[k] !== undefined && typeof opts[k] !== "string") throw new Error(`agent(): ${k} must be a string`);
   }
+  if (opts.worktreeSeed !== undefined && (opts.isolation !== "worktree" || !opts.worktreeSeed || !Array.isArray(opts.worktreeSeed.files) || typeof opts.worktreeSeed.head !== "string")) throw new Error("agent(): worktreeSeed needs worktree isolation and {head, files}");
   if (opts.detail !== undefined && typeof opts.detail !== "boolean") throw new Error("agent(): detail must be a boolean");
   if (opts.timeoutS !== undefined && !(Number.isFinite(opts.timeoutS) && opts.timeoutS > 0)) throw new Error("agent(): timeoutS must be a number > 0");
 }
@@ -68,6 +69,7 @@ export async function runWorkflow(o) {
   const cache = o.cache ?? new Map();
   const journal = createJournal(o.journalPath);
   const pending = new Set();
+  const sessionTail = new Map();
   const spent = () => state.spent + (o.extraSpent?.() ?? 0);
 
   const checkBudget = () => {
@@ -84,6 +86,17 @@ export async function runWorkflow(o) {
     for (const p of SESSION_FIXED) {
       if (first[p] !== props[p]) throw new Error(`session ${key} cannot change ${p === "roleHash" ? "agentType" : p}; use a new session key`);
     }
+  }
+
+  // Calls of one session key run one after another, adoption included: two overlapping first calls created two
+  // agents and leaked one, overlapping continuations hit the active-turn refusal (CR-WFL-02, FLOW-12).
+  function inSession(key, fn) {
+    if (key === undefined) return fn();
+    const run = (sessionTail.get(key) ?? Promise.resolve()).then(fn);
+    const tail = run.then(() => {}, () => {});
+    sessionTail.set(key, tail);
+    tail.then(() => sessionTail.get(key) === tail && sessionTail.delete(key));
+    return run;
   }
 
   function finish(base, r) {
@@ -118,7 +131,10 @@ export async function runWorkflow(o) {
     };
     const base = () => ({ n: ++state.seq, key, occ, label, phase, ...(opts.session !== undefined ? { session: opts.session } : {}) });
     const spec = (n) => ({ n, runId: o.runId, workflowName: meta.name, label, phase, prompt, opts, identity });
+    return inSession(opts.session, () => runCall({ key, occ, label, phase, opts, identity, reply, base, spec }));
+  }
 
+  async function runCall({ key, occ, label, phase, opts, identity, reply, base, spec }) {
     const hit = cache.get(`${key}#${occ}`);
     if (hit) {
       const b = base();
@@ -152,6 +168,10 @@ export async function runWorkflow(o) {
         r = { status: "null", reason: admission.reason, tokens: 0, durationS: 0 };
         b = base();
       } else {
+        // Again after the admission wait, with no await before the count: calls admitted together passed the
+        // first check against the same count, and spend may have grown while waiting (CR-WFL-04).
+        checkBudget();
+        checkCap();
         b = base();
         state.started++;
         journal({ n: b.n, kind: "agent", key, occ, label, phase, status: "start", ...(b.session !== undefined ? { session: b.session } : {}) });

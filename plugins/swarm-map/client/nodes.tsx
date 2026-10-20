@@ -8,9 +8,8 @@ import { AGENT_LABEL, AGENT_R, type AgentPlace, BRAIN_LABEL, BRAIN_R, type Brain
 import { accessibilityLabel, activityLine, hubProgress, overThreshold, waveLine } from "./labels.ts";
 import { ACTIVITY_ICON, type Colors, STATE_ICON, STATE_LABEL, activityHue, agentState, stateColor } from "./palette.ts";
 import { Ring } from "./ring.tsx";
-import { GHOST_MS, bootDelay } from "./state.ts";
+import { type AppearMode, GHOST_MS, bootDelay } from "./state.ts";
 
-export type AppearMode = "boot" | "spawn" | "none";
 
 function Badge({ c, text, hue }: { c: Colors; text: string; hue: string }) {
   return (

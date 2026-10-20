@@ -171,3 +171,20 @@ export function bootDelay(index: number): number {
 export function capEffects<T>(effects: readonly T[]): T[] {
   return effects.slice(-MAX_EFFECTS);
 }
+
+// Appearance (PANL-49): the first response boots everything in; a node seen later springs in (NEW); after a view
+// filter change unseen nodes boot in without NEW. The modes of a response are computed before its ids enter the
+// book and are handed to the render that first mounts those nodes (CR-PNL-10: nodes animate only on mount).
+export type AppearMode = "boot" | "spawn" | "none";
+export interface AppearBook {
+  known: ReadonlySet<string>;
+  booted: boolean;
+  viewKey: string | null;
+}
+export const EMPTY_BOOK: AppearBook = { known: new Set(), booted: false, viewKey: null };
+
+export function appearance(book: AppearBook, ids: readonly string[], viewKey: string): { modes: Map<string, AppearMode>; book: AppearBook } {
+  const viewChanged = book.booted && book.viewKey !== viewKey;
+  const mode = (id: string): AppearMode => (!book.booted ? "boot" : book.known.has(id) ? "none" : viewChanged ? "boot" : "spawn");
+  return { modes: new Map(ids.map((id) => [id, mode(id)])), book: { known: new Set([...book.known, ...ids]), booted: true, viewKey } };
+}

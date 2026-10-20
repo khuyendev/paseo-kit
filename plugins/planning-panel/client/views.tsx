@@ -3,10 +3,10 @@ import { Icon, TextInput } from "@getpaseo/plugin/client/react-native";
 import { useMemo, useState } from "react";
 import { View } from "react-native";
 import type { Board, BoardPhase, IndexFile, PlanningIndex } from "../shared/planning.ts";
-import { STATUS_LABEL, STATUS_TONE } from "../shared/planning.ts";
+import { STATUS_LABEL, STATUS_TONE, planCompletion } from "../shared/planning.ts";
 import { formatRelative, formatShortDate } from "./format.ts";
 import { Badge, Chip, IconButton, Press, ProgressBar, SegmentedBar, Section, T, useKit } from "./kit.tsx";
-import type { Item } from "./nav.ts";
+import { type Item, phasesShown } from "./nav.ts";
 import { computeStats } from "./stats.ts";
 import { allFolders, ancestors, buildTree, filterFiles, topLevelFolders } from "./tree.ts";
 
@@ -65,7 +65,7 @@ export function StatsView({ index, nowMs }: { index: PlanningIndex; nowMs: numbe
   );
 }
 
-function PhaseCard({ phase, onOpen }: { phase: BoardPhase; onOpen: (item: Item) => void }) {
+function PhaseCard({ phase, onShowPhase }: { phase: BoardPhase; onShowPhase: (id: string) => void }) {
   const { colors } = useKit();
   return (
     <View style={{ padding: 10, borderRadius: 10, borderWidth: 1, borderColor: colors.border, gap: 6, backgroundColor: colors.surface0 }}>
@@ -77,14 +77,15 @@ function PhaseCard({ phase, onOpen }: { phase: BoardPhase; onOpen: (item: Item) 
           <SegmentedBar segments={[{ tone: "success", count: w.done }, { tone: "muted", count: w.total - w.done }]} />
         </View>
       ))}
-      <Press label={`Open phase ${phase.id} folder`} onPress={() => onOpen({ kind: "file", path: `${phase.dir}` })}>
-        <T size={11} tone="accent">{phase.dir}</T>
+      {phase.unparsed.length > 0 ? <T size={11} tone="warning">{`unreadable SUMMARY: ${phase.unparsed.map((p) => p.split("/").pop()).join(", ")}`}</T> : null}
+      <Press label={`Show the plans of phase ${phase.id}`} onPress={() => onShowPhase(phase.id)}>
+        <T size={11} tone="accent">{phase.dir ?? "no phase directory yet"}</T>
       </Press>
     </View>
   );
 }
 
-export function BoardView({ board, onOpen }: { board: Board; onOpen: (item: Item) => void }) {
+export function BoardView({ board, onShowPhase }: { board: Board; onShowPhase: (id: string) => void }) {
   return (
     <Section title="Phases by status" trailing={board.statusError ?? undefined}>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
@@ -92,7 +93,7 @@ export function BoardView({ board, onOpen }: { board: Board; onOpen: (item: Item
           <View key={col.status} style={{ minWidth: 180, flex: 1, gap: 8 }}>
             <Badge label={`${STATUS_LABEL[col.status]} · ${col.phases.length}`} tone={STATUS_TONE[col.status]} />
             {col.phases.map((p) => (
-              <PhaseCard key={p.dir} phase={p} onOpen={onOpen} />
+              <PhaseCard key={p.id} phase={p} onShowPhase={onShowPhase} />
             ))}
           </View>
         ))}
@@ -102,23 +103,38 @@ export function BoardView({ board, onOpen }: { board: Board; onOpen: (item: Item
   );
 }
 
-export function PhasesView({ index, onOpen, nowMs }: { index: PlanningIndex; onOpen: (item: Item) => void; nowMs: number }) {
+const COMPLETION_ICON = { done: "CircleCheck", open: "Circle", unknown: "CircleAlert" } as const;
+
+export function PhasesView(props: { index: PlanningIndex; onOpen: (item: Item) => void; nowMs: number; focus: string | null; onShowAll: () => void }) {
+  const { index, onOpen, nowMs } = props;
   const { colors } = useKit();
-  const plansOf = (dir: string) => index.files.filter((f) => f.kind === "plan" && f.path.startsWith(`${dir}/`));
-  const summary = (planId: string) => index.files.find((f) => f.kind === "summary" && f.planId === planId);
-  if (index.phases.length === 0) return <T tone="muted">No phase folders under .planning/phases/ yet.</T>;
+  // Plan ids exist only on live phase inventory; the SUMMARY is the plan's sibling with the same id.
+  const plansOf = (dir: string | null) => (dir === null ? [] : index.files.filter((f) => f.kind === "plan" && f.planId && f.path.startsWith(`${dir}/`)));
+  const summary = (plan: IndexFile) => index.files.find((f) => f.kind === "summary" && f.planId === plan.planId && f.path.startsWith(plan.path.slice(0, plan.path.lastIndexOf("/") + 1)));
+  if (index.phases.length === 0) return <T tone="muted">No phases in ROADMAP.md or under .planning/phases/ yet.</T>;
+  const shown = phasesShown(index.phases, props.focus);
+  const tint = { done: colors.statusSuccess, open: colors.foregroundMuted, unknown: colors.statusWarning };
   return (
     <View style={{ gap: 10 }}>
-      {index.phases.map((p) => (
-        <Section key={p.dir} title={`Phase ${p.id} ${p.name.replace(/-/g, " ")}`} trailing={p.status ? STATUS_LABEL[p.status] : "status unknown"}>
+      {shown.length < index.phases.length ? (
+        <Press label="Show all phases" onPress={props.onShowAll}>
+          <T size={12} tone="accent">All phases</T>
+        </Press>
+      ) : null}
+      {shown.map((p) => (
+        <Section key={p.id} title={`Phase ${p.id} ${p.name.replace(/-/g, " ")}`} trailing={p.status ? STATUS_LABEL[p.status] : "status unknown"}>
+          {p.dir === null ? <T size={12} tone="muted">No phase directory yet.</T> : null}
           {plansOf(p.dir).map((f) => {
-            const s = summary(f.planId!);
+            const s = summary(f);
+            const state = planCompletion(s);
+            const halted = state === "open" && s !== undefined;
+            const label = s ? (s.error ? "SUMMARY unreadable" : (s.status ?? "summarised")) : "not done";
             return (
               <Press key={f.path} label={`Open plan ${f.planId}`} onPress={() => onOpen({ kind: "plan", id: f.planId! })} style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 3 }}>
-                <Icon name={s ? (/halted|failed/i.test(s.status ?? "") ? "CircleX" : "CircleCheck") : "Circle"} size={14} color={s ? (/halted|failed/i.test(s.status ?? "") ? colors.statusDanger : colors.statusSuccess) : colors.foregroundMuted} />
+                <Icon name={halted ? "CircleX" : COMPLETION_ICON[state]} size={14} color={halted ? colors.statusDanger : tint[state]} />
                 <T size={13} weight="600">{f.planId}</T>
                 <T size={13} lines={1} style={{ flex: 1 }}>{f.title}</T>
-                <T size={11} tone="muted">{`w${f.wave ?? "?"} · ${s ? (s.status ?? "summarised") : "not done"} · ${formatRelative(f.mtimeMs, nowMs)}`}</T>
+                <T size={11} tone="muted">{`w${f.wave ?? "?"} · ${label} · ${formatRelative(f.mtimeMs, nowMs)}`}</T>
               </Press>
             );
           })}

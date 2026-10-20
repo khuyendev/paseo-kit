@@ -8,8 +8,10 @@ import { hubProgress, overThreshold, waveLine } from "../../plugins/swarm-map/cl
 import { LEGEND, agentState } from "../../plugins/swarm-map/client/palette.ts";
 import { register } from "../../plugins/swarm-map/client/register.ts";
 import {
+  appearance,
   applySnapshot,
   bootDelay,
+  EMPTY_BOOK,
   GHOST_MS,
   NEW_BADGE_MS,
   effectEvents,
@@ -206,6 +208,19 @@ test("PANL-49 boot stagger min(index*30, 900) ms, NEW badge 12 s, ghost 1.7 s", 
   assert.equal(NEW_BADGE_MS, 12_000);
   assert.equal(GHOST_MS, 1700);
   const surface = fs.readFileSync(path.join(CLIENT, "swarm-surface.tsx"), "utf8");
-  assert.match(surface, /!booted\.current \? "boot" : known\.has\(id\) \? "none" : viewChangedNow \? "boot" : "spawn"/);
   assert.match(surface, /archived\.has\(p\.agent\.id\) \? "archived" : "gone"/);
+});
+
+test("PANL-49 the response that first draws a node carries its appearance: boot, then spawn, filter change boots", () => {
+  const first = appearance(EMPTY_BOOK, ["a", "h-1"], "true");
+  assert.deepEqual([...first.modes], [["a", "boot"], ["h-1", "boot"]], "first response boots in");
+  const second = appearance(first.book, ["a", "h-1", "b"], "true");
+  assert.deepEqual([...second.modes], [["a", "none"], ["h-1", "none"], ["b", "spawn"]], "a later agent springs in");
+  const filtered = appearance(second.book, ["a", "c"], "false");
+  assert.deepEqual([...filtered.modes], [["a", "none"], ["c", "boot"]], "a filter change boots without NEW");
+  assert.equal(EMPTY_BOOK.known.size, 0, "the book is not mutated");
+  const surface = fs.readFileSync(path.join(CLIENT, "swarm-surface.tsx"), "utf8");
+  // CR-PNL-10: the modes are stored with the snapshot (same render), not derived from bookkeeping already updated.
+  assert.match(surface, /setModes\(next\.modes\);\s*setData\(res\);/);
+  assert.match(surface, /const appear = \(id: string\): AppearMode => modes\.get\(id\) \?\? "none";/);
 });

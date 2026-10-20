@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { runSyntaxCheck } from "../../ship/.claude/hooks/syntax_check.mjs";
+import { acquireSlot, removeLock, runSyntaxCheck } from "../../ship/.claude/hooks/syntax_check.mjs";
 import { makeTempDir } from "../helpers/temp.mjs";
 import { hookEnv, hookProject, runHookAsync, runHookSync } from "./helpers.mjs";
 
@@ -182,4 +182,58 @@ test("HOOK-28 the checker comes from the edited file's tree, cwd = that tree, pa
   assert.equal(path.resolve(byTag.WT.cwd).toLowerCase(), path.resolve(ctx.project.path(wt)).toLowerCase());
   assert.equal(path.resolve(byTag.A.cwd).toLowerCase(), path.resolve(ctx.project.root).toLowerCase());
   assert.equal(byTag.WT.argc, 7, "node, script, 4 option tokens, one file argument");
+});
+
+// A Windows path in the Git Bash spelling the file tools accept (`C:\x\y` -> `/c/x/y`).
+const gitBash = (p) => `/${p[0].toLowerCase()}${p.slice(2).replaceAll("\\", "/")}`;
+
+test("HOOK-26 a Git Bash path and its native spelling name the same target in Pre and Post", { skip: process.platform !== "win32" }, async () => {
+  const ctx = syntaxProject();
+  const h = hook(ctx);
+  const tool_name = `${HF}edit_multiple_files`;
+  const post = (file) => ({ tool_name, tool_response: [{ type: "text", text: `edited ${file}: 1 edit, +3 chars` }] });
+  const bad = ctx.project.path("old bad.txt");
+  ctx.project.write("old bad.txt", "BROKEN 1");
+  await h("PreToolUse", { files: [{ path: gitBash(bad) }] }, { tool_name, id: "g1" });
+  ctx.project.write("old bad.txt", "BROKEN 2");
+  assert.equal(await h("PostToolUse", { files: [{ path: gitBash(bad) }] }, { ...post(bad), id: "g1" }), "");
+  const good = ctx.project.path("g.txt");
+  ctx.project.write("g.txt", "fine");
+  await h("PreToolUse", { files: [{ path: gitBash(good) }] }, { tool_name, id: "g2" });
+  ctx.project.write("g.txt", "BROKEN");
+  const text = await h("PostToolUse", { files: [{ path: gitBash(good) }] }, { ...post(good), id: "g2" });
+  assert.ok(text.includes(`${good}:`), text);
+  assert.doesNotMatch(text, /not checked before/);
+  const checked = new Set(runs(ctx.log).map((r) => r.file.toLowerCase()));
+  assert.deepEqual([...checked].sort(), [bad, good].map((f) => f.toLowerCase()).sort());
+});
+
+test("HOOK-27 reclaiming an abandoned slot cannot free the slot its new owner took", async () => {
+  const dir = makeTempDir("syntax slots ");
+  const lock = path.join(dir, "slot-0.lock");
+  fs.writeFileSync(lock, "abandoned");
+  const past = new Date(Date.now() - 600_000);
+  fs.utimesSync(lock, past, past);
+  const staleToken = fs.readFileSync(lock, "utf8"); // A looks at the stale slot and pauses
+  const releaseB = await acquireSlot(dir, 1, Date.now() + 500, 180_000); // B reclaims it and takes the slot
+  assert.ok(releaseB);
+  removeLock(lock, staleToken, 180_000); // A resumes with what it saw
+  assert.equal(await acquireSlot(dir, 1, Date.now() + 300, 180_000), null, "max_parallel 1 is held by B");
+  releaseB();
+  assert.ok(await acquireSlot(dir, 1, Date.now() + 300, 180_000));
+});
+
+test("HOOK-27 releasing an old acquisition cannot free its successor's slot", async () => {
+  const dir = makeTempDir("syntax slots ");
+  const releaseOld = await acquireSlot(dir, 1, Date.now() + 300, 180_000);
+  const lock = path.join(dir, "slot-0.lock");
+  const past = new Date(Date.now() - 600_000);
+  fs.utimesSync(lock, past, past); // the old owner hung past the stale bound
+  const releaseNew = await acquireSlot(dir, 1, Date.now() + 500, 180_000);
+  assert.ok(releaseNew);
+  releaseOld();
+  assert.ok(fs.existsSync(lock));
+  assert.equal(await acquireSlot(dir, 1, Date.now() + 300, 180_000), null);
+  releaseNew();
+  assert.equal(fs.readdirSync(dir).length, 0, "no lock, guard or temp file left");
 });

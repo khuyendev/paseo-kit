@@ -23,12 +23,16 @@ export function phaseOf(rel: string): { id: string; dir: string; name: string } 
   return m ? { id: m[1], dir: rel.slice(0, m[0].length - 1), name: m[2] ?? "" } : null;
 }
 
+// Only a direct child of a phase directory is live phase inventory; `superseded/` and other nested copies keep
+// their kind for the Files view but carry no plan id, so no board, stat or plan lookup counts them (CR-PNL-05).
+const ACTIVE = /^phases\/[^/]+\/[^/]+$/;
+
 export function classify(rel: string): PathInfo {
   const name = rel.split("/").pop() ?? rel;
   const phase = phaseOf(rel)?.id ?? null;
   if (rel in TOP) return { kind: TOP[rel], phase: null, planId: null };
   const plan = PLAN_ARTIFACT.exec(name);
-  if (plan) return { kind: plan[3].toLowerCase() as FileKind, phase: phase ?? plan[1], planId: `${plan[1]}-${plan[2]}` };
+  if (plan) return { kind: plan[3].toLowerCase() as FileKind, phase: phase ?? plan[1], planId: ACTIVE.test(rel) ? `${plan[1]}-${plan[2]}` : null };
   const ph = PHASE_ARTIFACT.exec(name);
   if (ph) return { kind: ph[2].toLowerCase() as FileKind, phase: phase ?? ph[1], planId: null };
   const top = rel.split("/")[0];

@@ -157,3 +157,41 @@ test("FLOW-11 shell timeout kills the process tree within the limit", async () =
   await new Promise((res) => setTimeout(res, 300));
   assert.throws(() => process.kill(pid, 0), "grandchild still alive");
 });
+
+test("FLOW-43 FLOW-09 maxAgents below maxConcurrent: four parallel calls start exactly one agent", async () => {
+  const host = fakeHost();
+  const r = await engine(`return await parallel([1, 2, 3, 4].map((i) => () => agent("p" + i)));`, { host, limits: { maxConcurrent: 4, maxAgents: 1 } }).p;
+  assert.equal(host.calls.runner.length, 1);
+  assert.equal(r.stats.started, 1);
+  assert.equal(r.result.filter((x) => x === null).length, 3);
+});
+
+test("FLOW-09 FLOW-14 spend that grows while a call waits for admission stops it before it starts", async () => {
+  const gate = deferred();
+  let extra = 0;
+  const host = fakeHost({ admit: () => gate.promise.then(() => ({ release() {} })) });
+  const { p, out } = engine(`try { await agent("a"); return "ran"; } catch (e) { return e.message; }`, { host, limits: { budgetTotal: 10 }, extraSpent: () => extra });
+  await new Promise((r) => setTimeout(r, 10));
+  extra = 10;
+  gate.resolve();
+  assert.equal((await p).result, "budget exhausted: spent 10 of 10 tokens");
+  assert.equal(host.calls.runner.length, 0);
+  assert.ok(!out.some((l) => l.startsWith("agent done")));
+});
+
+test("FLOW-12 FLOW-47 parallel calls with one session key run one after another", async () => {
+  let running = 0;
+  let overlap = false;
+  const host = fakeHost({
+    runner: async (s) => {
+      if (s.opts.session && ++running > 1) overlap = true;
+      await new Promise((r) => setTimeout(r, 10));
+      if (s.opts.session) running--;
+      return { status: "ok", result: s.prompt, agentId: "a", tokens: 0 };
+    },
+  });
+  const r = await engine(`return await parallel([() => agent("a", { session: "s" }), () => agent("b", { session: "s" }), () => agent("c")]);`, { host }).p;
+  assert.deepEqual(r.result, ["a", "b", "c"]);
+  assert.equal(overlap, false);
+  assert.deepEqual(host.calls.runner.filter((s) => s.opts.session).map((s) => s.prompt), ["a", "b"]);
+});

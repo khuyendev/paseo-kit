@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { readJson, writeJsonAtomic } from "../../ship/.agents/harness/lib/io.mjs";
-import { byCodePoint } from "./units.mjs";
+import { byCodePoint, isPartKey } from "./units.mjs";
 import { fail, KitFailure } from "./failure.mjs";
 
 export const MANIFEST_REL = ".agents/harness-kit.json";
@@ -30,6 +30,9 @@ export function readManifest(project) {
     throw new KitFailure(`${MANIFEST_REL}: ${e.code === "EJSON" ? "invalid JSON" : e.message}`);
   }
   if (!isCurrentFormat(m)) fail(OLDER_MANIFEST);
+  // A corrupted record must not authorize a delete or rewrite outside the project (CR-INS-01, INV-03).
+  const bad = Object.keys(m.files).filter((key) => !isPartKey(key));
+  if (bad.length) fail(`${MANIFEST_REL} records paths outside the project: ${bad.map((k) => JSON.stringify(k)).join(", ")}; fix or remove it by hand`);
   return m;
 }
 

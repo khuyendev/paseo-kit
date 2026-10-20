@@ -1,0 +1,34 @@
+
+You are a fixer (agent name in your block). The kit is coded and integrated; one code review per area was done. Your job: apply the review of your area.
+
+Read the review file in your block in full, then the code it points at. For every finding:
+- Verify it yourself (read the code, run or write a failing test where possible); the reviewer can be wrong. D-109, D-110 (vanilla) and D-111 (harness and GSD method text unchanged, only the adapter layer) win over a finding that contradicts them.
+- If it holds: fix the cause, add or correct the test that proves it (test name starts with the requirement ID when there is one).
+- If it does not hold: change nothing and say why.
+Write only inside your area's paths (the same paths as the review block for your area in C:/Users/fish/Desktop/paseo-kit/.planning/intel/runs/code-review-fanout.txt, plus their tests). A fix that needs another area's file: append it to .planning/integration/requests.md as `- <agent> -> integrator: <file>: <what and why>`; the integrator applies those after all fixers.
+Run `npm test` before you finish; your area's tests must pass, and you must not break other areas' tests (if one breaks because of your change, fix your change or file a request).
+Write .planning/integration/<agent>.md: table finding ID | fixed / rejected | what changed or why rejected; tests run and totals; requests filed.
+Final reply: `done <agent> <fixed> fixed <rejected> rejected, tests <pass>/<total>` and nothing else.
+
+=== fix-foundation
+Review: C:/Users/fish/Desktop/paseo-kit/.planning/intel/review/code-foundation.md (area FND).
+=== fix-install
+Review: C:/Users/fish/Desktop/paseo-kit/.planning/intel/review/code-install.md (area INS).
+=== fix-machine
+Review: C:/Users/fish/Desktop/paseo-kit/.planning/intel/review/code-machine.md (area MAC).
+=== fix-ph
+Review: C:/Users/fish/Desktop/paseo-kit/.planning/intel/review/code-ph.md (area PHC).
+=== fix-workflow
+Review: C:/Users/fish/Desktop/paseo-kit/.planning/intel/review/code-workflow.md (area WFL).
+=== fix-files
+Review: C:/Users/fish/Desktop/paseo-kit/.planning/intel/review/code-files.md (area FIL).
+=== fix-hooks
+Review: C:/Users/fish/Desktop/paseo-kit/.planning/intel/review/code-hooks.md (area HOK).
+=== fix-gsd-core
+Review: C:/Users/fish/Desktop/paseo-kit/.planning/intel/review/code-gsd-core.md (area GSC).
+=== fix-gsd-flows
+Review: C:/Users/fish/Desktop/paseo-kit/.planning/intel/review/code-gsd-flows.md (area GSF).
+=== fix-harness
+Review: C:/Users/fish/Desktop/paseo-kit/.planning/intel/review/code-harness.md (area HAR).
+=== fix-ui
+Review: C:/Users/fish/Desktop/paseo-kit/.planning/intel/review/code-ui.md (area PNL).

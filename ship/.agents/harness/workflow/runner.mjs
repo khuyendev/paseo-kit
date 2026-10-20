@@ -132,14 +132,17 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
       return { tokens: u.output, usage: { ...u, costUsd: costUsd ?? null, reportedCostUsd: now.reportedCostUsd ?? null } };
     };
     const durationS = () => Math.round((clock.now() - t0) / 1000);
-    const result = (status, fields) => ({ status, agentId, model: identity.model, ...usageOf(), durationS: durationS(), worktreePath: worktree?.path ?? null, ...(worktree && key !== undefined ? { worktree } : {}), ...fields });
+    const result = (status, fields) => ({ status, agentId, model: identity.model, ...usageOf(), durationS: durationS(), worktreePath: worktree?.path ?? null, ...(worktree ? { worktree } : {}), ...fields });
     // opts.timeoutS bounds the whole call (all turns of it); at the deadline the call ends null and the agent is archived.
     const deadline = opts.timeoutS !== undefined ? t0 + opts.timeoutS * 1000 : null;
+    const expired = () => deadline !== null && clock.now() >= deadline;
+    const late = () => new Error(`no reply within ${opts.timeoutS} s`);
     const waitOpts = (before) => {
       if (deadline === null) return { turnsBefore: before };
       const left = Math.ceil((deadline - clock.now()) / 1000);
-      if (left <= 0) throw new Error(`no reply within ${opts.timeoutS} s`);
-      return { turnsBefore: before, timeoutS: Math.min(left, cfg.wait_timeout_s) };
+      if (left <= 0) throw late();
+      // The absolute deadline also bounds waitTurn's provider-retry pauses and continue prompts (CR-WFL-05).
+      return { turnsBefore: before, timeoutS: Math.min(opts.timeoutS, cfg.wait_timeout_s), deadline };
     };
 
     async function waitReply(turnsBefore) {
@@ -148,11 +151,12 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
       const once = async (before) => {
         try {
           const r = await session.waitTurn(agentId, waitOpts(before));
+          if (expired()) throw late();
           maxContext = Math.max(maxContext, contextOf(r.usage));
           text = r.text;
           err = null;
         } catch (e) {
-          err = e;
+          err = expired() ? late() : e;
         }
         if (wd?.stopReason) throw new Error(wd.stopReason);
       };
@@ -169,6 +173,7 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
     }
 
     async function send(text) {
+      if (expired()) throw late();
       wd?.reset();
       const before = session.turnsOf(agentId);
       await session.sendPrompt(agentId, text);
@@ -192,7 +197,7 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
           if (!fs.existsSync(prior.worktree.path)) throw new Error(`session worktree ${prior.worktree.path} is gone`);
           worktree = prior.worktree;
         } else {
-          worktree = runtime.createWorktree(root, cfg, `${runId}-${n}`);
+          worktree = runtime.createWorktree(root, cfg, `${runId}-${n}`, opts.worktreeSeed);
           newWorktree = true;
         }
       }
@@ -260,6 +265,12 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
         text = await send(schemaRetryPrompt(errors, opts.schema, native));
       }
     } catch (e) {
+      if (e.agentId && e.archived !== true) {
+        agentId = e.agentId;
+        admission?.created?.(agentId);
+        capacity.retain(agentId);
+        out(`log warning: creation cleanup unconfirmed for ${agentId}; retaining its worktree`);
+      }
       noteTransport(e);
       return result("null", { reason: errText(e) });
     } finally {
@@ -279,7 +290,15 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
         }
         return;
       }
-      const archive = () => wd?.archived ? null : session.archive(agentId).catch((e) => out(`log warning: archive ${id8(agentId)} failed: ${errText(e)}`));
+      const archive = async () => {
+        try {
+          if (!wd?.archived) await session.archive(agentId);
+          capacity.unretain(agentId);
+        } catch (e) {
+          capacity.retain(agentId);
+          out(`log warning: archive ${id8(agentId)} failed: ${errText(e)}`);
+        }
+      };
       if (key !== undefined) {
         if (ok) {
           sessions.set(key, { agentId, worktree, keep: opts.keep === true || prior?.keep === true });

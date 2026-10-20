@@ -15,7 +15,9 @@ How agents are read (all of it is stamped by `ph` when it creates an agent):
   not drawn.
 
 The context ring turns to the warning colour at the same threshold `ph context` uses for ROTATE, read from the
-agent's project config (`context_guard.start_pct`).
+agent's project config (`context_guard.start_pct`, read as JSON: installed defaults plus overlay); an agent outside
+a kit project gets the kit defaults bundled as `server/kit-defaults.json`, a copy of
+`ship/.agents/harness.defaults.json` the tests keep equal (copy it again after changing the kit defaults).
 
 ## Operator steps
 

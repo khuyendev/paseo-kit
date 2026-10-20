@@ -7,11 +7,29 @@ import { readJson, readText } from "../lib/io.mjs";
 import { errText } from "../lib/cli.mjs";
 import { toSlash } from "../lib/paths.mjs";
 import { isBuiltinRunnerKind } from "./contract.mjs";
-import { lintAgentFile, lintSkillFolder, lintTextFile, walkFiles } from "./lint-assets.mjs";
+import { isWorkflowScript, lintAgentFile, lintSkillFolder, lintTextFile, walkFiles } from "./lint-assets.mjs";
+import { lintWorkflowScript } from "./lint-scripts.mjs";
 import { EVAL_RECORD_KINDS, HISTORY_REL, lintHistory, scopePaths, triggerRecordRel, validateEvalRecord, validateTriggerRecord } from "./records.mjs";
 
 const SKILLS = ".claude/skills";
 const AGENTS = ".agents/agents";
+
+const SCRIPT_OPERAND = /^(?:\.\/)?[\w@.-]+(?:\/[\w@.-]+)*\.(?:[cm]?js|ts|py|sh|ps1|bat|cmd|rb|pl)$/i;
+
+// CR-HAR-06: repo-relative scripts in an adapter argv (`node tools/check.mjs`, `./tools/build.sh`). A bare
+// command name is a PATH executable and options or data arguments are no script.
+export function scriptOperands(argv) {
+  return (argv ?? []).filter((w, i) => typeof w === "string" && SCRIPT_OPERAND.test(w) && (i > 0 || w.includes("/"))).map((w) => w.replace(/^\.\//, ""));
+}
+
+// Every script an adapter command or checker argv runs: [{where, rel}].
+function adapterArgvScripts(a) {
+  const lists = [["adapter.commands.build", a.commands.build], ["adapter.commands.test", a.commands.test]];
+  for (const g of a.commands.gates ?? []) lists.push([`adapter.commands.gates.${g.name}`, g.argv]);
+  for (const [k, v] of Object.entries(a.commands.verify)) lists.push([`adapter.commands.verify.${k}`, v.argv]);
+  for (const [ext, v] of Object.entries(a.syntax_checkers)) lists.push([`adapter.syntax_checkers.${ext}`, v.argv]);
+  return lists.flatMap(([where, argv]) => scriptOperands(argv).map((rel) => ({ where, rel })));
+}
 
 // HARN-07/08 checks of the adapter section itself.
 function lintAdapter(root, cfg) {
@@ -34,6 +52,7 @@ function lintAdapter(root, cfg) {
   for (const [where, rel] of [["adapter.ownership.shared.predicate", a.ownership.shared.predicate], ["adapter.attribution", a.attribution]]) {
     if (rel && !exists(rel)) fail(`${where}: script ${rel} does not exist`);
   }
+  for (const { where, rel } of adapterArgvScripts(a)) if (!exists(rel)) fail(`${where}: script ${rel} does not exist`);
   for (const rel of a.instructions) if (!exists(rel)) fail(`adapter.instructions: ${rel} does not exist`);
   for (const [role, entry] of Object.entries(cfg.gsd.roles)) {
     if (!entry.reason?.trim()) fail(`gsd.roles.${role}: no reason (every role entry states why)`);
@@ -41,7 +60,7 @@ function lintAdapter(root, cfg) {
   return out;
 }
 
-// Assets named by the adapter: the stack skill folder, project agents and adapter scripts.
+// Assets named by the adapter: the stack skill folder, project agents, hook scripts and argv scripts.
 function adapterAssets(cfg) {
   const a = cfg.adapter;
   const paths = [];
@@ -49,6 +68,7 @@ function adapterAssets(cfg) {
   for (const type of Object.values(a.agents)) paths.push(`${AGENTS}/${type}.md`);
   for (const entry of Object.values(a.verify_vocabulary)) paths.push(...[entry.parser, entry.resolver, entry.evidence_parser].filter(Boolean));
   paths.push(...[a.ownership.shared.predicate, a.attribution].filter(Boolean));
+  paths.push(...adapterArgvScripts(a).map((s) => s.rel));
   return paths;
 }
 
@@ -72,7 +92,7 @@ function expand(root, rel) {
   return walkFiles(path.join(root, rel)).map((abs) => toSlash(path.relative(root, abs)));
 }
 
-function lintAssets(root, cfg, groups) {
+function lintAssets(root, cfg, groups, { workflows = new Set() } = {}) {
   const findings = [];
   const refs = [];
   const tiers = Object.keys(cfg.tiers);
@@ -95,7 +115,7 @@ function lintAssets(root, cfg, groups) {
     const base = path.posix.basename(rel);
     if (EVAL_RECORD_KINDS.includes(base)) findings.push(...recordFindings(rel, () => validateEvalRecord(base, readJson(path.join(root, rel)))));
     else {
-      const r = lintTextFile(root, path.join(root, rel));
+      const r = lintTextFile(root, path.join(root, rel), { workflow: workflows.has(rel) });
       findings.push(...r.findings);
       refs.push(...r.refs);
     }
@@ -111,15 +131,31 @@ function recordFindings(rel, validate) {
   }
 }
 
+const refTarget = (r) => (r.kind === "agent" ? `${AGENTS}/${r.name}.md` : r.kind === "skill" ? `${SKILLS}/${r.name}/SKILL.md` : r.name.replace(/^\.\//, ""));
+
+// Workflow scripts the linted files invoke (`--script`) that exist: mandatory and checked as workflow scripts.
+function invokedScripts(root, refs) {
+  return [...new Set(refs.filter((r) => r.kind === "script").map(refTarget))].filter((rel) => fs.existsSync(path.join(root, rel)) && fs.statSync(path.join(root, rel)).isFile());
+}
+
+// Structural checks for invoked scripts the first pass linted as plain files (no meta, outside .agents/workflows/).
+function structureOfInvoked(root, rels) {
+  return rels.flatMap((rel) => {
+    const text = readText(path.join(root, rel));
+    return isWorkflowScript(rel, text) ? [] : lintWorkflowScript(text).map((f) => ({ ...f, file: rel }));
+  });
+}
+
 function lintReferences(root, refs) {
   const seen = new Set();
   const out = [];
   for (const r of refs) {
-    const target = r.kind === "agent" ? `${AGENTS}/${r.name}.md` : `${SKILLS}/${r.name}/SKILL.md`;
+    const target = refTarget(r);
     const key = `${r.file}|${target}`;
     if (seen.has(key) || fs.existsSync(path.join(root, target))) continue;
     seen.add(key);
-    out.push({ level: "fail", file: r.file, line: r.line, msg: `${r.kind === "agent" ? "agent type" : "skill"} ${r.name} has no ${target}` });
+    const msg = r.kind === "script" ? `workflow script ${target} does not exist` : `${r.kind === "agent" ? "agent type" : "skill"} ${r.name} has no ${target}`;
+    out.push({ level: "fail", file: r.file, line: r.line, msg });
   }
   return out;
 }
@@ -144,7 +180,12 @@ export function lintProject(root, { all = false } = {}) {
   const scoped = new Set(named.flatMap((p) => expand(root, p)));
   const groups = classify([...scoped]);
   const main = lintAssets(root, cfg, groups);
-  findings.push(...main.findings, ...lintReferences(root, main.refs));
+  const invoked = invokedScripts(root, main.refs);
+  const fresh = invoked.filter((rel) => !scoped.has(rel));
+  const scripts = lintAssets(root, cfg, classify(fresh), { workflows: new Set(fresh) });
+  const structure = structureOfInvoked(root, invoked.filter((rel) => scoped.has(rel)));
+  findings.push(...main.findings, ...scripts.findings, ...structure, ...lintReferences(root, [...main.refs, ...scripts.refs]));
+  for (const rel of fresh) scoped.add(rel);
   let checked = scoped.size;
   if (all) {
     const rest = [...expand(root, SKILLS), ...expand(root, AGENTS), ...expand(root, ".claude/commands")].filter((p) => !scoped.has(p));

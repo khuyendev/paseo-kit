@@ -291,3 +291,32 @@ test("PANL-27 a caller label paseo.parent-agent-id on a ph-created agent does no
   assert.equal(brain.agent.id, "brain-real-0001");
   assert.deepEqual(brain.groups.map((g) => g.name), ["planners"]);
 });
+
+test("PANL-37 relative paths resolve against each agent's cwd: two projects never share a file (CR-PNL-07)", async () => {
+  const agents = [agentPayload("b"), kid("A", "b", { status: "running", cwd: "C:/project-a" }), kid("B", "b", { status: "running", cwd: "C:/project-b" })];
+  const timelines = {
+    A: [toolEntry("a1", "Write", { file_path: "src/index.ts" }, iso(100))],
+    B: [toolEntry("b1", "Write", { file_path: "src/index.ts" }, iso(200))],
+  };
+  const s = await setup(fakePaseo({ agents, timelines })).snap();
+  const holds = s.files.filter((f) => f.name === "index.ts");
+  assert.deepEqual(holds.map((h) => [h.agentId, h.path, h.writers, h.prevAgentId]).sort(), [
+    ["A", "C:/project-a/src/index.ts", 1, null],
+    ["B", "C:/project-b/src/index.ts", 1, null],
+  ]);
+});
+
+test("PANL-37 relative, absolute and Git-Bash spellings of one file are one ledger entry (CR-PNL-07)", async () => {
+  const agents = [agentPayload("b"), kid("A", "b", { status: "running", cwd: "C:\\project" }), kid("B", "b", { status: "running", cwd: "C:/project/sub" }), kid("C", "b", { status: "running" })];
+  const timelines = {
+    A: [toolEntry("a1", "Write", { file_path: "src/index.ts" }, iso(100))],
+    B: [toolEntry("b1", "Edit", { file_path: "/c/project/src/./index.ts" }, iso(200)), toolEntry("b2", "Read", { file_path: "../src/index.ts" }, iso(300))],
+    C: [toolEntry("c1", "Write", { file_path: "src/index.ts" }, iso(400))],
+  };
+  const s = await setup(fakePaseo({ agents, timelines })).snap();
+  const shared = s.files.filter((f) => f.path.toLowerCase() === "c:/project/src/index.ts");
+  assert.equal(shared.length, 1);
+  assert.deepEqual([shared[0].agentId, shared[0].writers, shared[0].prevAgentId], ["B", 2, "A"]);
+  const unresolved = s.files.find((f) => f.agentId === "C");
+  assert.deepEqual([unresolved.path, unresolved.writers], ["src/index.ts", 1], "a relative path without a cwd stays the agent's own");
+});

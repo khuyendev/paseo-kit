@@ -41,10 +41,15 @@ export function listShipFiles(kitDir) {
 
 export const byCodePoint = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
+// A nonempty forward-slash path relative to its root: no drive, UNC, backslash, `.`, `..` or empty segment.
+export const isPartPath = (rel) => typeof rel === "string" && rel !== "" && !/[\\:]/.test(rel) && !path.isAbsolute(rel)
+  && rel.split("/").every((p) => p !== "" && p !== "." && p !== "..");
+
+// A manifest key names a path inside the project; a block key's file portion too (CR-INS-01, INV-03).
+export const isPartKey = (key) => isPartPath(isBlockKey(key) ? blockFileOf(key) : key);
+
 function checkListed(kitDir, rel) {
-  if (typeof rel !== "string" || !rel || rel.includes("\\") || path.isAbsolute(rel) || rel.split("/").some((p) => p === ".." || p === "." || p === "")) {
-    fail(`kit.json lists an invalid unit path: ${JSON.stringify(rel)}`);
-  }
+  if (!isPartPath(rel)) fail(`kit.json lists an invalid unit path: ${JSON.stringify(rel)}`);
   if (KIT_SIDE_DIRS.includes(rel.split("/")[0])) fail(`kit.json lists a kit-side file: ${rel}`);
   if (isTestPath(rel)) fail(`kit.json lists a test file: ${rel}`);
   if (!fs.statSync(path.join(kitDir, "ship", rel), { throwIfNoEntry: false })?.isFile()) fail(`kit.json lists a missing file: ${rel}`);
@@ -68,6 +73,8 @@ export function hookScript(hook) {
 }
 
 export const hookUnitKey = (name) => `.claude/hooks/${name}.mjs`;
+
+export const hookNameOfKey = (key) => /^\.claude\/hooks\/([^/]+)\.mjs$/.exec(key)?.[1] ?? null;
 
 // Loads and self-checks a kit folder: {dir, version, units: Map key -> unit, template}.
 export function loadKit(kitDir) {

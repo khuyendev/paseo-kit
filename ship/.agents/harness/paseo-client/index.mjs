@@ -86,8 +86,21 @@ export class Session {
     try {
       await this.usage.track([agent.id]);
     } catch (e) {
-      await this.client.archiveAgent(agent.id).catch(() => {});
-      throw new Error(`agent ${id8(agent.id)} created but its usage tracking failed (archived): ${errText(e)}`);
+      // CR-FND-02: callers may drop the agent's worktree only when the archive is confirmed; otherwise it may still be live.
+      let archived = false;
+      let archiveError;
+      try {
+        await this.client.archiveAgent(agent.id);
+        archived = true;
+      } catch (err) {
+        archiveError = err;
+      }
+      const cleanup = archived ? "archived" : `archive failed, agent may still be live: ${errText(archiveError)}`;
+      throw Object.assign(new Error(`agent ${id8(agent.id)} created but its usage tracking failed (${cleanup}): ${errText(e)}`, { cause: e }), {
+        agentId: agent.id,
+        archived,
+        archiveError,
+      });
     }
     return agent;
   }
@@ -109,43 +122,61 @@ export class Session {
     return this.reply({ client: this.client, agentId, lastMessage });
   }
 
-  async continueAfterError(agentId, attempt) {
-    await this.clock.sleep(RETRY_PAUSES_S[attempt] * 1000);
+  async continueAfterError(agentId, attempt, leftMs = () => Infinity) {
+    const pause = RETRY_PAUSES_S[attempt] * 1000;
+    if (pause >= leftMs()) return null;
+    await this.clock.sleep(pause);
+    if (leftMs() <= 0) return null;
     const base = this.turnsOf(agentId);
     await this.sendPrompt(agentId, CONTINUE_PROMPT);
     return base;
   }
 
   // PCLI-12..14: one finished turn, provider errors continued in the same agent, questions denied.
-  async waitTurn(agentId, { timeoutS = this.cfg.wait_timeout_s, turnsBefore } = {}) {
+  // `deadline` (ms on session.clock) bounds every wait, retry pause and continuation; timeoutS bounds each wait.
+  async waitTurn(agentId, { timeoutS = this.cfg.wait_timeout_s, turnsBefore, deadline = null } = {}) {
     let retries = 0;
     let questions = 0;
     let base = turnsBefore ?? this.turnsOf(agentId);
+    const leftMs = () => (deadline === null ? Infinity : deadline - this.clock.now());
+    const timedOut = () => new Error(`no reply within ${timeoutS} s`);
+    // CR-FND-03: a retry past the caller's whole-call deadline is a timeout, not a fresh full wait.
+    const retry = async (text) => {
+      if (NON_RETRYABLE.test(text) || retries >= RETRY_PAUSES_S.length) throw new Error(`agent error: ${errText(text)}`);
+      const next = await this.continueAfterError(agentId, retries++, leftMs);
+      if (next === null) throw timedOut();
+      base = next;
+    };
     for (;;) {
-      const st = await this.client.waitForFinish(agentId, timeoutS * 1000);
+      const waitMs = Math.min(timeoutS * 1000, leftMs());
+      if (waitMs <= 0) throw timedOut();
+      const st = await this.client.waitForFinish(agentId, waitMs);
+      if (leftMs() <= 0) throw timedOut();
       if (st.status === "idle") {
-        await this.usage.settleTurn(agentId, base, st.final?.lastUsage);
+        await this.usage.settleTurn(agentId, base, st.final?.lastUsage, deadline ?? Infinity);
+        if (leftMs() <= 0) throw timedOut();
         const text = await this.replyText(agentId, st.lastMessage);
+        if (leftMs() <= 0) throw timedOut();
         if (providerErrorReply(text)) {
-          if (NON_RETRYABLE.test(text) || retries >= RETRY_PAUSES_S.length) throw new Error(`agent error: ${errText(text)}`);
-          base = await this.continueAfterError(agentId, retries++);
+          await retry(text);
           continue;
         }
         if (!String(text ?? "").trim()) throw new Error("finished without a reply");
         return { text, usage: st.final?.lastUsage ?? {}, agent: st.final };
       }
       if (st.status === "error") {
-        const text = st.error ?? st.final?.lastError ?? "unknown error";
-        if (NON_RETRYABLE.test(text) || retries >= RETRY_PAUSES_S.length) throw new Error(`agent error: ${errText(text)}`);
-        base = await this.continueAfterError(agentId, retries++);
+        await retry(st.error ?? st.final?.lastError ?? "unknown error");
         continue;
       }
-      if (st.status === "timeout") throw new Error(`no reply within ${timeoutS} s`);
+      if (st.status === "timeout") throw timedOut();
       if (st.status === "permission") {
         const pending = st.final?.pendingPermissions ?? (await this.fetchAgent(agentId))?.pendingPermissions ?? [];
         if (pending.length && pending.every(isQuestion) && questions < MAX_QUESTIONS_DENIED) {
           questions++;
-          for (const p of pending) await this.client.respondToPermission(agentId, p.id, { behavior: "deny", message: NO_OWNER_REPLY });
+          for (const p of pending) {
+            if (leftMs() <= 0) throw timedOut();
+            await this.client.respondToPermission(agentId, p.id, { behavior: "deny", message: NO_OWNER_REPLY });
+          }
           continue;
         }
         const blocking = pending.find((p) => !isQuestion(p)) ?? pending[0];
@@ -162,14 +193,24 @@ export class Session {
 
   async listAgents(parentId = this.caller) {
     if (!parentId) return [];
-    const res = await this.client.fetchAgents({ filter: { labels: { [PARENT_LABEL]: parentId } } });
-    return (res?.entries ?? []).map((e) => e.agent).filter((a) => a && !a.archivedAt && a.labels?.[PARENT_LABEL] === parentId);
+    return this.findAgents({ [PARENT_LABEL]: parentId });
   }
 
   // Live agents carrying every given label, across orchestrators (PHCL-32 asks whether a named agent still exists).
   async findAgents(labels = {}) {
-    const res = await this.client.fetchAgents({ filter: { labels } });
-    return (res?.entries ?? []).map((e) => e.agent).filter((a) => a && !a.archivedAt && Object.entries(labels).every(([k, v]) => a.labels?.[k] === v));
+    const agents = new Map();
+    const seen = new Set();
+    let cursor;
+    for (let page = 0; page < 1000; page++) {
+      const res = await this.client.fetchAgents({ filter: { labels }, ...(cursor ? { page: { cursor } } : {}) });
+      if (!Array.isArray(res?.entries)) throw new Error("daemon agent listing is incomplete (missing entries)");
+      for (const { agent } of res.entries) if (agent && !agent.archivedAt && Object.entries(labels).every(([k, v]) => agent.labels?.[k] === v)) agents.set(agent.id, agent);
+      if (!res.pageInfo?.hasMore) return [...agents.values()];
+      cursor = res.pageInfo.nextCursor;
+      if (!cursor || seen.has(cursor)) throw new Error("daemon agent listing is incomplete (no new page cursor)");
+      seen.add(cursor);
+    }
+    throw new Error("daemon agent listing exceeds 1000 pages");
   }
 
   // Adds or replaces labels of an agent (FLOW-48 moves an adopted session agent's `harness.run` to the new run).

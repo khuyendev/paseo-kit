@@ -185,3 +185,55 @@ test("FLOW-11 resume reruns shell calls", async () => {
   assert.ok(r.out.includes("agent cached #1 agent") && r.out.some((l) => l.startsWith("shell done #1 code=0")));
   assert.ok(readJournal(runFile(s.project, "wf_s2", "journal.jsonl")).some((e) => e.kind === "shell"));
 });
+
+test("FLOW-19 dot-only ids are refused for --run-id and --resume; nothing written outside the runs dir", async () => {
+  const s = setup();
+  s.project.write("wf.js", `${meta()}return 1;`);
+  for (const id of [".", "..", "..."]) {
+    const r = await s.ph(["workflow", "--script", "wf.js", "--runs-dir", ".", "--run-id", id]);
+    assert.equal(r.code, 1, id);
+    assert.match(r.err.join("\n"), /invalid --run-id/);
+    assert.equal((await s.ph(["workflow", "--resume", id])).code, 1, id);
+  }
+  for (const f of ["script.js", "args.json", "run.json"]) assert.ok(!fs.existsSync(s.project.path(f)), f);
+});
+
+test("FLOW-18 FLOW-19 an existing run id is refused with exit 1 and its files stay byte-identical, resume onto itself too", async () => {
+  const s = setup();
+  s.project.write("wf.js", `${meta()}return await agent("a");`);
+  assert.equal((await s.ph(["workflow", "--script", "wf.js", "--run-id", "wf_x"])).code, 0);
+  const snap = () => Object.fromEntries(fs.readdirSync(path.join(runsDir(s.project), "wf_x")).map((f) => [f, fs.readFileSync(runFile(s.project, "wf_x", f), "utf8")]));
+  const before = snap();
+  s.project.write("other.js", `${meta()}return 2;`);
+  const again = await s.ph(["workflow", "--script", "other.js", "--run-id", "wf_x"]);
+  assert.equal(again.code, 1);
+  assert.match(again.err.join("\n"), /run wf_x already exists/);
+  const self = await s.ph(["workflow", "--resume", "wf_x", "--run-id", "wf_x"]);
+  assert.equal(self.code, 1);
+  assert.deepEqual(snap(), before);
+});
+
+test("FLOW-19 two concurrent starts with one run id: exactly one runs", async () => {
+  const s = setup();
+  s.project.write("wf.js", `${meta()}return 1;`);
+  const codes = (await Promise.all([1, 2].map(() => s.ph(["workflow", "--script", "wf.js", "--run-id", "wf_c"])))).map((r) => r.code).sort();
+  assert.deepEqual(codes, [0, 1]);
+  assert.equal(readRun(s.project, "wf_c").status, "done");
+});
+
+test("FLOW-21 only the detached child named by its parent's claim reuses the run dir", async () => {
+  const s = setup();
+  s.project.write("wf.js", `${meta()}return 1;`);
+  const dir = path.join(runsDir(s.project), "wf_d");
+  fs.mkdirSync(dir, { recursive: true });
+  const claim = (pid) => fs.writeFileSync(path.join(dir, "run.json"), JSON.stringify({ runId: "wf_d", status: "running", startedAt: "2026-10-20T00:00:00.000Z", pid }));
+  claim(process.pid + 1_000_000);
+  const env = { ...s.env, PASEO_HARNESS_CLAIMED_RUN_DIR: dir };
+  const stranger = await s.ph(["workflow", "--script", "wf.js", "--run-id", "wf_d"], { env });
+  assert.equal(stranger.code, 1);
+  assert.match(stranger.err.join("\n"), /was not started by a detaching ph workflow/);
+  claim(process.pid);
+  const child = await s.ph(["workflow", "--script", "wf.js", "--run-id", "wf_d"], { env });
+  assert.equal(child.code, 0, child.stderr);
+  assert.deepEqual([readRun(s.project, "wf_d").status, readRun(s.project, "wf_d").startedAt], ["done", "2026-10-20T00:00:00.000Z"]);
+});

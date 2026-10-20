@@ -26,21 +26,23 @@ export const TRUSTED_FIXED = Object.freeze([
 
 const ERROR_HEAD = "ERROR (details/fix IDs are paginated, not discarded)\n";
 
-// One page of a result: never splits a surrogate pair; the rest stays in a private page file (FTOL-13).
-export function pageResult(dir, method, out, offset = 0, token) {
+// One page of a result: never splits a surrogate pair; the rest stays in a private page file (FTOL-13). A page file
+// is never advanced or deleted on use (CR-FIL-06): a continuation whose reply was lost gives the same page again, with
+// the same next token (derived from its own), until retention expires.
+export function pageResult(dir, method, out, token) {
   const text = out.text;
-  let end = Math.min(offset + PAGE_CHARS, text.length);
+  let end = Math.min(PAGE_CHARS, text.length);
   if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1])) end--;
   const more = end < text.length;
   let continuation;
   if (more) {
-    continuation = token ?? crypto.randomBytes(32).toString("hex");
-    writePrivate(path.join(dir, `${continuation}.page.json`), { method, text, isError: !!out.isError, offset: end });
-  } else if (token) fs.rmSync(path.join(dir, `${token}.page.json`), { force: true });
+    continuation = token ? crypto.createHash("sha256").update(`${token}\0next`).digest("hex") : crypto.randomBytes(32).toString("hex");
+    writePrivate(path.join(dir, `${continuation}.page.json`), { method, text: text.slice(end), isError: !!out.isError });
+  }
   const footer = more
     ? `\n\nCONTINUATION ${continuation}: call ${PREFIX}${method} with {"continuation":"${continuation}"}; the next page keeps the remaining diagnostics and fix IDs.`
     : "";
-  return { method, text: `${out.isError ? ERROR_HEAD : ""}${text.slice(offset, end)}${footer}`, isError: !!out.isError };
+  return { method, text: `${out.isError ? ERROR_HEAD : ""}${text.slice(0, end)}${footer}`, isError: !!out.isError };
 }
 
 const file = (dir, ticket, kind) => path.join(dir, kind === "started" ? `${ticket}.started` : `${ticket}.${kind}.json`);
@@ -71,7 +73,7 @@ function stage(dir, session, input) {
       throw e;
     }
     if (page.method !== input.method) throw new Error("continuation belongs to a different tool");
-    writePrivate(file(dir, ticket, "result"), pageResult(dir, input.method, page, page.offset, args.continuation));
+    writePrivate(file(dir, ticket, "result"), pageResult(dir, input.method, page, args.continuation));
     return { session, ticket, continuation: true };
   }
   writePrivate(file(dir, ticket, "request"), { cwd: input.cwd, method: input.method, args });

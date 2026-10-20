@@ -126,6 +126,7 @@ function parseFlow(src, line) {
       ws();
       if (src[i] !== ":") throw new YamlError("expected : in flow mapping", line);
       i++;
+      checkKey(out, String(key), line);
       out[String(key)] = value();
       ws();
       if (src[i] === ",") i++;
@@ -169,6 +170,13 @@ function keyColon(s) {
     if (s[i] === ":" && (i + 1 === s.length || s[i + 1] === " " || s[i + 1] === "\t")) return i;
   }
   return -1;
+}
+
+// GSDC-05: a duplicate key would silently drop a value; `__proto__` would set the mapping's prototype, so inherited
+// fields (status, ...) could appear that the serialized mapping does not hold.
+function checkKey(out, key, line) {
+  if (key === "__proto__") throw new YamlError("key __proto__ is not allowed", line);
+  if (Object.hasOwn(out, key)) throw new YamlError(`duplicate key ${key}`, line);
 }
 
 const isSeqItem = (text) => text === "-" || text.startsWith("- ");
@@ -224,7 +232,7 @@ class Parser {
       if (c < 0) throw new YamlError(`expected "key: value", got: ${text.slice(0, 80)}`, this.no(i));
       const rawKey = text.slice(0, c).trim();
       const key = rawKey.startsWith('"') || rawKey.startsWith("'") ? unquote(rawKey, this.no(i)) : rawKey;
-      if (Object.hasOwn(out, key)) throw new YamlError(`duplicate key ${key}`, this.no(i));
+      checkKey(out, key, this.no(i));
       this.pos = i + 1;
       out[key] = this.parseValue(text.slice(c + 1).trim(), n, i, true);
     }

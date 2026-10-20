@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { PH_FILE, UsageError, errText } from "../lib/cli.mjs";
 import { readText, writeJsonAtomic, readJsonIf } from "../lib/io.mjs";
+import { samePath } from "../lib/paths.mjs";
 import { runWorkflow } from "./engine.mjs";
 import { RUN_FILES, loadJournalCache, newRunId, parseBudget, runsDirOf, runsDirSuffix } from "./journal.mjs";
 import { createPaseoHost } from "./runner.mjs";
@@ -17,6 +18,13 @@ export const WORKFLOW_OPTIONS = Object.freeze({
 export const WORKFLOW_USAGE = "ph workflow [--script F | --name N] [--args JSON | --args-file F] [--resume RUNID] [--budget N|Nk|N.Nm] [--runs-dir D] [--detach] [--run-id ID]";
 // Same text as Session.requireCaller (PCLI-06); checked here before any daemon contact.
 const NO_CALLER = "PASEO_AGENT_ID is not set: run ph from an agent inside Paseo, so every agent is created as its subagent";
+// The detached child runs in the directory its parent claimed; this names it, nothing else may reuse a run dir.
+const CLAIMED_ENV = "PASEO_HARNESS_CLAIMED_RUN_DIR";
+
+// A run id names one immediate child of the runs dir: never "." or ".." (CR-WFL-01).
+function checkRunId(id, flag) {
+  if (!/^[A-Za-z0-9._-]+$/.test(id) || /^\.+$/.test(id)) throw new UsageError(`invalid ${flag} '${id}' (letters, digits, . _ - only, not only dots)`);
+}
 
 // A saved workflow lives only in .agents/workflows/ (FLOW-10); {scriptPath} is relative to the root.
 export function resolveScript(root, ref) {
@@ -46,6 +54,8 @@ async function prepare(ctx, deps) {
   if (opts.script !== undefined && opts.name !== undefined) throw new UsageError("give --script or --name, not both");
   if (opts.args !== undefined && opts["args-file"] !== undefined) throw new UsageError("use --args or --args-file, not both");
   const runsDir = runsDirOf(root, opts["runs-dir"]);
+  if (opts.resume !== undefined) checkRunId(opts.resume, "--resume");
+  if (opts["run-id"] !== undefined) checkRunId(opts["run-id"], "--run-id");
   const prevDir = opts.resume !== undefined ? path.join(runsDir, opts.resume) : null;
   if (prevDir && !fs.existsSync(path.join(prevDir, RUN_FILES.journal))) throw new UsageError(`cannot resume: ${path.join(prevDir, RUN_FILES.journal)} not found`);
   let ref;
@@ -65,7 +75,6 @@ async function prepare(ctx, deps) {
   else if (opts["args-file"] !== undefined) args = parseJsonArg(readText(path.resolve(root, opts["args-file"])), "--args-file");
   else if (prevDir) args = readJsonIf(path.join(prevDir, RUN_FILES.args)) ?? undefined;
   const budgetTotal = opts.budget !== undefined ? parseBudget(opts.budget) : null;
-  if (opts["run-id"] !== undefined && !/^[A-Za-z0-9._-]+$/.test(opts["run-id"])) throw new UsageError(`invalid --run-id '${opts["run-id"]}' (letters, digits, . _ - only)`);
   if (!ctx.env.PASEO_AGENT_ID?.trim()) throw new UsageError(NO_CALLER);
   const runtime = deps.runtime ?? kitRuntime;
   // A missing daemon or CLI is a run failure (exit 2), so the connection error is kept for after the run dir exists.
@@ -80,17 +89,38 @@ async function prepare(ctx, deps) {
   const runId = opts["run-id"] ?? newRunId(new Date(ctx.clock.now()));
   // The script global `runId` stays the first run's id across --resume, so attempt keys survive (GSDC-30, GSDF-12).
   const attemptRunId = prevDir ? (readJsonIf(path.join(prevDir, RUN_FILES.run))?.attemptRunId ?? opts.resume) : runId;
-  return { runsDir, prevDir, script, meta, args, budgetTotal, runtime, session, connectError, runId, attemptRunId, runDir: path.join(runsDir, runId) };
+  const runDir = path.join(runsDir, runId);
+  const claimed = ctx.env[CLAIMED_ENV] !== undefined && samePath(ctx.env[CLAIMED_ENV], runDir);
+  if (!claimed && fs.existsSync(runDir)) throw new UsageError(`run ${runId} already exists in ${runsDir}; give another --run-id`);
+  return { runsDir, prevDir, script, meta, args, budgetTotal, runtime, session, connectError, runId, attemptRunId, runDir, claimed };
+}
+
+// Claims the run dir exclusively, so a repeated or concurrent --run-id never overwrites a run (CR-WFL-01).
+function claimRunDir(p) {
+  fs.mkdirSync(p.runsDir, { recursive: true });
+  if (p.claimed) {
+    const info = readJsonIf(path.join(p.runDir, RUN_FILES.run));
+    // The parent records its own pid, then the child's; a worker that inherited the variable matches neither.
+    const ours = info?.pid === process.pid || info?.pid === process.ppid;
+    if (info?.status !== "running" || info.runId !== p.runId || !ours) throw new UsageError(`run ${p.runId} was not started by a detaching ph workflow`);
+    return info;
+  }
+  try {
+    fs.mkdirSync(p.runDir);
+  } catch (e) {
+    if (e.code === "EEXIST") throw new UsageError(`run ${p.runId} already exists in ${p.runsDir}; give another --run-id`);
+    throw e;
+  }
+  return null;
 }
 
 function writeRunStart(p, ctx, pid) {
-  fs.mkdirSync(p.runDir, { recursive: true });
+  const existing = claimRunDir(p);
   fs.writeFileSync(path.join(p.runDir, RUN_FILES.script), p.script.source, "utf8");
   writeJsonAtomic(path.join(p.runDir, RUN_FILES.args), p.args ?? null);
-  const existing = readJsonIf(path.join(p.runDir, RUN_FILES.run));
   const info = {
     runId: p.runId, attemptRunId: p.attemptRunId, parent: ctx.opts.resume ?? null, script: p.script.scriptPath, status: "running",
-    startedAt: existing?.status === "running" ? existing.startedAt : new Date(ctx.clock.now()).toISOString(),
+    startedAt: existing ? existing.startedAt : new Date(ctx.clock.now()).toISOString(),
     endedAt: null, agents: null, budget: p.budgetTotal, pid, name: p.meta.name, description: p.meta.description,
   };
   writeJsonAtomic(path.join(p.runDir, RUN_FILES.run), info);
@@ -106,7 +136,7 @@ function detach(ctx, p, deps) {
   let child;
   try {
     child = (deps.spawn ?? spawn)(process.execPath, [PH_FILE, "workflow", ...childArgs], {
-      cwd: ctx.root, detached: true, windowsHide: true, stdio: ["ignore", fd, fd], env: { ...ctx.env, PASEO_HARNESS_LOG_IS_STDOUT: "1" },
+      cwd: ctx.root, detached: true, windowsHide: true, stdio: ["ignore", fd, fd], env: { ...ctx.env, PASEO_HARNESS_LOG_IS_STDOUT: "1", [CLAIMED_ENV]: p.runDir },
     });
   } finally {
     fs.closeSync(fd);

@@ -1,12 +1,13 @@
 // install, update, status and pull over the kit's units and the project's ownership record (INST-06..13, INST-32, INST-33).
-import { byCodePoint, isBlockKey } from "./units.mjs";
+import { byCodePoint, hookNameOfKey, isBlockKey } from "./units.mjs";
 import { readManifest, requireManifest, writeManifest } from "./manifest.mjs";
 import { classify, reason } from "./state.mjs";
-import { copyToKit, copyToProject, deleteFromProject, digests, MALFORMED, malformedLine } from "./parts.mjs";
-import { wire } from "./wiring.mjs";
+import { copyToKit, copyToProject, deleteFromProject, digests, linkedPart, linkProblem, MALFORMED, malformedLine } from "./parts.mjs";
+import { checkWiringTargets, wire } from "./wiring.mjs";
 import { checkModGates } from "./mod.mjs";
 import { fail } from "./failure.mjs";
 
+const LINK_CONFLICT = (key, prefix) => `conflict ${key}: ${linkProblem(prefix)}`;
 const BLOCK_WARNING = (key) => `warning ${key}: text inside the kit block; project text belongs outside the markers`;
 
 const allKeys = (kit, files) => [...new Set([...kit.units.keys(), ...Object.keys(files)])].sort(byCodePoint);
@@ -22,10 +23,17 @@ function finishInstallOrUpdate(ctx, { records, installedAt }) {
 
 export function install(ctx) {
   if (readManifest(ctx.project)) fail(".agents/harness-kit.json exists: already installed; use update");
+  checkWiringTargets(ctx.project);
   if (ctx.enablePlugin) checkModGates(ctx.env);
   const records = {};
   let conflicts = 0;
   for (const key of [...ctx.kit.units.keys()].sort(byCodePoint)) {
+    const linked = linkedPart(ctx.kit, ctx.project, key);
+    if (linked) {
+      ctx.out(LINK_CONFLICT(key, linked));
+      conflicts++;
+      continue;
+    }
     const { P, K } = digests(ctx.kit, ctx.project, key);
     if (P === MALFORMED) {
       ctx.out(malformedLine(key));
@@ -48,11 +56,19 @@ export function install(ctx) {
 
 export function update(ctx) {
   const manifest = requireManifest(ctx.project);
+  checkWiringTargets(ctx.project);
   if (ctx.enablePlugin) checkModGates(ctx.env);
   const records = { ...manifest.files };
+  const retiredHooks = new Set();
   let changed = 0;
   let kept = 0;
   for (const key of allKeys(ctx.kit, records)) {
+    const linked = linkedPart(ctx.kit, ctx.project, key);
+    if (linked) {
+      ctx.out(LINK_CONFLICT(key, linked));
+      kept++;
+      continue;
+    }
     const { P, K } = digests(ctx.kit, ctx.project, key);
     if (P === MALFORMED) {
       ctx.out(malformedLine(key));
@@ -70,6 +86,8 @@ export function update(ctx) {
     } else if (state === "removed") {
       deleteFromProject(ctx.project, key);
       delete records[key];
+      const hook = hookNameOfKey(key);
+      if (hook) retiredHooks.add(hook);
       ctx.out(`deleted ${key} (no longer in the kit)`);
       changed++;
     } else {
@@ -77,7 +95,7 @@ export function update(ctx) {
       kept++;
     }
   }
-  kept += finishInstallOrUpdate(ctx, { records, installedAt: manifest.installedAt });
+  kept += finishInstallOrUpdate({ ...ctx, retiredHooks }, { records, installedAt: manifest.installedAt });
   ctx.out(`update: ${changed} part(s) changed, ${kept} kept; kit ${ctx.kit.version}`);
   return kept ? 2 : 0;
 }
@@ -108,6 +126,7 @@ export const normalizePart = (name) => name.replace(/\\/g, "/").replace(/^(\.\/)
 
 export function pull(ctx, partNames) {
   const manifest = requireManifest(ctx.project);
+  checkWiringTargets(ctx.project);
   const records = { ...manifest.files };
   const known = new Set(allKeys(ctx.kit, records));
   const named = partNames.map(normalizePart);
@@ -119,6 +138,12 @@ export function pull(ctx, partNames) {
   let copied = 0;
   let skipped = 0;
   for (const key of named.length ? [...new Set(named)] : [...known]) {
+    const linked = linkedPart(ctx.kit, ctx.project, key, { kitSide: true });
+    if (linked) {
+      ctx.out(`skipped ${key} (${linkProblem(linked)})`);
+      skipped++;
+      continue;
+    }
     const d = digests(ctx.kit, ctx.project, key);
     if (d.P === MALFORMED) {
       ctx.out(`skipped ${key} (malformed kit block markers; fix by hand)`);

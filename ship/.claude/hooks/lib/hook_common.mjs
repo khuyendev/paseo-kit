@@ -78,6 +78,22 @@ export function changedPathsInResult(text) {
   return out;
 }
 
+// A file published whole and only if its name is free: written to a private temp name, then hard-linked (exclusive,
+// atomic), so no reader ever sees a partial record and exactly one of several writers wins the name.
+export function publishExclusive(file, text) {
+  const tmp = `${file}.${crypto.randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(tmp, text, "utf8");
+    fs.linkSync(tmp, file);
+    return true;
+  } catch (e) {
+    if (e.code === "EEXIST") return false;
+    throw e;
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
+}
+
 export function pruneOlderThan(dir, maxAgeMs, filter = () => true) {
   let names;
   try {

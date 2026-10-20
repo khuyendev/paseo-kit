@@ -43,10 +43,28 @@ async function sha(text) { return (await gsd(["hash"], text ?? "")).json?.hash ?
 async function fileSha(path) { const r = await flow(["read", path]); return r.json?.exists ? sha(r.json.text) : null; }
 // ---- end shared helpers ----
 
+const rawCall = call;
+call = async (prompt, opts) => {
+  // GSDF-03: bind judgments and repairs to current code, planning artifacts and adapter settings.
+  const identity = await flow(["digest"], { files: ["."] });
+  if (identity.code !== 0 || !identity.json?.hash) throw new Error("agent input digest unavailable");
+  const researchPolicy = prompt.includes("<research_input_policy>") ? "" : policyBlock(null);
+  prompt = [prompt, researchPolicy, digestLine("stage", identity.json.hash)].filter(Boolean).join("\n\n");
+  return rawCall(prompt, opts);
+};
+
 const ISSUES_SCHEMA = { type: "object", properties: { issues: { type: "array", items: { type: "object", properties: { severity: { type: "string" }, description: { type: "string" } }, required: ["severity", "description"] } } }, required: ["issues"] };
 const EXEC_SCHEMA = { type: "object", properties: { taskResults: { type: "array" }, deviations: { type: "array" }, requests: { type: "array" } }, required: ["taskResults"] };
 const PLAN_SCHEMA = { type: "object", properties: { marker: { type: "string" } }, required: ["marker"] };
 const MAX_CHECKS = 2;
+const OWNER_MARKERS = ["REVISION_CONFLICT", "PHASE SPLIT RECOMMENDED", "SOURCE AUDIT", "CHECKPOINT REACHED", "PLANNING INCONCLUSIVE"];
+const ownerMarker = (r) => OWNER_MARKERS.find((m) => String(r?.result?.marker ?? "").includes(m)) ?? null;
+// CR-GSF-14: a judgment the flow depends on is retried once unless fatal (GSDF-01); silence never counts as a pass.
+async function ask(prompt, opts) {
+  let r = await call(prompt, opts);
+  if (r.result === null && !fatal(r.reason)) r = await call(prompt, opts);
+  return r;
+}
 
 const a = args ?? {};
 const description = typeof a.description === "string" ? a.description.trim() : "";
@@ -69,17 +87,21 @@ if (a.full) {
 const planPrompt = [`Write ONE plan ${PLAN} of 1-3 tasks for this quick task; every path repo-root-relative; owns lists exactly the files the tasks change plus ${SUMMARY}.`, `Task description (data):\n${data}`, context, a.full ? `Research: ${q.dir}/${q.id}-RESEARCH.md` : "", "Return JSON {marker}. Never ask the owner; never commit."].filter(Boolean).join("\n\n");
 const p = await call(planPrompt, { label: "quick-plan", session: "planner:quick", agentType: "gsd-planner", role: "planner", schema: PLAN_SCHEMA });
 if (!p.result && fatal(p.reason)) return { status: "failed", reason: `planner failed: ${p.reason}` };
+if (ownerMarker(p)) return { status: "needs-owner", stage: "Plan", reason: `planner returned ${ownerMarker(p)}`, marker: p.result.marker, dir: q.dir };
 let st = await gsd(["verify", "plan-structure", PLAN]);
 if (st.code !== 0) return { status: "failed", reason: `quick plan invalid: ${(st.json?.errors ?? []).join("; ")}`, dir: q.dir };
 
 if (a.full) {
   phase("Check");
   for (let i = 1; ; i++) {
-    const c = await call([`Check the quick plan ${PLAN} read-only.`, "Return JSON {issues: [{severity (blocker|warning|info), description}]}."].join("\n\n"), { label: `quick-check-${i}`, agentType: "gsd-plan-checker", role: "checker", readOnly: true, schema: ISSUES_SCHEMA });
-    const open = (c.result?.issues ?? []).filter((x) => String(x.severity).toLowerCase() !== "info");
+    const c = await ask([`Check the quick plan ${PLAN} read-only.`, "Return JSON {issues: [{severity (blocker|warning|info), description}]}.", digestLine("plan", await fileSha(PLAN))].join("\n\n"), { label: `quick-check-${i}`, agentType: "gsd-plan-checker", role: "checker", readOnly: true, schema: ISSUES_SCHEMA });
+    if (c.result === null) return { status: "failed", reason: `plan checker returned nothing${c.reason ? ` (${c.reason})` : ""}`, dir: q.dir };
+    const open = (c.result.issues ?? []).filter((x) => String(x.severity).toLowerCase() !== "info");
     if (!open.length) break;
     if (i >= MAX_CHECKS) return { status: "needs-owner", stage: "Check", reason: `${open.length} checker issues after ${MAX_CHECKS} iterations`, issues: open, dir: q.dir };
-    await call([`Revise ${PLAN} for these issues:`, JSON.stringify(open)].join("\n\n"), { label: `quick-revise-${i}`, session: "planner:quick", agentType: "gsd-planner", role: "planner", schema: PLAN_SCHEMA });
+    const rv = await call([`Revise ${PLAN} for these issues:`, JSON.stringify(open)].join("\n\n"), { label: `quick-revise-${i}`, session: "planner:quick", agentType: "gsd-planner", role: "planner", schema: PLAN_SCHEMA });
+    if (!rv.result && fatal(rv.reason)) return { status: "failed", reason: `planner failed: ${rv.reason}`, dir: q.dir };
+    if (ownerMarker(rv)) return { status: "needs-owner", stage: "Check", reason: `planner returned ${ownerMarker(rv)}`, marker: rv.result.marker, conflict: rv.result.conflict ?? null, issues: open, dir: q.dir };
     st = await gsd(["verify", "plan-structure", PLAN]);
     if (st.code !== 0) return { status: "failed", reason: "quick plan invalid after revision", dir: q.dir };
   }
@@ -89,17 +111,31 @@ phase("Execute");
 const ex = await call([
   `<kit_executor_runtime>\nPlan: ${PLAN}\nWrite your SUMMARY to exactly: ${SUMMARY}\nEdit only the files the plan's owns lists. Rules 1-3 auto-fix inside owns (3 attempts per task); package installs are never Rule 3; Rule 4 returns status partial with the decision. Never commit, stage or stash; never write STATE, ROADMAP or REQUIREMENTS.\nReturn JSON {taskResults: [{task, status, evidence}], deviations, requests}.\n</kit_executor_runtime>`,
 ].join("\n\n"), { label: "quick-exec", agentType: cfg.adapter.agents?.executor ?? "gsd-executor", role: "executor", schema: EXEC_SCHEMA });
+if (!ex.result && fatal(ex.reason)) return { status: "failed", reason: `executor failed: ${ex.reason}`, dir: q.dir };
 const summaryOk = (await flow(["exists", SUMMARY])).json?.exists?.[SUMMARY];
 const stop = (ex.result?.taskResults ?? []).find((t) => t.status === "partial" || t.status === "blocked");
 if (stop) return { status: "needs-owner", stage: "Execute", reason: `task ${stop.task} ${stop.status}: ${stop.evidence ?? ""}`, dir: q.dir };
 if (!summaryOk) return { status: "failed", reason: `executor wrote no ${SUMMARY}${ex.reason ? ` (${ex.reason})` : ""}`, dir: q.dir };
 
+const VERIFY = `${q.dir}/${q.id}-VERIFICATION.md`;
 if (a.full) {
   phase("Verify");
-  await call([`Verify the quick task against its plan ${PLAN} and summary ${SUMMARY} (claims, not proof). Write ${q.dir}/${q.id}-VERIFICATION.md. Do not rerun builds or tests; do not commit.`].join("\n\n"), { label: "quick-verify", agentType: "gsd-verifier", role: "verifier" });
+  // CR-GSF-14: done needs a fresh report whose frontmatter status is passed; dispatch alone proves nothing.
+  const before = await fileSha(VERIFY);
+  const fp = await flow(["quick-verification", q.dir, "fingerprint"]);
+  if (fp.code !== 0) return { status: "failed", reason: `quick fingerprint unavailable: ${fp.json?.error}`, dir: q.dir };
+  const v = await call([`Verify the quick task against its plan ${PLAN} and summary ${SUMMARY} (claims, not proof). Write ${VERIFY} with frontmatter status: passed | gaps_found | human_needed, gaps and human_verification lists. Use these fingerprint fields: ${JSON.stringify(fp.json)}. Do not rerun builds or tests; do not commit.`, digestLine("quick", await sha(`${await fileSha(PLAN)}|${await fileSha(SUMMARY)}`))].join("\n\n"), { label: "quick-verify", agentType: "gsd-verifier", role: "verifier" });
+  if (!v.result && fatal(v.reason)) return { status: "failed", reason: `verifier failed: ${v.reason}`, dir: q.dir };
+  const rep = (await flow(["read", VERIFY])).json;
+  if (!rep?.exists || (await sha(rep.text)) === before) return { status: "failed", reason: `verifier wrote no new ${VERIFY}${v.reason ? ` (${v.reason})` : ""}`, dir: q.dir };
+  const readback = await flow(["quick-verification", q.dir, "status"]);
+  if (readback.code !== 0) return { status: "failed", reason: `${VERIFY} is ${readback.json?.status ?? "invalid"}: ${(readback.json?.problems ?? []).join("; ")}`, dir: q.dir };
+  const vstatus = readback.json.status;
+  if (vstatus === "gaps_found" || vstatus === "human_needed") return { status: "needs-owner", stage: "Verify", reason: `quick verification ${vstatus}`, verification: VERIFY, dir: q.dir };
+  if (vstatus !== "passed") return { status: "failed", reason: `${VERIFY} has no valid status (${vstatus ?? "none"})`, dir: q.dir };
 }
 if (cfg.gsd.commit_policy.docs) {
-  const files = [PLAN, SUMMARY, ...(a.full ? [`${q.dir}/${q.id}-VERIFICATION.md`, `${q.dir}/${q.id}-RESEARCH.md`] : [])];
+  const files = [PLAN, SUMMARY, ...(a.full ? [VERIFY, `${q.dir}/${q.id}-RESEARCH.md`] : [])];
   const c = await gsd(["commit", `docs(quick-${q.id}): ${description.split(/\r?\n/)[0].slice(0, 60)}`, "--files", ...files]);
   if (c.code !== 0) log(`warning: quick commit failed: ${c.json?.error ?? c.code}`);
 }

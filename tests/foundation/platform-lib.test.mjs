@@ -3,13 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import {
-  claudeCli, claudeVersion, homeDir, NODE_REQUIREMENT, NODE_RUNTIME, nodeRuntimeProblem, paseoConfigFile, paseoHome, versionAtLeast,
+  claudeCli, claudeVersion, homeDir, NODE_REQUIREMENT, NODE_RUNTIME, nodeRuntimeProblem, paseoConfigFile, paseoHome, runClaude, versionAtLeast,
 } from "../../ship/.agents/harness/platform.mjs";
 import { errText, failedLine, quoteName } from "../../ship/.agents/harness/lib/cli.mjs";
 import { fileDigest, sha256, textDigest } from "../../ship/.agents/harness/lib/hash.mjs";
 import { readJson, readJsonIf, readJsonLines, readText, writeJsonAtomic, writeTextAtomic, writeTextIfChanged } from "../../ship/.agents/harness/lib/io.mjs";
 import { id8, isInside, resolveInside, safeName, samePath, toSlash } from "../../ship/.agents/harness/lib/paths.mjs";
-import { pidAlive, runArgv } from "../../ship/.agents/harness/lib/proc.mjs";
+import { cmdWord, pidAlive, runArgv } from "../../ship/.agents/harness/lib/proc.mjs";
 import { createFakeClock } from "../fakes/fake-clock.mjs";
 import { assertExit } from "../helpers/assert.mjs";
 import { testEnv } from "../helpers/env.mjs";
@@ -60,6 +60,49 @@ test("PHCL-34 win32: a .cmd CLI in a path with spaces runs through cmd.exe", { s
   const cmd = path.join(dir, "claude.cmd");
   fs.writeFileSync(cmd, "@echo 2.1.301 (Claude Code)\r\n");
   assert.equal(claudeVersion({ ...testEnv(), CLAUDE_CLI: cmd }), "2.1.301 (Claude Code)");
+});
+
+// CR-FND-01: a .cmd shim that forwards %* to node, which prints the argv it received.
+function echoShim() {
+  const dir = makeTempDir("paseo kit shim ");
+  fs.writeFileSync(path.join(dir, "echo args.js"), "process.stdout.write(JSON.stringify(process.argv.slice(2)))");
+  const cmd = path.join(dir, "echo args.cmd");
+  fs.writeFileSync(cmd, `@"${process.execPath}" "%~dp0echo args.js" %*\r\n`);
+  return cmd;
+}
+const LITERAL_ARGS = ["!FND_PROBE!", 'say "hi"', "trail\\", "a b\\", 'x\\"y', 'say "hi" & echo INJECTED', 'end\\" & echo INJECTED', "a & echo INJECTED", "p|q<r>s^t", "(x)", "k=v,w;z", "", "plain"];
+const PROBE_ENV = { FND_PROBE: "original & echo INJECTED" };
+
+test("INV-52 win32: .cmd arguments arrive literally; %NAME% and line breaks are refused, never run", { skip: !win }, async () => {
+  const cmd = echoShim();
+  const res = await runArgv([cmd, ...LITERAL_ARGS], { env: { ...process.env, ...PROBE_ENV } });
+  assert.equal(res.code, 0, res.stderr);
+  assert.deepEqual(JSON.parse(res.stdout), LITERAL_ARGS);
+  for (const bad of ["%FND_PROBE%", "a\r\necho INJECTED", "a\nb", "a\0b"]) {
+    const r = await runArgv([cmd, bad], { env: { ...process.env, ...PROBE_ENV } });
+    assert.equal(r.code, null);
+    assert.match(r.error.message, /cannot be passed literally/);
+    assert.doesNotMatch(r.stdout, /INJECTED|original/);
+  }
+});
+
+test("PHCL-34 win32: runClaude passes .cmd arguments literally and refuses %NAME%", { skip: !win }, () => {
+  const env = { ...testEnv(), ...PROBE_ENV, CLAUDE_CLI: echoShim() };
+  const res = runClaude(LITERAL_ARGS, { encoding: "utf8" }, env);
+  assert.equal(res.status, 0, res.stderr);
+  assert.deepEqual(JSON.parse(res.stdout), LITERAL_ARGS);
+  const bad = runClaude(["%FND_PROBE%"], { encoding: "utf8" }, env);
+  assert.equal(bad.status, null);
+  assert.match(bad.error.message, /cannot be passed literally/);
+});
+
+test("INV-52 cmdWord quotes cmd.exe operators and keeps trailing backslashes literal", () => {
+  assert.equal(cmdWord("C:\\a\\b.txt"), "C:\\a\\b.txt");
+  assert.equal(cmdWord("k=v"), '"k=v"');
+  assert.equal(cmdWord("a & b"), '"a & b"');
+  assert.equal(cmdWord("a b\\"), '"a b\\\\"');
+  assert.equal(cmdWord('x\\"y'), '"x\\\\""y"');
+  assert.equal(cmdWord(""), '""');
 });
 
 test("PCLI-03 paseo home and config file follow PASEO_HOME, else the home dir", () => {

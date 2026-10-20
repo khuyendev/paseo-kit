@@ -85,6 +85,12 @@ export function validateArgs(method, args) {
     return field;
   }
   check(args, tool.inputSchema, method);
+  // CR-FIL-04: newText alone selects nothing
+  if (method === "edit_multiple_files") (args.files ?? []).forEach((f, i) => f.edits.forEach((e, j) => {
+    if (e.oldText === undefined && e.from === undefined && e.to === undefined && e.after === undefined) {
+      throw new Error(`${method}.files[${i}].edits[${j}] needs oldText, or from/to or after with the file entry's tag`);
+    }
+  }));
   return null;
 }
 

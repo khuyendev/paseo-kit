@@ -2,6 +2,7 @@
 // relative times and a refresh button showing `Live · HH:MM:SS` or `Reconnecting`.
 import type { PluginWorkspacePanelProps } from "@getpaseo/plugin/client";
 import { ScrollView } from "@getpaseo/plugin/client/react-native";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useReducer, useState } from "react";
 import { type LayoutChangeEvent, View } from "react-native";
 import type { PlanningIndex } from "../shared/planning.ts";
@@ -45,6 +46,8 @@ function itemFor(target: Target, index: PlanningIndex | null): Item | null {
 export function PlanningBody({ workspaceId }: { workspaceId: string }) {
   const { colors, compact } = useKit();
   const [section, setSection] = useState<Section>("Roadmap");
+  const [focus, setFocus] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const [trail, dispatch] = useReducer(trailReducer, []);
   const [width, setWidth] = useState(0);
   const nowMs = useTick(TICK_MS);
@@ -56,16 +59,30 @@ export function PlanningBody({ workspaceId }: { workspaceId: string }) {
   const onLayout = (e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width);
 
   // Switching workspace resets what is open.
-  useEffect(() => dispatch({ type: "close" }), [workspaceId]);
+  useEffect(() => {
+    dispatch({ type: "close" });
+    setFocus(null);
+  }, [workspaceId]);
+  // Refresh rereads the lists and the open detail (CR-PNL-08).
+  const refresh = () =>
+    Promise.all([indexQ.refetch(), boardQ.refetch(), ...["planning-plan", "planning-file"].map((k) => queryClient.refetchQueries({ queryKey: [k, workspaceId], type: "active" }))]);
+  const changeSection = (s: Section) => {
+    setFocus(null);
+    setSection(s);
+  };
+  const showPhase = (id: string) => {
+    setFocus(id);
+    setSection("Phases");
+  };
 
   const header = (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderColor: colors.border }}>
-      <SectionTabs sections={SECTIONS} active={section} onChange={setSection} />
+      <SectionTabs sections={SECTIONS} active={section} onChange={changeSection} />
       <View style={{ flex: 1 }} />
       <T size={11} tone={indexQ.isError ? "warning" : "muted"}>
         {liveText(indexQ.isError, indexQ.dataUpdatedAt || nowMs, formatClock)}
       </T>
-      <IconButton icon="RefreshCw" label="Refresh" busy={indexQ.isFetching} onPress={() => void Promise.all([indexQ.refetch(), boardQ.refetch()])} />
+      <IconButton icon="RefreshCw" label="Refresh" busy={indexQ.isFetching} onPress={() => void refresh()} />
     </View>
   );
 
@@ -92,10 +109,10 @@ export function PlanningBody({ workspaceId }: { workspaceId: string }) {
       {section === "Roadmap" ? (
         <>
           <StatsView index={index} nowMs={nowMs} />
-          {boardQ.data?.ok ? <BoardView board={boardQ.data} onOpen={select} /> : boardQ.data ? <T tone="danger">{boardQ.data.message}</T> : null}
+          {boardQ.data?.ok ? <BoardView board={boardQ.data} onShowPhase={showPhase} /> : boardQ.data ? <T tone="danger">{boardQ.data.message}</T> : null}
         </>
       ) : null}
-      {section === "Phases" ? <PhasesView index={index} onOpen={select} nowMs={nowMs} /> : null}
+      {section === "Phases" ? <PhasesView index={index} onOpen={select} nowMs={nowMs} focus={focus} onShowAll={() => setFocus(null)} /> : null}
       {section === "Files" ? (index.files.length ? <FilesView files={index.files} onOpen={select} openPath={open?.kind === "file" ? open.path : null} /> : <T tone="muted">.planning/ is empty.</T>) : null}
     </View>
   ) : null;

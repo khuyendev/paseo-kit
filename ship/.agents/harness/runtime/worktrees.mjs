@@ -9,6 +9,7 @@ import { UsageError, errText } from "../lib/cli.mjs";
 import { readJsonIf } from "../lib/io.mjs";
 import { isInside, safeName } from "../lib/paths.mjs";
 import { pidAlive } from "../lib/proc.mjs";
+import { seedWorktree } from "./worktree-seed.mjs";
 
 export function runGit(cwd, args) {
   const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8", windowsHide: true });
@@ -38,14 +39,21 @@ export function worktreeBase(top, cfg) {
   return path.join(top, cfg.worktree_dir);
 }
 
-export function createWorktree(root, cfg, name, { git = runGit } = {}) {
+export function createWorktree(root, cfg, name, { git = runGit, seed } = {}) {
   const top = repoTop(root, { git });
   if (!top) throw new UsageError("isolation 'worktree' needs a git repository");
   const safe = safeName(name);
   const dir = path.join(worktreeBase(top, cfg), safe);
   const branch = `harness/${safe}`;
   must(git, top, ["worktree", "add", dir, "-b", branch]);
-  return { top, path: dir, branch, name: safe };
+  const wt = { top, path: dir, branch, name: safe };
+  try {
+    seedWorktree(root, wt, seed, git);
+    return wt;
+  } catch (e) {
+    discardWorktree(wt, { git });
+    throw e;
+  }
 }
 
 // Undo a worktree whose agent could not be created: the directory and the new branch go, nothing else.

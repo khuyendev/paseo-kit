@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { fileDigest, textDigest } from "../../ship/.agents/harness/lib/hash.mjs";
+import { fileDigest, sha256, textDigest } from "../../ship/.agents/harness/lib/hash.mjs";
 import { isTestPath, listShipFiles, loadKit, templateScripts } from "../../kit/install/units.mjs";
 import { classify, HELP } from "../../kit/install/state.mjs";
 import { BLOCK_KEY, KIT_DIR, makeKit, makeProject, runKit, SHIP_DIR } from "./helpers.mjs";
@@ -45,10 +45,6 @@ test("INST-04 one line-ending-insensitive 64-hex digest; CRLF conversion and mti
   const lf = textDigest("a\nb\n");
   assert.match(lf, /^[0-9a-f]{64}$/);
   assert.equal(textDigest("a\r\nb\r\n"), lf);
-  const dir = makeProject();
-  dir.write("bin", "");
-  fs.writeFileSync(dir.path("bin"), Buffer.from([0xff, 0xfe, 0x00, 0x80]));
-  assert.equal(fileDigest(dir.path("bin")), fileDigest(dir.path("bin")));
   const kit = makeKit();
   const p = makeProject();
   await runKit(["install", p.root], { kit });
@@ -59,6 +55,30 @@ test("INST-04 one line-ending-insensitive 64-hex digest; CRLF conversion and mti
   const s = await runKit(["status", p.root], { kit });
   assert.equal(s.code, 0, s.stdout);
   assert.match(s.out.at(-1), /^status: every kit part is the same/);
+});
+
+test("INST-04 digests are over bytes: distinct invalid UTF-8 differs, binary CRLF equals LF, a changed invalid byte is kept", async () => {
+  const dir = makeProject();
+  const put = (rel, bytes) => {
+    fs.writeFileSync(dir.path(rel), Buffer.from(bytes));
+    return fileDigest(dir.path(rel));
+  };
+  assert.equal(put("ff", [0xff]), sha256(Buffer.from([0xff])));
+  assert.notEqual(put("fe", [0xfe]), put("ff", [0xff]));
+  assert.equal(put("crlf", [0xff, 0x0d, 0x0a, 0x00]), put("lf", [0xff, 0x0a, 0x00]));
+  assert.equal(textDigest(Buffer.from([0xfe])), sha256(Buffer.from([0xfe])));
+  const kit = makeKit();
+  kit.write(".agents/harness/runtime/blob.bin", "");
+  fs.writeFileSync(kit.ship(".agents/harness/runtime/blob.bin"), Buffer.from([0xff, 0x01]));
+  kit.sync();
+  const p = makeProject();
+  await runKit(["install", p.root], { kit });
+  fs.writeFileSync(p.path(".agents/harness/runtime/blob.bin"), Buffer.from([0xfe, 0x01]));
+  kit.remove(".agents/harness/runtime/blob.bin");
+  kit.sync();
+  const r = await runKit(["update", p.root], { kit });
+  assert.ok(r.out.some((l) => l.startsWith("kept .agents/harness/runtime/blob.bin (removed-local")), r.stdout);
+  assert.deepEqual(p.bytes(".agents/harness/runtime/blob.bin"), Buffer.from([0xfe, 0x01]));
 });
 
 test("INST-04 no second digest implementation in ship/ or kit/install", () => {

@@ -26,13 +26,18 @@ export function walkFiles(dir) {
   });
 }
 
+// HARN-18 (CR-HAR-07): a workflow script by location or by a `--script` reference, not only by a leading meta,
+// so a script without meta still gets the meta, clock and randomness checks.
+const WORKFLOW_DIR_SCRIPT = /^\.agents\/workflows\/[^/]+\.[cm]?js$/i;
+export const isWorkflowScript = (rel, text) => /\.[cm]?js$/i.test(rel) && (WORKFLOW_DIR_SCRIPT.test(rel) || looksLikeWorkflowScript(text));
+
 // Primitive scan, references and (for workflow scripts) script checks of one text file.
-export function lintTextFile(root, abs) {
+export function lintTextFile(root, abs, { workflow = false } = {}) {
   const rel = toSlash(path.relative(root, abs));
   if (!TEXT_EXT.has(path.extname(abs).toLowerCase())) return { findings: [], refs: [] };
   const text = readText(abs);
   const findings = scanPrimitives(text).map((f) => ({ ...f, file: rel }));
-  if (/\.(m|c)?js$/i.test(abs) && looksLikeWorkflowScript(text)) findings.push(...lintWorkflowScript(text).map((f) => ({ ...f, file: rel })));
+  if ((workflow && /\.[cm]?js$/i.test(rel)) || isWorkflowScript(rel, text)) findings.push(...lintWorkflowScript(text).map((f) => ({ ...f, file: rel })));
   return { findings, refs: extractReferences(text).map((r) => ({ ...r, file: rel })) };
 }
 

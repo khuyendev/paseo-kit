@@ -22,20 +22,41 @@ export async function runWithTimeout(g, secs, argv) {
   return done({ code, timedOut: r.timedOut, durationS, ...(r.error ? { error: r.error.message } : {}) }, code);
 }
 
-// Known watch-mode runners rewritten to their one-shot form; anything else unchanged.
-const RULES = [
-  [/^((?:npx |pnpm (?:exec |dlx )?|yarn |bunx )?vitest)(?: watch\b| dev\b)?(?!\s+(?:run|bench)\b)/, "$1 run"],
-  [/\s--watch(?:All)?(?:=\S+)?(?=\s|$)/g, ""],
-  [/^((?:npx )?react-scripts test)(?!.*--watchAll=false)/, "$1 --watchAll=false"],
-  [/^((?:npx )?ng test)(?!.*--watch=false)/, "$1 --watch=false"],
-  [/^((?:npx )?karma start)(?!.*--single-run)/, "$1 --single-run"],
-];
+// Known watch-mode runners rewritten to their one-shot form; any other command is returned byte-identical. Rewrites
+// work on whole argument tokens, so quoted arguments and unrelated options are never touched (GSDC-41).
+const LAUNCHERS = new Set(["npx", "bunx", "yarn", "pnpm", "exec", "dlx"]);
+const WATCH_ON = /^--watch(?:All)?(?:=true)?$/;
+
+const dropWatch = (args) => args.filter((t) => !WATCH_ON.test(t));
+const ensure = (args, flag) => (args.includes(flag) ? args : [...args, flag]);
+
+const RUNNERS = {
+  vitest: (args) => {
+    const rest = dropWatch(args);
+    if (rest[0] === "run" || rest[0] === "bench") return rest;
+    return ["run", ...(rest[0] === "watch" || rest[0] === "dev" ? rest.slice(1) : rest)];
+  },
+  jest: dropWatch,
+  "react-scripts test": (args) => ensure(dropWatch(args), "--watchAll=false"),
+  "ng test": (args) => ensure(dropWatch(args), "--watch=false"),
+  "karma start": (args) => ensure(args, "--single-run"),
+};
+
+const splitTokens = (s) => s.match(/(?:[^\s"']+|"(?:\\.|[^"\\])*"|'[^']*')+/g) ?? [];
 
 export function normalizeTestCommand(command) {
-  let out = String(command ?? "").trim();
-  if (!out) throw fail("normalize-test-command needs a command");
-  for (const [re, rep] of RULES) out = out.replace(re, rep);
-  return out.replace(/\s+/g, " ").trim();
+  const original = String(command ?? "");
+  if (!original.trim()) throw fail("normalize-test-command needs a command");
+  const tokens = splitTokens(original);
+  let i = 0;
+  while (i < tokens.length - 1 && LAUNCHERS.has(tokens[i])) i++;
+  for (const [name, rewrite] of Object.entries(RUNNERS)) {
+    const words = name.split(" ");
+    if (words.some((w, k) => tokens[i + k] !== w)) continue;
+    const head = tokens.slice(0, i + words.length);
+    return [...head, ...rewrite(tokens.slice(i + words.length))].join(" ");
+  }
+  return original;
 }
 
 // --- health ---
@@ -54,7 +75,7 @@ export function healthDiagnostics(g) {
     if (roadmap.exists && !roadmap.phases.some((p) => p.padded === d.padded)) out.push(diag("directory-without-roadmap-entry", `${d.name} has no ROADMAP phase`, "add the phase to ROADMAP.md or move the directory"));
     const plans = new Set(planIds(d));
     for (const s of summaryIds(d)) if (!plans.has(s)) out.push(diag("orphan-summary", `${d.name}/${s}-SUMMARY.md has no PLAN`, "restore the plan or move the summary to superseded/"));
-    for (const p of readPlans(d)) if (!("wave" in p.fm)) out.push(diag("plan-without-wave", `${d.name}/${p.id}-PLAN.md has no wave`, "add wave: <n> to the plan frontmatter"));
+    for (const p of readPlans(d)) if (!Object.hasOwn(p.fm, "wave")) out.push(diag("plan-without-wave", `${d.name}/${p.id}-PLAN.md has no wave`, "add wave: <n> to the plan frontmatter"));
     if (listFiles(d, "verification").length) {
       const v = readVerification(g.codeRoot, findPhase(g.codeRoot, d.number));
       if (!v.valid && v.problems?.some((x) => x.startsWith("status must be"))) out.push(diag("verification-invalid-status", `${d.name}: VERIFICATION status ${JSON.stringify(v.written_status)} is not passed, gaps_found or human_needed`, "re-run gsd verify"));

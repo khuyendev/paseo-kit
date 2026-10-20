@@ -18,8 +18,23 @@ export const realClock = Object.freeze({
   clearTimeout: (handle) => clearTimeout(handle),
 });
 
-// cmd.exe word: quoted unless it holds only plain path characters.
-export const cmdWord = (a) => (/^[\w@%+=:,./\\-]+$/.test(a) ? a : `"${String(a).replace(/"/g, '""')}"`);
+// cmd.exe word: bare when it holds only plain path characters, else quoted for both cmd.exe and the C runtime's argv
+// parser (backslashes before a quote doubled, an inner quote as ""), so no cmd.exe operator is outside quotes.
+export function cmdWord(arg) {
+  const a = String(arg);
+  if (/^[\w@+:./\\-]+$/.test(a)) return a;
+  return `"${a.replace(/(\\*)"/g, '$1$1""').replace(/(\\+)$/, "$1$1")}"`;
+}
+
+// CR-FND-01 (INV-52): cmd.exe expands %NAME% even inside quotes and cannot escape it there, and a line break ends the
+// command; such arguments cannot reach a .cmd/.bat file literally, so they are refused instead of being run.
+export function cmdShim(argv) {
+  const bad = argv.find((a) => /[%\r\n\0]/.test(String(a)));
+  if (bad !== undefined) throw new Error(`argument cannot be passed literally to ${argv[0]} through cmd.exe (%, line break or NUL): ${String(bad).slice(0, 80)}`);
+  // /v:off keeps !NAME! literal even when delayed expansion is on in the registry; /s /c runs the quoted line as is.
+  const line = argv.map(cmdWord).join(" ");
+  return { file: process.env.ComSpec || "cmd.exe", args: ["/d", "/v:off", "/s", "/c", `"${line}"`], options: { windowsVerbatimArguments: true } };
+}
 
 function killTree(child) {
   if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
@@ -36,7 +51,8 @@ function killTree(child) {
 function spawnArgv(argv, options) {
   const [cmd, ...args] = argv;
   if (process.platform === "win32" && /\.(cmd|bat)$/i.test(cmd)) {
-    return spawn(argv.map(cmdWord).join(" "), [], { ...options, shell: true });
+    const shim = cmdShim(argv);
+    return spawn(shim.file, shim.args, { ...options, ...shim.options });
   }
   return spawn(cmd, args, options);
 }

@@ -35,7 +35,11 @@ node kit.mjs help
   the kit block, user-scope Claude config or version gates.
 - `--enable-plugin` activates the harness-files mod with `claude plugin install --scope project`; the kit never
   toggles an owner's plugin selection otherwise.
-- Exit codes: 0 done; 1 usage or file error, nothing done; 2 done with conflicts, kept parts or blocked hooks.
+- Exit codes: 0 done; 1 usage or file error (earlier copies can have occurred before a wiring failure; no success
+  manifest is written); 2 done with conflicts, kept parts or blocked hooks.
+- Ownership hashes preserve raw bytes and normalize only CRLF. Installation refuses linked destination paths
+  (including junctions); `--force` never writes through them. Unchanged retired hooks lose their registrations,
+  while locally edited retired hooks and their registrations stay for the owner.
 - A project of the old kit 0.1.0: move `.agents/harness-kit.json` aside, run `install`, resolve the listed conflicts,
   delete retired files by hand. Old MCP file servers, when ready: `claude mcp remove --scope user fsbatch` and
   `claude mcp remove --scope user filesystem`.
@@ -91,7 +95,14 @@ rewrites, and `ph gsd upstream check` (also run by `ph doctor`) proves they are 
 (`.agents/gsd/overlays/`, `.agents/workflows/overlays/`) are loaded after the upstream text and win on conflict; GSD
 settings come only from the `gsd` section of the overlay (there is no config file under `.planning/`). The workflow
 scripts in `.agents/workflows/gsd-*.js` orchestrate research, planning, execution and verification; every state
-change of `.planning/` goes through `ph gsd` (single writer).
+change of shared PROJECT/STATE/ROADMAP/REQUIREMENTS goes through `ph gsd` (single writer); agents write only
+  their granted artifacts. Draft installation revalidates categorized v1 exact coverage under the writer lock.
+
+Execution resumes incomplete gates/reviews/commits even when SUMMARY already exists. Worktree agents read
+immutable planning inputs; later batch waves receive hash-checked accepted dependency output before dispatch.
+Pre-existing owned dirty files are refused rather than overwritten. Missing review replies, failed required
+commits and invalid/stale evidence stop execution. Default research offers refresh for an existing stale or blocked
+report rather than silently replacing it. Doctor checks GSD integrity even with a broken project overlay.
 
 ## Adapter
 
@@ -100,7 +111,9 @@ gates, verify runners), `verify_vocabulary`, `ownership`, `review_lenses`, `synt
 `envelope`, `stack_skill`, `agents` (role -> project agent), `mutex`, `startup_globs`, `hook_timeout_s`,
 `attribution`; the `gsd` section holds roles, granularity, plan limits, execution mode, isolation and the loop
 bounds. Adapter scripts (parsers, resolvers, evidence parsers, attribution) speak one JSON request/response on
-stdin/stdout (ADPT-15). The kit ships a neutral adapter; `ph doctor` and `ph harness lint` check it.
+stdin/stdout (ADPT-15), with closed shapes and exactly one nonblank response line. The kit ships a neutral
+adapter; `ph doctor` and `ph harness lint` check it. Null build/test commands are `not_configured`, never green.
+Gate evidence validates all requested steps, logs, execution counts, current file scopes, HEAD and effective config.
 
 ## File tools
 
@@ -132,3 +145,7 @@ wave progress) and `planning-panel` (a workspace's `.planning/` on the GSD statu
 kit into a temp project and drives the installed `ph`. `node kit/install/units.mjs --write` refreshes the shipped
 units in `kit.json`; `node kit/release-check.mjs [<range>]` checks `CHANGELOG.md` against `kit.json` and prompt-text
 commits (HARN-15). Third-party text: see `NOTICE.md`.
+
+Offline regression success is not live release qualification. Two-stack adapter generation/trigger smokes,
+real mod permissions and hook transcript checks, visual panel checks, and qualification on the candidate minimum
+Node version remain manual checks; see `.planning/integration/code-final.md`. This checkout was tested on Node 24.

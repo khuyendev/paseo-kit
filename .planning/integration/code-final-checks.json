@@ -1,0 +1,126 @@
+{
+  "methodSourceFiles": 15,
+  "snapshotFiles": 246,
+  "integrity": {
+    "problems": [],
+    "warnings": [
+      "reference absent upstream at the pin (depth 2): gsd-core/workflows/context-bridge.md"
+    ],
+    "references": 211,
+    "verbs": 103,
+    "verbose": false
+  },
+  "vanillaFilesScanned": 548,
+  "protectedHits": [
+    {
+      "file": "ship/.agents/agents/gsd-debugger.md",
+      "terms": [
+        "Next.js"
+      ]
+    },
+    {
+      "file": "ship/.agents/agents/gsd-planner.md",
+      "terms": [
+        "novel",
+        "games",
+        "shaders"
+      ]
+    },
+    {
+      "file": "ship/.agents/agents/gsd-roadmapper.md",
+      "terms": [
+        "Next.js"
+      ]
+    },
+    {
+      "file": "ship/.agents/gsd/upstream/agents/gsd-debugger.md",
+      "terms": [
+        "Next.js"
+      ]
+    },
+    {
+      "file": "ship/.agents/gsd/upstream/agents/gsd-planner.md",
+      "terms": [
+        "novel",
+        "games",
+        "shaders"
+      ]
+    },
+    {
+      "file": "ship/.agents/gsd/upstream/agents/gsd-roadmapper.md",
+      "terms": [
+        "Next.js"
+      ]
+    },
+    {
+      "file": "ship/.agents/gsd/upstream/gsd-core/references/checkpoints.md",
+      "terms": [
+        "Next.js"
+      ]
+    },
+    {
+      "file": "ship/.agents/gsd/upstream/gsd-core/references/debugger-philosophy.md",
+      "terms": [
+        "novel"
+      ]
+    },
+    {
+      "file": "ship/.agents/gsd/upstream/gsd-core/references/git-integration.md",
+      "terms": [
+        "Next.js"
+      ]
+    },
+    {
+      "file": "ship/.agents/gsd/upstream/gsd-core/references/planner-interface-context.md",
+      "terms": [
+        "blueprints"
+      ]
+    },
+    {
+      "file": "ship/.agents/gsd/upstream/gsd-core/references/skeleton-template.md",
+      "terms": [
+        "Next.js"
+      ]
+    },
+    {
+      "file": "ship/.agents/gsd/upstream/gsd-core/references/verification-patterns.md",
+      "terms": [
+        "Next.js"
+      ]
+    },
+    {
+      "file": "ship/.agents/gsd/upstream/gsd-core/references/verifier-phase-gates.md",
+      "terms": [
+        "Next.js"
+      ]
+    },
+    {
+      "file": "ship/.agents/gsd/upstream/gsd-core/templates/research.md",
+      "terms": [
+        "game",
+        "Game",
+        "games"
+      ]
+    },
+    {
+      "file": "ship/.claude/skills/harness/references/qa-agent-guide.md",
+      "terms": [
+        "Next.js"
+      ]
+    },
+    {
+      "file": "ship/.claude/skills/harness/references/team-examples.md",
+      "terms": [
+        "Webtoon",
+        "webtoon"
+      ]
+    },
+    {
+      "file": "ship/.claude/skills/harness/references/team-patterns.md",
+      "terms": [
+        "novel"
+      ]
+    }
+  ],
+  "kitAuthoredHits": []
+}

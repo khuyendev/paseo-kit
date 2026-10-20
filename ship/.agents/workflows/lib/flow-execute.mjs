@@ -3,9 +3,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { readJsonIf, readText, writeJsonAtomic } from "../../harness/lib/io.mjs";
+import { loadConfig } from "../../harness/config.mjs";
+import { sha256 } from "../../harness/lib/hash.mjs";
 import { isInside, resolveInside, samePath, toSlash } from "../../harness/lib/paths.mjs";
 import { git, gitLines, head, status } from "./flow-git.mjs";
 import { contentHash, keyFiles, owned, ownsPrefixes } from "./flow-owns.mjs";
+import { readWorktreeSeed } from "../../harness/runtime/worktree-seed.mjs";
+import { runGit } from "../../harness/runtime/worktrees.mjs";
 
 const ANSWER_KEYS = ["what", "manifested", "prevention"];
 
@@ -116,22 +120,81 @@ export function resumeGate(root, phaseDir, { plans }) {
   return { ok: problems.length === 0, problems, head: now.head, code: problems.length ? 1 : 0 };
 }
 
-// Files each plan changed since the baseline (shared tree): the per-plan file lists of commits.json (GSDF-53).
-export function ownedChanges(root, phaseDir, { plans }) {
+// Every change of the main tree since the baseline, assigned for the commit manifest (GSDF-53, CR-GSF-07):
+// input {plans: [{id, owns, summary, claimed?}], pending?: [{id, owns, summary}], integration?: [path], ignore?: [prefix]}.
+// A path claimed by a plan's transfer record goes to that plan, else to every plan owning it; deleted paths go to
+// `removed`; unowned paths the integration fixer was given go to `integration`; paths owned only by `pending` plans
+// (committed later in the run) are left alone; everything else is `unowned` and must stop the commit.
+export function ownedChanges(root, phaseDir, { plans, pending = [], integration = [], ignore = [] }) {
   const base = readJsonIf(baselineFile(root, phaseDir), null);
   if (!base) throw new Error(`no execute baseline in ${phaseDir}`);
   const prefixes = ownsPrefixes(root);
   const baseDirty = new Map(base.dirty.map((d) => [d.path, d.sha256]));
   const now = snapshot(root);
   const files = Object.fromEntries(plans.map((p) => [p.id, []]));
+  const removed = Object.fromEntries(plans.map((p) => [p.id, []]));
+  const integrated = [];
   const unowned = [];
+  const ownsOf = (p) => [...(p.owns ?? []), p.summary].filter(Boolean);
+  const ignored = (p) => ignore.some((pre) => p.startsWith(`${toSlash(pre).replace(/\/$/, "")}/`));
   for (const e of [...now.dirty, ...now.untracked.map((p) => ({ path: p, sha256: contentHash(path.join(root, p)) }))]) {
     if (baseDirty.get(e.path) === e.sha256 || (base.untracked.includes(e.path) && now.untracked.includes(e.path))) continue;
-    const owner = plans.find((p) => owned(e.path, [...(p.owns ?? []), p.summary].filter(Boolean), prefixes));
-    if (owner) files[owner.id].push(e.path);
+    if (ignored(e.path)) continue;
+    const claimants = plans.filter((p) => (p.claimed ?? []).includes(e.path));
+    const owners = claimants.length ? claimants : plans.filter((p) => owned(e.path, ownsOf(p), prefixes));
+    const gone = e.sha256 === "deleted";
+    if (owners.length) for (const o of owners) (gone ? removed : files)[o.id].push(e.path);
+    else if (integration.includes(e.path)) integrated.push(e.path);
+    else if (pending.some((p) => owned(e.path, ownsOf(p), prefixes))) continue;
     else if (!bookkeeping(e.path)) unowned.push(e.path);
   }
-  return { files, unowned };
+  return { files, removed, integration: integrated, unowned };
+}
+
+// Owned paths an owner had already edited (or created) before the execute baseline: a worktree starts from HEAD
+// without them, so worktree execution of those plans is refused before dispatch (CR-GSF-03).
+export function dirtyOwned(root, phaseDir, { plans }) {
+  const base = readJsonIf(baselineFile(root, phaseDir), null);
+  if (!base) throw new Error(`no execute baseline in ${phaseDir}`);
+  const prefixes = ownsPrefixes(root);
+  const paths = [...base.dirty.map((d) => d.path), ...base.untracked].filter((p) => !bookkeeping(p));
+  const found = [];
+  for (const p of paths) for (const pl of plans) if (owned(p, pl.owns ?? [], prefixes)) found.push({ path: p, plan: pl.id });
+  return { dirty: found, code: found.length ? 1 : 0 };
+}
+
+// GSDF-41: worktree agents read content-addressed planning inputs, not mutable/uncommitted main paths.
+export function executionInputs(root) {
+  const cfg = loadConfig(root);
+  const scopes = [".planning", ".agents", ".claude/skills", ...(cfg.adapter.instructions ?? [])];
+  const names = [...new Set(gitLines(root, ["ls-files", "-co", "--exclude-standard", "-z", "--", ...scopes]).flatMap((l) => l.split("\0")).filter(Boolean))].sort();
+  const files = names.filter((p) => fs.existsSync(resolveInside(root, p)) && fs.statSync(resolveInside(root, p)).isFile()).map((p) => ({ path: p, bytes: fs.readFileSync(resolveInside(root, p)) }));
+  const hash = sha256(JSON.stringify(files.map((f) => [f.path, sha256(f.bytes)])));
+  const dir = resolveInside(root, `_workspace/gsd-inputs/${hash}`);
+  for (const f of files) {
+    const dest = resolveInside(dir, f.path);
+    if (fs.existsSync(dest)) {
+      if (!fs.readFileSync(dest).equals(f.bytes)) throw new Error(`execution input snapshot changed: ${f.path}`);
+    } else {
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.writeFileSync(dest, f.bytes, { flag: "wx" });
+    }
+  }
+  return { root: toSlash(dir), hash };
+}
+
+export function dependencySeed(root, phaseDir, { plans }) {
+  const files = new Map();
+  for (const plan of plans) {
+    if (!/^\d+(\.\d+)?-\d+$/.test(plan)) throw new Error("invalid dependency plan id");
+    const record = readJsonIf(resolveInside(root, `${phaseDir}/transfers/${plan}.json`), null);
+    if (!record || record.plan !== plan) throw new Error(`no accepted transfer for dependency ${plan}`);
+    for (const file of record.files) {
+      if (contentHash(resolveInside(root, file.path)) !== (file.deleted ? "deleted" : file.sha256)) throw new Error(`accepted dependency changed: ${file.path}`);
+      files.set(file.path, file);
+    }
+  }
+  return { head: head(root), files: [...files.values()].sort((a, b) => a.path.localeCompare(b.path)) };
 }
 
 // Changes of an agent worktree against its base commit: tracked edits, deletions and untracked files.
@@ -148,7 +211,14 @@ export function worktreeChanges(dir) {
 export function transfer(root, phaseDir, { plan, worktree, owns = [], summary, files_deleted = [] }) {
   const prefixes = ownsPrefixes(root);
   const wt = path.resolve(root, worktree);
-  const { base, changes } = worktreeChanges(wt);
+  const delta = worktreeChanges(wt);
+  const base = delta.base;
+  const seed = readWorktreeSeed(wt, runGit);
+  if (seed && seed.head !== base) throw new Error("seeded worktree HEAD changed");
+  const seeded = new Map((seed?.files ?? []).map((f) => [f.path, f.deleted ? "deleted" : f.sha256]));
+  const changes = delta.changes.filter((c) => !seeded.has(c.path) || contentHash(resolveInside(wt, c.path)) !== seeded.get(c.path));
+  // A worker restoring a seed to HEAD is still a change, even though git status is clean for it.
+  for (const [p, hash] of seeded) if (!delta.changes.some((c) => c.path === p) && contentHash(resolveInside(wt, p)) !== hash) changes.push({ path: p, kind: fs.existsSync(resolveInside(wt, p)) ? "modified" : "deleted" });
   const allowed = [...owns, summary].filter(Boolean);
   const refused = [];
   for (const c of changes) {
@@ -159,8 +229,15 @@ export function transfer(root, phaseDir, { plan, worktree, owns = [], summary, f
   const mainNow = new Map(status(root).map((e) => [e.path, e]));
   const baseDirty = new Map((baseline?.dirty ?? []).map((d) => [d.path, d.sha256]));
   const { transfers } = accounted(root, phaseDir);
+  const baseUntracked = new Set(baseline?.untracked ?? []);
   for (const c of changes) {
-    if (refused.some((r) => r.path === c.path) || !mainNow.has(c.path)) continue;
+    if (refused.some((r) => r.path === c.path)) continue;
+    // CR-GSF-03: the worktree started from HEAD without the owner's pre-baseline edit; copying would drop that edit.
+    if ((baseDirty.has(c.path) || baseUntracked.has(c.path)) && transfers[c.path] === undefined) {
+      refused.push({ path: c.path, reason: "owner edit from before the execute baseline is not in the worktree" });
+      continue;
+    }
+    if (!mainNow.has(c.path)) continue;
     const cur = contentHash(path.join(root, c.path));
     if (baseDirty.get(c.path) !== cur && transfers[c.path] !== cur) refused.push({ path: c.path, reason: "main tree path changed since the execute baseline" });
   }

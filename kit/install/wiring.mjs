@@ -3,8 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { readText, writeTextAtomic } from "../../ship/.agents/harness/lib/io.mjs";
 import { errText } from "../../ship/.agents/harness/lib/cli.mjs";
-import { KitFailure } from "./failure.mjs";
-import { reconcileHooks } from "./hooks.mjs";
+import { fail, KitFailure } from "./failure.mjs";
+import { reconcileHooks, SETTINGS_REL } from "./hooks.mjs";
+import { MANIFEST_REL } from "./manifest.mjs";
+import { linkedPrefix, linkProblem } from "./parts.mjs";
 import { activateMod } from "./mod.mjs";
 import { addImport, putGitignoreBlock } from "./text.mjs";
 
@@ -51,6 +53,16 @@ function createSeeds(ctx) {
     ctx.out("created .planning/");
   }
   return 0;
+}
+
+// Every untracked file the verbs may write; checked before the first write (CR-INS-02).
+const WIRING_TARGETS = () => [MANIFEST_REL, SETTINGS_REL, "CLAUDE.md", ".gitignore", ...SEEDS.map((seed) => seed.rel)];
+
+export function checkWiringTargets(project) {
+  for (const rel of WIRING_TARGETS()) {
+    const linked = linkedPrefix(project, rel);
+    if (linked) fail(linkProblem(linked));
+  }
 }
 
 export const WIRING = [

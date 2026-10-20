@@ -5,10 +5,11 @@
 // INV-27: a batch edit once held an agent 15 min and some runtimes ignore hook timeouts, hence the hook-wide budget
 // below the 90 s registration timeout and the machine-wide slot cap; worktree edits were once skipped because the
 // checker was taken from the session cwd, hence the per-file tree.
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { changedPathsInResult, configLoader, contextOutput, DAY_MS, firstLine, harnessModule, hookRoot, isScript, pruneOlderThan, readJsonFile, resultText, runHook, sha256 } from "./lib/hook_common.mjs";
+import { changedPathsInResult, configLoader, contextOutput, DAY_MS, firstLine, harnessModule, hookRoot, isScript, publishExclusive, pruneOlderThan, readJsonFile, readTextFile, resultText, runHook, sha256 } from "./lib/hook_common.mjs";
 
 const STARTED_AT = Date.now() - process.uptime() * 1000;
 export const LIMITS = Object.freeze({ budgetMs: 75_000, minStartMs: 10_000, slotWaitMs: 20_000, slotStaleMs: 180_000 });
@@ -19,15 +20,19 @@ const NOT_CHECKED = " (not checked before this edit)";
 const DIAGNOSTIC_RE = /^(.+?):(\d+):(\d+): (.+)$/;
 const fold = (p) => (process.platform === "win32" ? p.toLowerCase() : p);
 
-export function collectTargets(input, event) {
-  const cwd = input.cwd || process.cwd();
+export function targetPaths(input, event) {
   const i = input.tool_input ?? {};
   const raw = [i.file_path, i.path, ...(Array.isArray(i.files) ? i.files.map((f) => f?.path) : [])];
   if (event === "PostToolUse" && MOD_WRITERS.has(input.tool_name)) raw.push(...changedPathsInResult(resultText(input.tool_response)));
+  return raw.filter((p) => typeof p === "string" && p);
+}
+
+// `toAbsolute` is the file tools' own path rule (FTOL-18: `~`, Git Bash `/c/...`, cwd), so Pre, Post and the writer
+// name the same file (CR-HOK-02).
+export function collectTargets(paths, cwd, toAbsolute) {
   const seen = new Map();
-  for (const p of raw) {
-    if (typeof p !== "string" || !p) continue;
-    const abs = path.resolve(cwd, p);
+  for (const p of paths) {
+    const abs = toAbsolute(p, cwd);
     if (!seen.has(fold(abs))) seen.set(fold(abs), abs);
   }
   return [...seen.values()];
@@ -54,21 +59,39 @@ export function parseDiagnostics(text) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Machine-wide slot cap per checker: one exclusive-create lock file per running check; stale locks are taken over.
-async function acquireSlot(dir, max, deadline, staleMs) {
+// Machine-wide slot cap per checker (HOOK-27): a slot is a lock published whole by an exclusive link and holding
+// its acquirer's unique token. Only the winner of `<lock>.reclaim-<token>` may remove the lock of that token, the
+// owner on release or anyone once it is stale; the token never recurs, so a late release or a reclaim based on an
+// old look never frees a successor's slot (CR-HOK-03).
+export function removeLock(lock, token, olderThanMs = -1) {
+  const guard = `${lock}.reclaim-${token}`;
+  try {
+    fs.writeFileSync(guard, "", { flag: "wx" });
+  } catch {
+    return;
+  }
+  try {
+    if (readTextFile(lock) === token && Date.now() - fs.statSync(lock).mtimeMs > olderThanMs) fs.rmSync(lock);
+  } catch {
+  } finally {
+    fs.rmSync(guard, { force: true });
+  }
+}
+
+export async function acquireSlot(dir, max, deadline, staleMs) {
   fs.mkdirSync(dir, { recursive: true });
+  const token = randomUUID();
   for (;;) {
     for (let i = 0; i < max; i++) {
       const lock = path.join(dir, `slot-${i}.lock`);
       try {
-        fs.writeFileSync(lock, String(process.pid), { flag: "wx" });
-        return () => fs.rmSync(lock, { force: true });
-      } catch (e) {
-        if (e.code !== "EEXIST") return null;
-        try {
-          if (Date.now() - fs.statSync(lock).mtimeMs > staleMs) fs.rmSync(lock, { force: true });
-        } catch {}
+        if (publishExclusive(lock, token)) return () => removeLock(lock, token);
+      } catch {
+        return null;
       }
+      try {
+        if (Date.now() - fs.statSync(lock).mtimeMs > staleMs) removeLock(lock, readTextFile(lock), staleMs);
+      } catch {}
     }
     if (Date.now() >= deadline) return null;
     await sleep(Math.min(100, deadline - Date.now()));
@@ -162,10 +185,12 @@ export async function runSyntaxCheck(input, {
   startedAt = STARTED_AT,
 } = {}) {
   const event = input.hook_event_name ?? ("tool_response" in input ? "PostToolUse" : "PreToolUse");
-  const files = collectTargets(input, event);
-  if (!files.length) return null;
+  const paths = targetPaths(input, event);
+  if (!paths.length) return null;
   const root = hookRoot(input, env);
   const loadConfig = await configLoader(root);
+  const { absolutePath } = await harnessModule(root, "files/targets.mjs");
+  const files = collectTargets(paths, input.cwd || process.cwd(), absolutePath);
   const { OVERLAY_REL } = await harnessModule(root, "config.mjs");
   const { targets, warning } = await resolveTargets(files, root, loadConfig, OVERLAY_REL);
   if (!targets.length) return warning ? { warning } : null;

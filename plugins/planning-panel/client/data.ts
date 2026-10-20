@@ -1,5 +1,5 @@
-// Planning queries (PANL-07): lists poll every LIST_POLL_MS and keep previous data on a refetch error; details
-// are fetched per open item.
+// Planning queries (PANL-07): lists and the open detail poll every LIST_POLL_MS and keep previous data on a refetch
+// error, so an open plan or file follows edits and new SUMMARY files (CR-PNL-08).
 import { useRpc } from "@getpaseo/plugin/client";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { PlanningIndex } from "../shared/planning.ts";
@@ -19,12 +19,12 @@ export function useBoard(workspaceId: string) {
 
 export function usePlan(workspaceId: string, planId: string) {
   const rpc = useRpc(planningPlanRpc);
-  return useQuery({ queryKey: ["planning-plan", workspaceId, planId], queryFn: () => rpc({ workspaceId, planId }), placeholderData: keepPreviousData });
+  return useQuery({ queryKey: ["planning-plan", workspaceId, planId], queryFn: () => rpc({ workspaceId, planId }), refetchInterval: LIST_POLL_MS, placeholderData: keepPreviousData });
 }
 
 export function useFile(workspaceId: string, path: string) {
   const rpc = useRpc(planningFileRpc);
-  return useQuery({ queryKey: ["planning-file", workspaceId, path], queryFn: () => rpc({ workspaceId, path }), placeholderData: keepPreviousData });
+  return useQuery({ queryKey: ["planning-file", workspaceId, path], queryFn: () => rpc({ workspaceId, path }), refetchInterval: LIST_POLL_MS, placeholderData: keepPreviousData });
 }
 
 export function linkContext(index: PlanningIndex | null, from: string): LinkContext {

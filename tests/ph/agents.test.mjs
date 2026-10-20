@@ -178,3 +178,19 @@ test("PHCL-20 archive --run: missing run, live runner killed, labelled agents ar
   }
   assert.ok(path.isAbsolute(s.root));
 });
+
+test("PHCL-11 a wait that times out refuses delivery, with and without --now (INV-55)", async () => {
+  const s = setup();
+  addSub(s.fake, { title: "slow", status: "running" });
+  s.fake.client.waitForFinish = async () => ({ status: "timeout", final: null, error: null, lastMessage: null });
+  const r = await s.ph(["send", "--prompt", "next", "slow"]);
+  assertExit(r, 2);
+  assertLine(r, /^failed send slow: turn still timeout after \d+ s; not sent$/);
+  assert.ok(!r.out.some((l) => /watch/.test(l)), r.out.join("\n"));
+  addSub(s.fake, { title: "slow2", status: "running" });
+  s.fake.client.cancelAgent = async () => {};
+  const now = await s.ph(["send", "--now", "--prompt", "stop", "slow2"]);
+  assertExit(now, 2);
+  assertLine(now, /^failed send slow2: turn still timeout after 60 s; not sent$/);
+  assert.equal(s.fake.callsOf("sendAgentMessage").length, 0);
+});

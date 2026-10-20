@@ -9,9 +9,10 @@ export const SETTINGS_REL = ".claude/settings.json";
 
 const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
-// Pure: removes every registration of the managed, unblocked scripts and appends the template groups for them.
-export function reconcileSettings(settings, template, blocked = new Set()) {
-  const managed = new Set([...templateScripts(template)].filter((name) => !blocked.has(name)));
+// Pure: removes every registration of the managed, unblocked scripts and of the retired ones (scripts this update deleted
+// as unchanged kit files, CR-INS-04), and appends the template groups for the managed ones.
+export function reconcileSettings(settings, template, blocked = new Set(), retired = new Set()) {
+  const managed = new Set([...templateScripts(template), ...retired].filter((name) => !blocked.has(name)));
   const owned = (hook) => managed.has(hookScript(hook));
   const next = structuredClone(settings);
   const hooks = isPlainObject(next.hooks) ? next.hooks : {};
@@ -48,7 +49,7 @@ export function reconcileHooks(ctx) {
       ctx.out(`conflict ${key}: local script differs; its registrations were kept unchanged`);
     }
   }
-  const next = reconcileSettings(settings, ctx.kit.template, blocked);
+  const next = reconcileSettings(settings, ctx.kit.template, blocked, ctx.retiredHooks);
   if (JSON.stringify(next) !== JSON.stringify(settings)) {
     writeJsonAtomic(file, next);
     ctx.out(`reconciled kit hook registrations in ${SETTINGS_REL} (unrelated hooks preserved)`);

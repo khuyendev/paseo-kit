@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import { contextBand, isMainSession, lastUsage, runContextGuard } from "../../ship/.claude/hooks/context_guard.mjs";
+import { claimBand, contextBand, isMainSession, lastUsage, readHead, runContextGuard } from "../../ship/.claude/hooks/context_guard.mjs";
 import { loadConfig, loadKitConfig } from "../../ship/.agents/harness/config.mjs";
 import { makeTempDir, SHIP_DIR } from "../helpers/temp.mjs";
 import { contextOf, hookEnv, hookProject, runHookAsync, runHookSync, T, writeTranscript } from "./helpers.mjs";
@@ -79,6 +79,24 @@ test("HOOK-09 a planted claim with a bad pid does not silence the next band", as
   fs.writeFileSync(path.join(g.stateDir, `${dir}.json.claim`), '{"pid":"x"}');
   fs.writeFileSync(path.join(g.stateDir, dir, "state.json.claim"), '{"pid":"x"}');
   assert.match(await g.at(T.usage(650000)), /65%/);
+});
+
+test("HOOK-09 a crash after the decision loses that one reminder; the next downward move re-arms", () => {
+  const dir = makeTempDir("cg chain ");
+  claimBand(dir, 0); // decided and committed, then the process died before its output
+  assert.deepEqual([-1, 0, -1, 0].map((band) => claimBand(dir, band)), [false, true, false, true]);
+});
+
+test("HOOK-09 a reset racing a climb cannot overwrite the climb and silence the next one", () => {
+  const dir = makeTempDir("cg race ");
+  assert.equal(claimBand(dir, 1), true);
+  const stale = readHead(dir); // reset A reads {band 1} and pauses
+  assert.equal(claimBand(dir, 0), false); // reset B
+  assert.equal(claimBand(dir, 1), true); // climb C reminds
+  assert.equal(claimBand(dir, 0, stale), false); // A resumes from its stale read
+  assert.equal(readHead(dir).band, 0);
+  assert.equal(claimBand(dir, 1), true);
+  assert.equal(claimBand(dir, 1), false);
 });
 
 test("HOOK-09 six concurrent hook processes at band 0 give exactly one reminder", async () => {

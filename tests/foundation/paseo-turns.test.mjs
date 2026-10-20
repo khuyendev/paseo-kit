@@ -49,8 +49,31 @@ test("PCLI-11 a failed usage subscription archives the new agent", async () => {
   const session = await connectFake(fake, { env: testEnv({ PASEO_AGENT_ID: CALLER }), root: makeTempDir(), cfg: loadKitConfig(), clock });
   fake.failNext("observeTimeline", new Error("boom"));
   await assert.rejects(session.createAgent({ sel: SEL, prompt: "go", title: "a", name: "a", swarm: "a" }),
-    /^Error: agent [0-9a-f-]{8} created but its usage tracking failed \(archived\): boom$/);
+    (e) => /^agent [0-9a-f-]{8} created but its usage tracking failed \(archived\): boom$/.test(e.message) && e.archived === true && typeof e.agentId === "string");
   assert.equal(fake.callsOf("archiveAgent").length, 1);
+});
+
+test("PCLI-11 a failed archive after a failed subscription is reported with the live agent's id", async () => {
+  const clock = createFakeClock();
+  const fake = createFakeDaemon({ clock });
+  const session = await connectFake(fake, { env: testEnv({ PASEO_AGENT_ID: CALLER }), root: makeTempDir(), cfg: loadKitConfig(), clock });
+  fake.failNext("observeTimeline", new Error("subscription lost"));
+  fake.failNext("archiveAgent", new Error("transport closed before archive"));
+  const err = await session.createAgent({ sel: SEL, prompt: "go", title: "a", name: "a", swarm: "a" }).catch((e) => e);
+  assert.match(err.message, /^agent [0-9a-f-]{8} created but its usage tracking failed \(archive failed, agent may still be live: transport closed before archive\): subscription lost$/);
+  assert.equal(err.archived, false);
+  const created = fake.callsOf("createAgent").length;
+  assert.equal(created, 1);
+  const live = (await fake.client.fetchAgent(err.agentId))?.agent;
+  assert.ok(live && !live.archivedAt);
+});
+
+test("PCLI-11 archive rejection with no error value is still unconfirmed", async () => {
+  const { fake, session } = await setup(() => [{ hang: true }]);
+  fake.failNext("observeTimeline", new Error("subscription lost"));
+  session.client.archiveAgent = async () => { throw undefined; };
+  await assert.rejects(session.createAgent({ sel: SEL, prompt: "go", title: "b", name: "b", swarm: "a" }),
+    (e) => e.archived === false && typeof e.agentId === "string" && /archive failed/.test(e.message));
 });
 
 test("PCLI-12 waitTurn outcomes", async () => {
@@ -86,6 +109,82 @@ test("PCLI-13 quota errors are never continued; a rate-limit error then idle con
   assert.deepEqual(pauses(rate.clock), [30000]);
   const multiLine = await setup(() => [{ reply: "The server returned 503 earlier.\nHere is the full result." }]);
   assert.match((await multiLine.session.waitTurn(multiLine.agent.id)).text, /full result/);
+});
+
+test("PCLI-13 a deadline bounds retries: no pause or continuation past it, success only within it", async () => {
+  const near = await setup(() => [{ reply: "API Error: overloaded" }]);
+  const t0 = near.clock.now();
+  await assert.rejects(near.session.waitTurn(near.agent.id, { timeoutS: 1, deadline: t0 + 1000 }), { message: "no reply within 1 s" });
+  assert.equal(continues(near.fake), 0);
+  assert.deepEqual(pauses(near.clock), []);
+
+  const during = await setup(() => [{ error: "overloaded" }]);
+  const t1 = during.clock.now();
+  await assert.rejects(during.session.waitTurn(during.agent.id, { timeoutS: 40, deadline: t1 + 40000 }), { message: "no reply within 40 s" });
+  assert.equal(continues(during.fake), 1);
+  assert.deepEqual(pauses(during.clock), [30000]);
+  assert.ok(during.clock.now() - t1 <= 40000);
+
+  const fits = await setup(turnsBy([{ error: "overloaded" }], [{ reply: "done" }]));
+  assert.equal((await fits.session.waitTurn(fits.agent.id, { timeoutS: 60, deadline: fits.clock.now() + 60000 })).text, "done");
+  assert.equal(continues(fits.fake), 1);
+
+  const past = await setup(() => [{ reply: "r" }]);
+  await assert.rejects(past.session.waitTurn(past.agent.id, { timeoutS: 5, deadline: past.clock.now() }), { message: "no reply within 5 s" });
+  assert.equal(past.fake.callsOf("waitForFinish").length, 0);
+});
+
+test("PCLI-13 no continuation is sent when a retry sleep wakes after the deadline", async () => {
+  const { fake, session, clock, agent } = await setup(() => [{ error: "overloaded" }]);
+  clock.sleep = async () => clock.advance(61000);
+  await assert.rejects(session.waitTurn(agent.id, { timeoutS: 60, deadline: clock.now() + 60000 }), /no reply within 60 s/);
+  assert.equal(continues(fake), 0);
+});
+
+test("PCLI-12 late waits and late reply resolution cannot return success", async () => {
+  for (const stage of ["waitForFinish", "replyText"]) {
+    const { session, clock, agent } = await setup(() => [{ reply: "done" }]);
+    const target = stage === "waitForFinish" ? session.client : session;
+    const original = target[stage].bind(target);
+    target[stage] = async (...args) => {
+      const result = await original(...args);
+      await clock.advance(1001);
+      return result;
+    };
+    await assert.rejects(session.waitTurn(agent.id, { timeoutS: 1, deadline: clock.now() + 1000 }), /no reply within 1 s/);
+  }
+});
+
+test("PCLI-11 late usage settling is capped by the turn deadline and still counted once", async () => {
+  const { fake, session, clock, agent } = await setup(() => [{ reply: "done", usage: { outputTokens: 4 }, lateUsage: true }]);
+  const deadline = clock.now() + 150;
+  await assert.rejects(session.waitTurn(agent.id, { timeoutS: 1, deadline }), /no reply within 1 s/);
+  assert.equal(clock.now(), deadline);
+  assert.equal(session.usage.get(agent.id).output, 4);
+  fake.emitLate(agent.id);
+  assert.equal(session.usage.get(agent.id).output, 4);
+});
+
+test("PCLI-14 permission responses stop when a prior response consumes the deadline", async () => {
+  const { fake, session, clock, agent } = await setup(() => [{ hang: true }]);
+  session.client.waitForFinish = async () => ({ status: "permission", final: { pendingPermissions: [
+    { id: "a", name: "AskUserQuestion" }, { id: "b", name: "AskUserQuestion" },
+  ] } });
+  let responses = 0;
+  session.client.respondToPermission = async () => { responses++; await clock.advance(1000); };
+  await assert.rejects(session.waitTurn(agent.id, { timeoutS: 1, deadline: clock.now() + 1000 }), /no reply within 1 s/);
+  assert.equal(responses, 1);
+  assert.equal(continues(fake), 0);
+});
+
+test("PCLI-14 permission answers do not renew the wait past a deadline", async () => {
+  const ask = { permission: { name: "AskUserQuestion" } };
+  const { fake, session, clock, agent } = await setup(() => [ask, ask, { hang: true }]);
+  const t0 = clock.now();
+  await assert.rejects(session.waitTurn(agent.id, { timeoutS: 3600, deadline: t0 + 5000 }), { message: "no reply within 3600 s" });
+  assert.equal(fake.callsOf("respondToPermission").length, 2);
+  assert.ok(fake.callsOf("waitForFinish").every((c) => c.args[1] <= 5000));
+  assert.ok(clock.now() - t0 <= 5000);
 });
 
 test("PCLI-14 AskUserQuestion denied up to 3 times; other permissions fail", async () => {

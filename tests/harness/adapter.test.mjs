@@ -136,7 +136,7 @@ test("ADPT-10 a lock left by a dead process is taken over", async () => {
   const tmp = makeTempDir();
   const dir = path.join(tmp, "ph-mutex-m.lock");
   fs.mkdirSync(dir);
-  fs.writeFileSync(path.join(dir, "pid"), "999999999");
+  fs.writeFileSync(path.join(dir, "owner"), JSON.stringify({ pid: 999999999, token: "dead" }));
   const lines = [];
   assert.equal(await withMutex("m", () => "ran", { log: (l) => lines.push(l), tmp }), "ran");
   assert.deepEqual(lines, []);

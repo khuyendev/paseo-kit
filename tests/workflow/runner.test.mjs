@@ -232,3 +232,39 @@ test("FLOW-47 FLOW-48 a session worktree is made once and reused on resume; adop
   assert.equal(archive.code, 0, archive.stderr);
   assert.ok(s.fake.agents.get(agentId).archivedAt);
 });
+
+test("FLOW-12 FLOW-47 two parallel first calls of one session make one agent, and run end archives it", async () => {
+  const s = setup();
+  s.project.write("wf.js", `${meta()}return await parallel([() => agent("a", { session: "s" }), () => agent("b", { session: "s" })]);`);
+  const r = await s.ph(["workflow", "--script", "wf.js", "--run-id", "wf_p"]);
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(result(s, "wf_p"), ["ok", "ok"]);
+  assert.equal(created(s.fake).length, 1);
+  assert.equal(sent(s.fake).length, 1);
+  assert.ok([...s.fake.agents.values()].filter((x) => x.id !== CALLER).every((x) => x.archivedAt));
+});
+
+test("FLOW-04 timeoutS bounds the whole call across provider retries: a reply after the deadline is null", async () => {
+  const s = setup({ responder: (a, text, { turn }) => [turn === 1 ? { error: "overloaded" } : { reply: "late success" }] });
+  s.project.write("wf.js", `${meta()}return await agent("x", { timeoutS: 5, detail: true });`);
+  const r = await s.ph(["workflow", "--script", "wf.js", "--run-id", "wf_d"]);
+  assert.equal(r.code, 0, r.stderr);
+  const got = result(s, "wf_d");
+  assert.deepEqual([got.result, got.reason], [null, "no reply within 5 s"]);
+  assert.ok(got.durationS <= 5, `durationS ${got.durationS}`);
+  assert.ok(s.fake.agents.get(got.agentId).archivedAt);
+  assert.equal(s.clock.pending(), 0);
+});
+
+test("FLOW-15 FLOW-27 a non-session isolated detail call keeps its worktree path through two resume generations", async () => {
+  const s = setup({ git: true });
+  s.project.write("wf.js", `${meta()}return await agent("implement", { isolation: "worktree", detail: true });`);
+  assert.equal((await s.ph(["workflow", "--script", "wf.js", "--run-id", "wf_1"])).code, 0);
+  const first = result(s, "wf_1");
+  assert.ok(first.worktree && fs.existsSync(first.worktree));
+  assert.equal((await s.ph(["workflow", "--resume", "wf_1", "--run-id", "wf_2"])).code, 0);
+  assert.equal((await s.ph(["workflow", "--resume", "wf_2", "--run-id", "wf_3"])).code, 0);
+  for (const id of ["wf_2", "wf_3"]) assert.deepEqual(result(s, id), { ...first, durationS: 0 }, id);
+  assert.equal(created(s.fake).length, 1);
+  assert.equal(s.project.git("worktree", "list").trim().split("\n").length, 2);
+});

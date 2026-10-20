@@ -100,3 +100,50 @@ test("MACH-16 --unlink-user-skills removes only the kit's links (A, D) and their
   assert.deepEqual(readRecord(record).links, [{ dest: dest("C"), target: oldKit }]);
   assert.ok(fs.existsSync(m.skillDir), "the kit skill itself is never removed");
 });
+
+// Fails the atomic rename onto the link record (a persistent Windows sharing error); other renames pass.
+function failRecordWrite(t, record) {
+  const rename = fs.renameSync;
+  t.after(() => (fs.renameSync = rename));
+  fs.renameSync = (from, to) => {
+    if (path.resolve(String(to)) === record) throw Object.assign(new Error("injected record failure"), { code: "EIO" });
+    return rename(from, to);
+  };
+  return () => (fs.renameSync = rename);
+}
+
+test("MACH-16 a failed link-record write undoes the created and re-pointed links; a retry then succeeds (CR-MAC-03)", async (t) => {
+  const { m, dest, oldKit, record } = await fixture();
+  const recordBefore = fs.readFileSync(record, "utf8");
+  const restore = failRecordWrite(t, record);
+  const r = await m.run(["apply", "--no-reload", "--link-user-skills"]);
+  restore();
+  assert.equal(r.code, 2, r.stdout);
+  assert.ok(r.out.some((l) => l.startsWith(`failed link record ${record}: injected record failure`)), r.stdout);
+  assert.ok(r.out.includes(`link: undone ${dest("A")}`), r.stdout);
+  assert.ok(r.out.includes(`link: undone ${dest("D")}`), r.stdout);
+  assert.equal(fs.existsSync(dest("A")), false);
+  assert.equal(readLinkClean(dest("D")), oldKit);
+  assert.deepEqual(fs.readdirSync(path.dirname(dest("D"))), ["kit-init"]);
+  assert.equal(fs.readFileSync(record, "utf8"), recordBefore);
+  const retry = await m.run(["apply", "--no-reload", "--link-user-skills"]);
+  assert.equal(retry.code, 0, retry.stdout);
+  assert.equal(readLinkClean(dest("A")), m.skillDir);
+  assert.equal(readLinkClean(dest("D")), m.skillDir);
+  assert.deepEqual(fs.readdirSync(path.dirname(dest("D"))), ["kit-init"]);
+});
+
+test("MACH-16 a failed link-record write during unlink restores the removed links (CR-MAC-03)", async (t) => {
+  const { m, dest, record } = await fixture();
+  assert.equal((await m.run(["apply", "--no-reload", "--link-user-skills"])).code, 0);
+  const recordBefore = fs.readFileSync(record, "utf8");
+  const restore = failRecordWrite(t, record);
+  const r = await m.run(["apply", "--no-reload", "--unlink-user-skills"]);
+  restore();
+  assert.equal(r.code, 2, r.stdout);
+  for (const d of ["A", "D"]) assert.equal(readLinkClean(dest(d)), m.skillDir);
+  assert.equal(fs.readFileSync(record, "utf8"), recordBefore);
+  const retry = await m.run(["apply", "--no-reload", "--unlink-user-skills"]);
+  assert.equal(retry.code, 0, retry.stdout);
+  for (const d of ["A", "D"]) assert.equal(fs.existsSync(dest(d)), false);
+});

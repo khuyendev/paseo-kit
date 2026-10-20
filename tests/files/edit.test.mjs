@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
+import { editMultiple } from "../../ship/.agents/harness/files/edit.mjs";
+import { createStore } from "../../ship/.agents/harness/files/store.mjs";
 import { client, fixIds, scratch } from "./helpers.mjs";
 
 const edit = (c, files, extra = {}) => c.call("edit_multiple_files", { files, ...extra });
@@ -165,4 +168,50 @@ test("FTOL-20 a wrong-folder edit leaves the real file untouched; the fix form c
   assert.equal(s.read("specs/20-creature/X.md"), "old");
   c.call("edit_multiple_files", { fixes: [JSON.parse(m[1])] });
   assert.equal(s.read("specs/20-creature/X.md"), "new");
+});
+
+test("FTOL-33 two spellings of one file through a junction share one state; both edits survive (CR-FIL-02)", () => {
+  const s = scratch({ "real/f.txt": "alpha\nbeta\n" });
+  fs.symlinkSync(s.path("real"), s.path("alias"), "junction");
+  const r = edit(client({ cwd: s.root }), [
+    { path: "real/f.txt", edits: [{ oldText: "alpha", newText: "ALPHA" }] },
+    { path: "alias/f.txt", edits: [{ oldText: "beta", newText: "BETA" }] },
+  ]);
+  assert.match(r.text, /^edited .*f\.txt: 2 edit\(s\), \+0 chars$/);
+  assert.equal(s.read("real/f.txt"), "ALPHA\nBETA\n");
+});
+
+test("FTOL-31 a fix ID listed twice in one call applies once (CR-FIL-03)", () => {
+  const s = scratch({ "d.txt": "dup\ndup" });
+  const c = client({ cwd: s.root });
+  const [id] = fixIds(edit(c, [{ path: "d.txt", edits: [{ oldText: "dup", newText: "dup!" }] }]).text.split("failed:\n")[1]);
+  const r = c.call("edit_multiple_files", { fixes: [{ id, occurrence: 1 }, { id, occurrence: 1 }] });
+  assert.match(r.text, /^edited .*d\.txt: 1 edit\(s\)/);
+  assert.match(r.text, new RegExp(`${id}: this fix ID is listed again in this call; it was handled once`));
+  assert.equal(s.read("d.txt"), "dup!\ndup");
+});
+
+test("FTOL-31 a retained empty oldText retried by ID fails with a diagnosis instead of looping (CR-FIL-04)", () => {
+  const s = scratch({ "f.txt": "text\ntext\n" });
+  const abs = s.path("f.txt");
+  const store = createStore({ run: "ab", nextFix: 3, fixes: [["ab1", { abs, oldText: "", newText: "x" }], ["ab2", { abs, oldText: "", newText: "x", occurrences: 2 }]] });
+  const ctx = { cwd: s.root, guard: () => {}, store };
+  const r = editMultiple({ fixes: [{ id: "ab1" }, { id: "ab2", occurrence: 1 }] }, ctx);
+  assert.equal(r.isError, true);
+  assert.match(r.text, /ab1 .*: oldText is empty/);
+  assert.match(r.text, /ab2 .*: oldText is empty/);
+  assert.equal(s.read("f.txt"), "text\ntext\n");
+});
+
+test("FTOL-31 an atomic abort keeps a fix ID skipped as already applied (CR-FIL-05)", () => {
+  const s = scratch({ "f.txt": "hello world\n" });
+  const c = client({ cwd: s.root });
+  const [id] = fixIds(edit(c, [{ path: "f.txt", edits: [{ oldText: "hello  world", newText: "hello world!" }] }]).text.split("failed:\n")[1]);
+  s.write("f.txt", "hello world!\n");
+  const before = s.bytes("f.txt");
+  const r = c.call("edit_multiple_files", { fixes: [{ id }, { id: "zz999" }], atomic: true });
+  assert.match(r.text, /^nothing written: 1 edit\(s\) failed/m);
+  assert.match(r.text, /skipped, already in the file/);
+  assert.deepEqual(s.bytes("f.txt"), before);
+  assert.doesNotMatch(c.call("edit_multiple_files", { fixes: [{ id }], dryRun: true }).text, /unknown fix id/);
 });

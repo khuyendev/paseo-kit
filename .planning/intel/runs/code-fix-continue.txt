@@ -1,0 +1,2 @@
+
+Note for this block: a previous fixer for your area (agent of the same name) was stopped mid-work when its model ran out of quota. Its edits are already in the working tree (uncommitted, see `git diff` / `git status` against HEAD in C:/Users/fish/Desktop/paseo-kit) and it may have written a partial .planning/integration/<your agent>.md. Start by reading the review, that report if present and the current diff of your area; do not redo applied fixes; finish the remaining findings, then complete the report as specified.

@@ -103,3 +103,26 @@ test("FTOL-27 new files created by a failed commit are removed with their new fo
   assert.throws(() => commitFiles([{ abs: s.path("n/new.txt"), text: "N" }, { abs: s.path("b.txt"), text: "B2" }], io), /1 file\(s\) already replaced were restored/);
   assert.equal(fs.existsSync(path.join(s.root, "n")), false);
 });
+
+test("FTOL-27 a rollback leaves a folder another writer filled meanwhile, and its file (CR-FIL-01)", () => {
+  const s = scratch({ "block.txt": "B" });
+  const busy = () => { const e = new Error("busy"); e.code = "EIO"; return e; };
+  const renameIo = { ...fs, renameSync: (from, to) => { if (to === s.path("block.txt")) { fs.writeFileSync(s.path("new/owner.txt"), "theirs"); throw busy(); } fs.renameSync(from, to); } };
+  assert.throws(() => commitFiles([{ abs: s.path("new/tool.txt"), text: "T" }, { abs: s.path("block.txt"), text: "B2" }], renameIo), /1 file\(s\) already replaced were restored/);
+  assert.equal(s.read("new/owner.txt"), "theirs");
+  assert.equal(s.exists("new/tool.txt"), false);
+  assert.equal(s.read("block.txt"), "B");
+  const stageIo = { ...fs, writeFileSync: (f, ...rest) => { if (String(f).startsWith(s.path("late/x"))) { fs.writeFileSync(s.path("late/deep/owner.txt"), "theirs"); throw busy(); } return fs.writeFileSync(f, ...rest); } };
+  assert.throws(() => commitFiles([{ abs: s.path("late/deep/a.txt"), text: "A" }, { abs: s.path("late/x/b.txt"), text: "B" }], stageIo), /nothing written: staging/);
+  assert.equal(s.read("late/deep/owner.txt"), "theirs");
+  assert.equal(s.exists("late/x"), false);
+  assert.deepEqual(temps(s.root), []);
+});
+
+test("FTOL-26 one file under two spellings through a junction is listed twice, nothing written (CR-FIL-02)", () => {
+  const s = scratch({ "real/f.txt": "orig" });
+  fs.symlinkSync(s.path("real"), s.path("alias"), "junction");
+  const r = client({ cwd: s.root }).call("write_multiple_files", { files: [{ path: "real/f.txt", content: "one" }, { path: "alias/f.txt", content: "two" }] });
+  assert.match(r.text, /nothing written:\nalias\/f\.txt: listed twice/);
+  assert.equal(s.read("real/f.txt"), "orig");
+});

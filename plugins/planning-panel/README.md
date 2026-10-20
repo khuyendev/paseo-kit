@@ -1,7 +1,8 @@
 # planning-panel
 
 Paseo plugin: a read-only view of a workspace's `.planning/` folder as the GSD flows of the kit write it: phases
-on the GSD status ladder (the same function `ph gsd roadmap analyze` uses), plans per wave, plan details (goal,
+on the GSD status ladder (the rules of `ph gsd roadmap analyze`, bundled in `server/ladder.ts` because Paseo
+compiles a plugin from its own folder; the tests compare it with the kit), plans per wave, plan details (goal,
 tasks, must-haves, completion from the SUMMARY), a file tree with a Markdown reader, and stats.
 
 Surfaces: a sidebar surface with a project picker (main checkout first, worktrees in a switcher), a workspace panel,

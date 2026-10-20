@@ -50,11 +50,11 @@ export class UsageTracker {
   }
 
   // After an idle turn: wait briefly for its event; when none came, count the snapshot usage and drop the late event.
-  async settleTurn(agentId, turnsBefore, lastUsage) {
+  async settleTurn(agentId, turnsBefore, lastUsage, deadline = Infinity) {
     const t = this.totals.get(agentId);
     if (!t) return;
-    const until = this.clock.now() + SETTLE_MS;
-    while (t.turns <= turnsBefore && this.clock.now() < until) await this.clock.sleep(SETTLE_POLL_MS);
+    const until = Math.min(this.clock.now() + SETTLE_MS, deadline);
+    while (t.turns <= turnsBefore && this.clock.now() < until) await this.clock.sleep(Math.min(SETTLE_POLL_MS, until - this.clock.now()));
     if (t.turns <= turnsBefore && lastUsage) {
       this.add(t, lastUsage);
       t.late++;

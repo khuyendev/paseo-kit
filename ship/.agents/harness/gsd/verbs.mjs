@@ -1,7 +1,8 @@
 // The ported verb handlers: verb -> {options (parseArgs spec, null = raw argv), run(g, args, opts)}.
 import path from "node:path";
 import { textDigest } from "../lib/hash.mjs";
-import { done, fail, idList, none } from "./common.mjs";
+import { isInside } from "../lib/paths.mjs";
+import { done, fail, idList, none, unavailable } from "./common.mjs";
 import { frontmatterGet, frontmatterValidate, historyDigest, initPayload, initProject, listArtifacts, researchPrompt, summaryExtract, supersede, verifyArtifacts, verifyKeyLinks, writeArtifact } from "./artifacts.mjs";
 import { debugBudget, debugCheckpoint, debugClose, debugCreate, debugList, debugStatus } from "./debug.mjs";
 import { commitVerb, evaluationScope, selectRevertCommits } from "./gitverbs.mjs";
@@ -27,6 +28,26 @@ const json = (s) => {
     throw fail(`stdin is not valid JSON (${e.message})`);
   }
 };
+// verify artifacts|key-links scope. Upstream form: one PLAN file (also quick plans), as the generated verifier calls
+// it; a PLAN that is missing, unreadable or unparseable could not be looked at (69), never "nothing declared" (66).
+function planScope(g, a, o) {
+  if (/-PLAN\.md$/i.test(a[0] ?? "")) {
+    const file = path.resolve(g.codeRoot, a[0]);
+    if (!isInside(file, g.codeRoot)) throw unavailable(`${a[0]} is outside the code root`);
+    const id = path.basename(file).replace(/-PLAN\.md$/i, "");
+    const home = { dir: path.dirname(file), padded: id.split("-")[0] };
+    const plan = readPlan(home, id);
+    if (!plan) throw unavailable(`plan file missing or unreadable: ${a[0]}`);
+    if (plan.error) throw unavailable(`${a[0]}: frontmatter ${plan.error}`);
+    const siblings = readPlans(home);
+    return { plans: [plan], allPlans: siblings.some((p) => p.id === id) ? siblings : [...siblings, plan] };
+  }
+  const phase = phaseOf(g, a);
+  const plans = readPlans(phase, subset(o, phase));
+  const broken = plans.find((p) => p.error);
+  if (broken) throw unavailable(`${broken.id}: frontmatter ${broken.error}`);
+  return { plans, allPlans: readPlans(phase) };
+}
 const bool = (v, dflt) => (v === undefined ? dflt : !/^(false|0|no|off)$/i.test(String(v)));
 
 // Multi-value options such as `--files a b c` (taken until the next --option).
@@ -100,8 +121,14 @@ export const verbHandlers = {
       return done(results.length === 1 ? results[0] : { valid, plans: results }, valid ? 0 : 1);
     },
   },
-  "verify.artifacts": { options: { plans: "string" }, run: (g, a, o) => verifyArtifacts(g, readPlans(phaseOf(g, a), subset(o, phaseOf(g, a)))) },
-  "verify.key-links": { options: { plans: "string" }, run: (g, a, o) => verifyKeyLinks(g, readPlans(phaseOf(g, a), subset(o, phaseOf(g, a))), readPlans(phaseOf(g, a))) },
+  "verify.artifacts": { options: { plans: "string" }, run: (g, a, o) => verifyArtifacts(g, planScope(g, a, o).plans) },
+  "verify.key-links": {
+    options: { plans: "string" },
+    run: (g, a, o) => {
+      const s = planScope(g, a, o);
+      return verifyKeyLinks(g, s.plans, s.allPlans);
+    },
+  },
   "verification.status": { options: {}, run: (g, a) => verificationStatusVerb(g.codeRoot, phaseOf(g, a)) },
   "verification.fingerprint": { options: {}, run: (g, a) => done(fingerprint(g.codeRoot, phaseOf(g, a), a.slice(1))) },
   "check.coverage": {

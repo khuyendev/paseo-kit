@@ -123,6 +123,12 @@ export function createWatchdog({ session, cfg, clock, out, root }) {
       if (stuck && !st.stuckInterrupted) {
         // First hang: interrupt the turn so finished work is kept; the runner waits for the retry turn (FLOW-35).
         st.stuckInterrupted = true;
+        // The interrupted calls' time stays tool time and late events cannot reopen them; dropping the spans turned
+        // a long shell call into model time and stopped the retry at once (CR-WFL-03, FLOW-29).
+        for (const [callId, call] of st.calls) {
+          if (call.inputAt !== null) st.toolSpans.push([call.inputAt, now]);
+          st.finished.add(callId);
+        }
         st.calls.clear();
         out(`${tag()} one ${stuck.name} call ran ${Math.round((now - stuck.inputAt) / 1000)} s without returning, interrupted`);
         st.retry = session.cancel(agentId)

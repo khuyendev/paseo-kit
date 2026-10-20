@@ -43,6 +43,16 @@ async function sha(text) { return (await gsd(["hash"], text ?? "")).json?.hash ?
 async function fileSha(path) { const r = await flow(["read", path]); return r.json?.exists ? sha(r.json.text) : null; }
 // ---- end shared helpers ----
 
+const rawCall = call;
+call = async (prompt, opts) => {
+  // GSDF-03: bind judgments and repairs to current code, planning artifacts and adapter settings.
+  const identity = await flow(["digest"], { files: ["."] });
+  if (identity.code !== 0 || !identity.json?.hash) throw new Error("agent input digest unavailable");
+  const researchPolicy = prompt.includes("<research_input_policy>") ? "" : policyBlock(null);
+  prompt = [prompt, researchPolicy, digestLine("stage", identity.json.hash)].filter(Boolean).join("\n\n");
+  return rawCall(prompt, opts);
+};
+
 const MAX_CYCLES = 3;
 const FIND_SCHEMA = { type: "object", properties: { issues: { type: "array", items: { type: "object", properties: { plan: { type: "string" }, severity: { type: "string" }, actionable: { type: "boolean" }, description: { type: "string" }, evidence: { type: "string" } }, required: ["severity", "description"] } } }, required: ["issues"] };
 const VERIFY_SCHEMA = { type: "object", properties: { verdicts: { type: "array", items: { type: "object", properties: { id: { type: "string" }, valid: { type: "boolean" }, evidence: { type: "string" } }, required: ["id", "valid"] } } }, required: ["verdicts"] };
@@ -66,27 +76,43 @@ const lenses = [
   { name: "source-grounding", text: "Follow the lens text in .agents/workflows/lenses/source-grounding.md." },
 ];
 const counted = (list) => list.filter((i) => String(i.severity).toLowerCase() === "high" || i.actionable === true).length;
-const digest = (await gsd(["revisions", "hash", phaseDir, "checked"])).json?.hash ?? "none";
+// CR-GSF-09: every review stage needs a reply; a missing one is retried once unless fatal (GSDF-01), then the run
+// fails instead of converging on silence.
+async function ask(prompt, opts, what) {
+  let r = await call(prompt, opts);
+  if (r.result === null && !fatal(r.reason)) r = await call(prompt, opts);
+  return r.result === null ? { fail: { status: "failed", reason: `${what} returned nothing${r.reason ? ` (${r.reason})` : ""}` } } : r;
+}
 
 let prev = Infinity;
 let planRevision = null;
 for (let cycle = 1; cycle <= MAX_CYCLES; cycle++) {
+  // Recomputed every cycle: the editor changes the plans being judged (CR-GSF-19).
+  const digest = (await gsd(["revisions", "hash", phaseDir, "checked"])).json?.hash ?? "none";
   phase("Find");
   const pairs = plans.flatMap((p) => lenses.map((l) => ({ p, l })));
-  const found = await parallel(pairs.map(({ p, l }) => () => call([`Review ${planPath(p)} read-only through one lens.`, `Lens ${l.name}: ${l.text}`, "Return JSON {issues: [{plan, severity (high|medium|low), actionable, description, evidence}]}.", policy, digestLine("checked", digest)].join("\n\n"), { label: `find-${p}-${l.name}`, readOnly: true, schema: FIND_SCHEMA, ...ro("plan_finder") })));
-  const issues = found.flatMap((r, i) => (r?.result?.issues ?? []).map((x, k) => ({ ...x, plan: x.plan ?? pairs[i].p, id: `C${cycle}-${i + 1}-${k + 1}` })));
+  const found = await parallel(pairs.map(({ p, l }) => () => ask([`Review ${planPath(p)} read-only through one lens.`, `Lens ${l.name}: ${l.text}`, "Return JSON {issues: [{plan, severity (high|medium|low), actionable, description, evidence}]}.", policy, digestLine("checked", digest)].join("\n\n"), { label: `find-${p}-${l.name}`, readOnly: true, schema: FIND_SCHEMA, ...ro("plan_finder") }, `plan finder ${p} (${l.name})`)));
+  for (const [i, r] of found.entries()) if (!r || r.fail) return r?.fail ?? { status: "failed", reason: `plan finder ${pairs[i].p} (${pairs[i].l.name}) failed to run` };
+  const issues = found.flatMap((r, i) => (r.result.issues ?? []).map((x, k) => ({ ...x, plan: x.plan ?? pairs[i].p, id: `C${cycle}-${i + 1}-${k + 1}` })));
   phase("Judge");
   const verdicts = await parallel(plans.map((p) => async () => {
     const mine = issues.filter((x) => x.plan === p);
-    if (!mine.length) return [];
-    const r = await call([`Verify these plan-review issues of ${planPath(p)} against the plan and the code, read-only.`, `Issues (JSON): ${JSON.stringify(mine)}`, "Return JSON {verdicts: [{id, valid, evidence}]}."].join("\n\n"), { label: `verify-${p}`, readOnly: true, schema: VERIFY_SCHEMA, ...ro("plan_verifier") });
-    return r.result?.verdicts ?? [];
+    if (!mine.length) return { result: { verdicts: [] } };
+    return ask([`Verify these plan-review issues of ${planPath(p)} against the plan and the code, read-only.`, `Issues (JSON): ${JSON.stringify(mine)}`, "Return JSON {verdicts: [{id, valid, evidence}]}.", policy, digestLine("checked", digest)].join("\n\n"), { label: `verify-${p}`, readOnly: true, schema: VERIFY_SCHEMA, ...ro("plan_verifier") }, `plan verifier ${p}`);
   }));
-  const valid = issues.filter((x) => verdicts.flat().some((v) => v.id === x.id && v.valid));
+  for (const [i, r] of verdicts.entries()) if (!r || r.fail) return r?.fail ?? { status: "failed", reason: `plan verifier ${plans[i]} failed to run` };
+  const allVerdicts = verdicts.flatMap((r) => r.result.verdicts ?? []);
+  if (issues.some((x) => allVerdicts.filter((v) => v.id === x.id && typeof v.valid === "boolean").length !== 1)) return { status: "failed", reason: "plan verifier did not answer every issue exactly once", issues };
+  // Only an explicit invalid verdict drops an issue.
+  const valid = issues.filter((x) => allVerdicts.find((v) => v.id === x.id)?.valid !== false);
   let kept = [];
   if (valid.length) {
-    const j = await call(["Judge these verified plan-review issues across all plans: keep the real ones and merge cross-plan duplicates (duplicate_of names the kept id).", `Issues (JSON): ${JSON.stringify(valid)}`, "Return JSON {decisions: [{id, keep, duplicate_of}]}."].join("\n\n"), { label: `judge-${cycle}`, readOnly: true, schema: JUDGE_SCHEMA, ...ro("plan_judge") });
-    kept = valid.filter((x) => (j.result?.decisions ?? []).some((d) => d.id === x.id && d.keep && !d.duplicate_of));
+    const j = await ask(["Judge these verified plan-review issues across all plans: keep the real ones and merge cross-plan duplicates (duplicate_of names the kept id).", `Issues (JSON): ${JSON.stringify(valid)}`, "Return JSON {decisions: [{id, keep, duplicate_of}]}.", policy, digestLine("checked", digest)].join("\n\n"), { label: `judge-${cycle}`, readOnly: true, schema: JUDGE_SCHEMA, ...ro("plan_judge") }, "plan judge");
+    if (j.fail) return j.fail;
+    const decisions = j.result.decisions ?? [];
+    if (valid.some((x) => decisions.filter((d) => d.id === x.id && typeof d.keep === "boolean").length !== 1)) return { status: "failed", reason: "plan judge did not answer every issue exactly once", issues: valid };
+    if (decisions.some((d) => d.duplicate_of && !decisions.some((other) => other.id === d.duplicate_of && other.keep && !other.duplicate_of))) return { status: "failed", reason: "plan judge merged an issue without a kept representative", issues: valid };
+    kept = valid.filter((x) => { const d = decisions.find((y) => y.id === x.id); return d.keep && !d.duplicate_of; });
   }
   const count = counted(kept);
   log(`plan review cycle ${cycle}: ${count} high or actionable issues`);

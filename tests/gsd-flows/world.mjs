@@ -93,7 +93,8 @@ export function makeWorld(opts = {}) {
       const k = argv[argv.indexOf("--kind") + 1];
       const req = JSON.parse(input);
       const cur = attempts[k];
-      if (cur && cur.runId === req.runId && cur.inputDigest === req.inputDigest) Object.assign(cur, { abandonedNow: null }, req.done ? { done: true, result: req.result } : {});
+      // As the real verb: continuing the same attempt overwrites before, done and result when given.
+      if (cur && cur.runId === req.runId && cur.inputDigest === req.inputDigest) Object.assign(cur, { abandonedNow: null }, req.before !== undefined ? { before: req.before } : {}, req.done ? { done: true, result: req.result } : {});
       else attempts[k] = { key: digest(`${k}|${req.inputDigest}|${req.runId}`), runId: req.runId, inputDigest: req.inputDigest, before: req.before, done: Boolean(req.done), result: req.result ?? null, abandoned: cur && !cur.done ? [...cur.abandoned, { key: cur.key }] : [], abandonedNow: cur && !cur.done ? cur.key : null };
       ev(`attempt ${k}${req.done ? " done" : ""}`);
       return attempts[k];

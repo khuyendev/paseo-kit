@@ -292,3 +292,19 @@ test("MACH-18 apply changes only the kit providers, the plugin keys under the fl
   assert.deepEqual(strip(after), strip(live));
   assert.deepEqual(after.agents.metadataGeneration, template().metadataGeneration);
 });
+
+test("MACH-18 template entries outside agent_providers are never created, given models or checked (CR-MAC-02)", async () => {
+  const base = await completeMachine();
+  const live = base.readConfig();
+  live.agents.providers.owner = { extends: "claude", models: [{ id: "owner-model" }] };
+  const tpl = template();
+  tpl.providers.owner = { extends: "claude", models: [{ id: "template-model" }] };
+  tpl.providers.unmapped = { extends: "claude", models: [{ id: "x" }] };
+  const m = makeMachine({ live, template: tpl });
+  const r = await m.run(["apply", "--no-reload"]);
+  assert.equal(r.code, 0, r.stdout);
+  const after = m.readConfig();
+  assert.deepEqual(after.agents.providers.owner, live.agents.providers.owner);
+  assert.equal("unmapped" in after.agents.providers, false);
+  assert.equal(r.out.some((l) => /provider (owner|unmapped)|to (owner|unmapped)|template-model/.test(l)), false, r.stdout);
+});

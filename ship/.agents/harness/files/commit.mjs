@@ -31,19 +31,21 @@ export function commitFiles(plan, io = fs) {
   const staged = [];
   const createdDirs = [];
   const cleanTemps = () => staged.forEach((s) => io.rmSync(s.tmp, { force: true }));
+  // CR-FIL-01: creating a folder does not own what another writer put in it since; only empty ones go, deepest first
   const cleanDirs = () => {
-    for (const dir of createdDirs.reverse()) {
+    for (const dir of [...new Set(createdDirs)].sort((a, b) => b.length - a.length)) {
       try {
-        io.rmSync(dir, { recursive: true });
-      } catch { /* left as is: an empty folder, no file content */ }
+        io.rmdirSync(dir);
+      } catch { /* not empty or gone: left as is */ }
     }
   };
   let current;
   try {
     for (const p of plan) {
       current = p.abs;
-      const made = io.mkdirSync(path.dirname(p.abs), { recursive: true });
-      if (made) createdDirs.push(made);
+      // the folders this call creates, each one (mkdirSync reports only the first, in long-path form on Windows)
+      for (let dir = path.dirname(p.abs); !io.existsSync(dir) && path.dirname(dir) !== dir; dir = path.dirname(dir)) createdDirs.push(dir);
+      io.mkdirSync(path.dirname(p.abs), { recursive: true });
       let original = null, mode, mtimeMs = 0;
       if (io.existsSync(p.abs)) {
         const stat = io.statSync(p.abs);

@@ -3,20 +3,20 @@
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import { type Board, type FileDetail, type PlanDetail, type PlanningFailure, type PlanningIndex, summaryDone } from "../shared/planning.ts";
-import { boardColumns, boardPhase, phaseSignature, phasesOf } from "./board.ts";
+import { boardColumns, boardPhase } from "./board.ts";
 import { type Paseo, PlanningError, planningRoot, resolveInPlanning, toFailure, workspaceDirectory } from "./common.ts";
 import { properties, parsePlan, parseSummary, readDocument } from "./documents.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
-import { ModuleStatusSource, PhaseStatusCache, type StatusSource } from "./gsd-link.ts";
+import { LadderStatusSource, type StatusSource } from "./gsd-link.ts";
 import { PlanningIndexer } from "./indexer.ts";
 import { classify } from "./kinds.ts";
+import { phaseRoster } from "./ladder.ts";
 
 export class PlanningService {
   readonly indexer: PlanningIndexer;
   private readonly statuses: StatusSource;
-  private readonly statusCache = new PhaseStatusCache();
 
-  constructor(statuses: StatusSource = new ModuleStatusSource(), indexer = new PlanningIndexer()) {
+  constructor(statuses: StatusSource = new LadderStatusSource(), indexer = new PlanningIndexer()) {
     this.statuses = statuses;
     this.indexer = indexer;
   }
@@ -35,7 +35,7 @@ export class PlanningService {
     const root = await planningRoot(directory);
     const result = await this.indexer.index(root);
     let statusError: string | null = null;
-    const raw = phasesOf(result.files);
+    const raw = phaseRoster(directory).map(({ id, name, dir }) => ({ id, name, dir }));
     let fn: Awaited<ReturnType<StatusSource["forWorkspace"]>> | null = null;
     try {
       fn = await this.statuses.forWorkspace(directory);
@@ -45,8 +45,9 @@ export class PlanningService {
     const phases = await Promise.all(
       raw.map(async (p) => {
         if (!fn) return { ...p, status: null };
+        if (p.dir === null) return { ...p, status: "NOT_STARTED" as const };
         try {
-          return { ...p, status: await this.statusCache.get(fn, join(root, p.dir), phaseSignature(result.files, p.dir)) };
+          return { ...p, status: await fn(join(root, p.dir)) };
         } catch (err) {
           statusError ??= `phase ${p.id}: ${err instanceof Error ? err.message : String(err)}`;
           return { ...p, status: null };
@@ -76,7 +77,9 @@ export class PlanningService {
       if (!planFile) throw new PlanningError("not_found", `no plan ${planId} in .planning/`);
       const parsed = parsePlan((await readDocument(await resolveInPlanning(root, planFile.path))).text);
       if ("error" in parsed) throw new PlanningError("parse_error", `${planFile.path}:${parsed.line}: ${parsed.error}`);
-      const summaryFile = files.find((f) => f.kind === "summary" && f.planId === planId && f.phase === planFile.phase);
+      // The SUMMARY is the plan's exact sibling, never a retired copy under superseded/ (CR-PNL-05).
+      const summaryPath = planFile.path.replace(/-PLAN\.md$/i, "-SUMMARY.md");
+      const summaryFile = files.find((f) => f.kind === "summary" && f.path.toLowerCase() === summaryPath.toLowerCase());
       let summary: PlanDetail["summary"] = null;
       if (summaryFile) {
         const s = parseSummary((await readDocument(await resolveInPlanning(root, summaryFile.path))).text);
