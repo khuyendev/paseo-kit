@@ -25,8 +25,8 @@ const phaseNumber = (dir) => /phases\/(\d+(?:\.\d+)?)-/.exec(dir)[1];
 const digestLine = (key, hash) => `Input digest (${key}): ${hash}`;
 const policyBlock = (path) => `<research_input_policy>\n${path ? `Approved research: ${path}. Read and use only this report.` : "Approved research: NONE. Do not read or use any RESEARCH.md on disk."}\n</research_input_policy>`;
 const NEVER_RETRY = /quota|credit|billing|auth|permission|usage limit|rate limit|\b429\b|too many requests|RESOURCE_EXHAUSTED/i;
-// TODO(integration), requested from code-workflow: agent option `detail: true` resolves {result, reason, agentId};
-// global `runId` is the run id, kept by --resume (GSDC-30 attempt keys).
+// agent option `detail: true` resolves {result, reason, agentId, worktree, durationS};
+// the global `runId` is the first run's id, kept by --resume (GSDC-30 attempt keys).
 async function call(prompt, opts) {
   const d = await agent(prompt, { ...opts, detail: true });
   return { result: d?.result ?? null, reason: d?.reason ?? null };
@@ -374,7 +374,6 @@ const fixerBlock = () => (g.fixer_verifies_itself
   : "Do not run the build or the tests: the orchestrator's gate verifies your changes. Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence}.");
 async function fixer(label, findings, failures, owns) {
   const prompt = [`<kit_fixer_runtime>\nYou own: ${JSON.stringify(owns)}. Fix the confirmed review findings and gate failures below, nothing else. Never commit.\n${fixerBlock()}\n</kit_fixer_runtime>`, findings.length ? `Confirmed findings (JSON): ${JSON.stringify(findings.map(({ id, file, line, trigger, description }) => ({ id, file, line, trigger, description })))}` : "", failures.length ? `Gate failures:\n${failureText(failures)}` : ""].filter(Boolean).join("\n\n");
-  // TODO(integration): `timeoutS` agent option requested from code-workflow (GSDF-50 deadline: minutes plus a margin).
   const r = await call(prompt, { label, agentType: agentFor("fixer", "gsd-code-fixer"), role: "fixer", schema: FIXER_SCHEMA, timeoutS: (g.fixer.minutes + 5) * 60 });
   ev(`fixer ${label}`);
   if (!r.result || r.result.status !== "fixed") return { stop: owner("Fix", r.result ? `fixer unresolved: ${r.result.remaining_failures ?? "?"} failures remain` : `fixer stopped or timed out${r.reason ? `: ${r.reason}` : ""}`, { evidence: r.result?.evidence ?? null }) };

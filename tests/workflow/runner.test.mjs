@@ -221,6 +221,7 @@ test("FLOW-47 FLOW-48 a session worktree is made once and reused on resume; adop
   assert.equal(s.fake.callsOf("createAgent").length, 1);
   const agentId = created(s.fake).length && journal(s, "wf_1")[1].agentId;
   assert.deepEqual(readRun(s, "wf_2").adopted, [{ agentId, session: "coder", fromRun: "wf_1" }]);
+  assert.equal(s.fake.agents.get(agentId).labels["harness.run"], "wf_2", "adopted agent's harness.run label moved to the new run");
   const prompts = [created(s.fake)[0].initialPrompt, ...sent(s.fake).map(([, t]) => t)];
   assert.equal(prompts.length, 3);
   const wt = /You work in the git worktree (.+?) \(branch/.exec(prompts[0])[1];

@@ -5,7 +5,7 @@ description: Plans one GSD phase (outline, skeleton review, per-plan planners, c
 
 # gsd-plan
 
-Method text: follow `.agents/gsd/workflows/plan-phase.md` (generated upstream text, unchanged; its step 8 and step 12 contracts reach the planner through its role include), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win). The researcher, planner and checker are always separate agents; planning never creates, renames or switches git branches.
+Method text: the orchestration of upstream `plan-phase` is the workflow script below; its step 8 and step 12 contracts are generated unchanged in `.agents/gsd/generated/plan-phase-contracts.md` and reach the planner through its role include, then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win). The researcher, planner and checker are always separate agents; planning never creates, renames or switches git branches.
 
 ## Kit overlay
 

@@ -28,8 +28,8 @@ const phaseNumber = (dir) => /phases\/(\d+(?:\.\d+)?)-/.exec(dir)[1];
 const digestLine = (key, hash) => `Input digest (${key}): ${hash}`;
 const policyBlock = (path) => `<research_input_policy>\n${path ? `Approved research: ${path}. Read and use only this report.` : "Approved research: NONE. Do not read or use any RESEARCH.md on disk."}\n</research_input_policy>`;
 const NEVER_RETRY = /quota|credit|billing|auth|permission|usage limit|rate limit|\b429\b|too many requests|RESOURCE_EXHAUSTED/i;
-// TODO(integration), requested from code-workflow: agent option `detail: true` resolves {result, reason, agentId};
-// global `runId` is the run id, kept by --resume (GSDC-30 attempt keys).
+// agent option `detail: true` resolves {result, reason, agentId, worktree, durationS};
+// the global `runId` is the first run's id, kept by --resume (GSDC-30 attempt keys).
 async function call(prompt, opts) {
   const d = await agent(prompt, { ...opts, detail: true });
   return { result: d?.result ?? null, reason: d?.reason ?? null };
@@ -493,7 +493,7 @@ async function countProbes(scopeIds, gapScoped) {
   const found = [];
   for (const [probe, r, defaultSev] of runs) {
     if (r.code === 69) { found.push({ probe, severity: "warning", description: `${probe} could not look: ${r.json?.reason ?? r.json?.error ?? "exit 69"}` }); continue; }
-    const items = ["probes", "findings", "problems", "errors", "issues"].flatMap((k) => (Array.isArray(r.json?.[k]) ? r.json[k] : []));
+    const items = ["commands", "probes", "findings", "problems", "errors", "issues"].flatMap((k) => (Array.isArray(r.json?.[k]) ? r.json[k] : []));
     for (const it of items) {
       const sev = String(probe === "owns" ? "blocker" : it.severity ?? defaultSev).toLowerCase();
       if (["none", "ok", "info", ""].includes(sev)) continue;

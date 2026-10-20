@@ -90,7 +90,9 @@ function renderBody(tpl, symptoms) {
 }
 
 function renderFm(fm) {
-  const lines = Object.entries(fm).map(([k, v]) => `${k}: ${Array.isArray(v) ? `[${v.map((x) => JSON.stringify(String(x))).join(", ")}]` : v === null ? "null" : JSON.stringify(String(v))}`);
+  // Objects (budget_used, budget_extension, pending_checkpoint) are written as JSON flow maps the YAML subset reads.
+  const value = (v) => (Array.isArray(v) ? `[${v.map((x) => JSON.stringify(String(x))).join(", ")}]` : v === null ? "null" : typeof v === "object" ? JSON.stringify(v) : JSON.stringify(String(v)));
+  const lines = Object.entries(fm).map(([k, v]) => `${k}: ${value(v)}`);
   return `---\n${lines.join("\n")}\n---\n`;
 }
 
@@ -198,7 +200,7 @@ export function debugStatus(g, slug) {
   const next = /^next_action:\s*(.*)$/m.exec((secs.get("Current Focus") ?? []).join("\n"))?.[1]?.trim() ?? "";
   if (VAGUE.test(next)) problems.push(`next_action is vague: ${JSON.stringify(next)}`);
   if (secs.has("Symptoms") && s.fm.symptoms_hash !== textDigest(sectionText(s.body, "Symptoms"))) problems.push("Symptoms changed since create (they are immutable)");
-  const json = { slug, path: rel(g, s.file), status: s.fm.status ?? null, goal: s.fm.goal ?? null, next_action: next, sections: [...secs.keys()], valid: problems.length === 0, problems };
+  const json = { slug, path: rel(g, s.file), status: s.fm.status ?? null, goal: s.fm.goal ?? null, next_action: next, sections: [...secs.keys()], frontmatter: s.fm, valid: problems.length === 0, problems };
   return done(json, problems.length ? 1 : 0);
 }
 
@@ -208,19 +210,54 @@ export function debugList(g) {
   return done({ sessions: sessions.map((s) => ({ slug: s.fm.slug ?? path.basename(s.file, ".md"), status: s.fm.status ?? null, updated: s.fm.updated ?? null, trigger: s.fm.trigger ?? null, path: rel(g, s.file) })) });
 }
 
-// An owner answer or checkpoint question goes into ## Checkpoints as data, never as instructions.
+// An owner answer or checkpoint question goes into ## Checkpoints as data, never as instructions (GSDF-65).
+// Input: a checkpoint {id, type, question, options} (sets pending_checkpoint), {answered: id, response} (records the
+// owner answer and clears it), or a plain {question, answer} note.
 export function debugCheckpoint(g, slug, input) {
   const s = sessionFile(g, slug);
-  const entry = [`- at: ${nowIso()}`, ...(input.question !== undefined ? ["  question:", dataBlock(input.question)] : []), ...(input.answer !== undefined ? ["  answer:", dataBlock(input.answer)] : [])].join("\n");
-  write(s.file, { ...s.fm, updated: nowIso() }, appendTo(s.body, "Checkpoints", entry));
-  return done({ slug, appended: "Checkpoints" });
+  const fm = { ...s.fm, updated: nowIso() };
+  const lines = [`- at: ${nowIso()}`];
+  if (input.answered !== undefined) {
+    if (fm.pending_checkpoint?.id !== input.answered) throw fail(`no pending checkpoint ${input.answered} in ${slug}`);
+    lines.push(`  answered: ${input.answered}`, "  response:", dataBlock(input.response));
+    fm.pending_checkpoint = null;
+  } else if (input.id !== undefined) {
+    if (!input.question) throw fail("a checkpoint needs {id, type, question, options}");
+    lines.push(`  checkpoint: ${input.id} (${input.type ?? "decision"})`, "  question:", dataBlock(input.question));
+    if (Array.isArray(input.options) && input.options.length) lines.push("  options:", dataBlock(input.options.map(String).join("\n")));
+    fm.pending_checkpoint = { id: String(input.id), type: String(input.type ?? "decision"), question: String(input.question), options: (input.options ?? []).map(String) };
+  } else {
+    if (input.question !== undefined) lines.push("  question:", dataBlock(input.question));
+    if (input.answer !== undefined) lines.push("  answer:", dataBlock(input.answer));
+  }
+  write(s.file, fm, appendTo(s.body, "Checkpoints", lines.join("\n")));
+  return done({ slug, appended: "Checkpoints", pending_checkpoint: fm.pending_checkpoint ?? null });
+}
+
+// GSDF-67: the used turns and minutes are persisted after every turn; an owner answer never refills them.
+export function debugBudget(g, slug, input) {
+  const s = sessionFile(g, slug);
+  const add = (k) => {
+    const n = Number(input?.[k] ?? 0);
+    if (!Number.isFinite(n) || n < 0) throw fail(`debug budget ${k} must be a number >= 0`);
+    return n;
+  };
+  const used = s.fm.budget_used ?? { turns: 0, minutes: 0 };
+  const budget_used = { turns: (Number(used.turns) || 0) + add("turns"), minutes: (Number(used.minutes) || 0) + add("minutes") };
+  write(s.file, { ...s.fm, updated: nowIso(), budget_used }, s.body);
+  return done({ slug, budget_used, budget_extension: s.fm.budget_extension ?? null });
 }
 
 const field = (block, key) => new RegExp(`^${key}:\\s*(.*)$`, "m").exec(block)?.[1]?.trim() ?? "";
 
 export function debugClose(g, slug, outcome, extra) {
   if (!["resolved", "diagnosed"].includes(outcome)) throw fail("--outcome must be resolved or diagnosed");
-  const s = sessionFile(g, slug);
+  let s = sessionFile(g, slug);
+  if (extra.evidence !== undefined && extra.evidence !== null) {
+    const body = appendTo(s.body, "Evidence", evidence(`debug close --outcome ${outcome}`, JSON.stringify(extra.evidence, null, 2), "verify rerun evidence (ADPT-17)"));
+    write(s.file, { ...s.fm, updated: nowIso() }, body);
+    s = sessionFile(g, slug);
+  }
   if (outcome === "diagnosed") {
     write(s.file, { ...s.fm, updated: nowIso(), outcome: "diagnosed" }, s.body);
     return done({ slug, outcome, path: rel(g, s.file), moved: false });

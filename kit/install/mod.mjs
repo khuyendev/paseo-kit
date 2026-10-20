@@ -5,17 +5,22 @@ import { readJsonIf } from "../../ship/.agents/harness/lib/io.mjs";
 import { fileDigest } from "../../ship/.agents/harness/lib/hash.mjs";
 import { samePath, toSlash } from "../../ship/.agents/harness/lib/paths.mjs";
 import { errText } from "../../ship/.agents/harness/lib/cli.mjs";
-import { claudeVersion, FILE_PLUGIN_ID, MIN_CLAUDE_VERSION, NODE_REQUIREMENT, nodeRuntimeReady, runClaude, versionAtLeast } from "../../ship/.agents/harness/platform.mjs";
+import { claudeVersion, FILE_PLUGIN_ID, MIN_CLAUDE_VERSION, NODE_REQUIREMENT, nodeRuntimeProblem, runClaude, versionAtLeast } from "../../ship/.agents/harness/platform.mjs";
 import { fail } from "./failure.mjs";
 import { SETTINGS_REL } from "./hooks.mjs";
 
 export const PLUGINS_REL = ".claude/plugins";
 const [PLUGIN_NAME, MARKETPLACE] = FILE_PLUGIN_ID.split("@");
-const ASSETS = [`${PLUGINS_REL}/${PLUGIN_NAME}/.claude-plugin/plugin.json`, `${PLUGINS_REL}/.claude-plugin/marketplace.json`];
+// Every mod asset must be present; the backend discovery script is one of them (FTOL-05).
+const ASSETS = [
+  `${PLUGINS_REL}/.claude-plugin/marketplace.json`,
+  ...[".claude-plugin/plugin.json", "hooks/hooks.json", "hooks/register.ts", "scripts/discover.mjs"].map((rel) => `${PLUGINS_REL}/${PLUGIN_NAME}/${rel}`),
+];
 
 // Node and Claude Code gates, run before any write and never skipped by --force (INST-22).
 export function checkModGates(env) {
-  if (!nodeRuntimeReady()) fail(`the file mod needs ${NODE_REQUIREMENT}; this is node ${process.version}`);
+  const nodeProblem = nodeRuntimeProblem();
+  if (nodeProblem) fail(`the file mod needs ${NODE_REQUIREMENT}: ${nodeProblem}`);
   const version = claudeVersion(env);
   if (versionAtLeast(version, MIN_CLAUDE_VERSION) !== true) {
     fail(`file mod requires Claude Code >= ${MIN_CLAUDE_VERSION}; found ${version ?? "no working claude CLI"}`);

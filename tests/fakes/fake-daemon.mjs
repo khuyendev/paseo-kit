@@ -200,6 +200,13 @@ export function createFakeDaemon({
         settle(turn);
       }
     },
+    async updateAgent(agentId, updates = {}) {
+      record("updateAgent", [agentId, updates]);
+      const agent = need(agentId);
+      if (updates.labels) agent.labels = { ...agent.labels, ...updates.labels };
+      if (updates.name !== undefined) agent.title = updates.name;
+      agent.updatedAt = iso();
+    },
     async setAgentModel(agentId, model) {
       record("setAgentModel", [agentId, model]);
       const agent = need(agentId);

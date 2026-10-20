@@ -95,6 +95,10 @@ export function pruneOlderThan(dir, maxAgeMs, filter = () => true) {
   }
 }
 
+// BOM-aware text read (CONF-02) for hook state files and stdin; hooks cannot import lib/io.mjs by a relative path.
+export const readTextFile = (fileOrFd) => fs.readFileSync(fileOrFd, "utf8").replace(/^﻿/, "");
+export const readJsonFile = (fileOrFd) => JSON.parse(readTextFile(fileOrFd));
+
 export const contextOutput = (hookEventName, additionalContext) => ({ hookSpecificOutput: { hookEventName, additionalContext } });
 
 const fold = (p) => (process.platform === "win32" ? p.toLowerCase() : p);
@@ -111,7 +115,7 @@ export function isScript(moduleUrl) {
 // The handler returns null or {output, warning}.
 export async function runHook(name, handler) {
   try {
-    const input = JSON.parse(fs.readFileSync(0, "utf8").replace(/^﻿/, ""));
+    const input = readJsonFile(0);
     if (!input || typeof input !== "object" || Array.isArray(input)) return;
     const result = await handler(input);
     if (result?.warning) process.stderr.write(`${name} unavailable: ${result.warning}\n`);

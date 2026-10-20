@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { MIN_CLAUDE_VERSION, versionAtLeast } from "../../ship/.agents/harness/platform.mjs";
 import { makeTempDir } from "../helpers/temp.mjs";
-import { claudeEnv, FAKE_CLAUDE, LIVE_CONFIG_DIRS, makeKit, makeProject, runKit, treeHash } from "./helpers.mjs";
+import { claudeEnv, defaultKitFiles, FAKE_CLAUDE, LIVE_CONFIG_DIRS, makeKit, makeProject, runKit, treeHash } from "./helpers.mjs";
 
 const below = MIN_CLAUDE_VERSION.replace(/\d+$/, (n) => String(Number(n) - 1));
 const pluginCalls = (calls) => calls.filter((c) => c.args[0] === "plugin");
@@ -148,4 +148,15 @@ test("INST-29 fake CLI logs stay in temp folders and never name the owner's live
   }
   for (const key of ["HOME", "USERPROFILE", "CLAUDE_CONFIG_DIR", "PASEO_HOME"]) assert.match(env[key], / /);
   assert.equal(env.PASEO_HARNESS_ROOT, undefined);
+});
+
+test("INST-20 FTOL-05 a mod without its backend discovery script is not activated", async () => {
+  const files = defaultKitFiles();
+  delete files[".claude/plugins/harness-files/scripts/discover.mjs"];
+  const { env, calls } = claudeEnv();
+  const p = makeProject();
+  const r = await runKit(["install", p.root, "--enable-plugin"], { kit: makeKit({ files }), env });
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.err.filter((l) => l.startsWith("failed:")), ["failed: mod activation: file mod has untracked or locally modified assets; resolve conflicts before enabling"]);
+  assert.equal(installCall(calls()), undefined);
 });

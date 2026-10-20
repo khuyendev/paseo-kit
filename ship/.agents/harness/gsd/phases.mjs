@@ -3,11 +3,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { writeJsonAtomic, writeTextAtomic } from "../lib/io.mjs";
-import { done, fail, idList, isFile, nowIso, readIf, rel, today } from "./common.mjs";
+import { done, fail, idList, isFile, lf, nowIso, readIf, rel, today } from "./common.mjs";
 import { comparePhase, findPhase, haltIds, listFiles, padPhase, phasesDir, planIds, readPlans, sharedFile, summaryIds, summaryPath } from "./planning.mjs";
 import { loadRequirements, requirementView, setComplete } from "./requirements.mjs";
-import { annotateSection, insertPhase, loadRoadmap, phaseJson, removePhaseText, renumberText, roadmapPhase, setChecklist, setProgressRow, slugify } from "./roadmap.mjs";
-import { advanceState, writeShared } from "./state.mjs";
+import { annotateSection, insertPhase, loadRoadmap, parseRoadmap, phaseJson, removePhaseText, renumberText, roadmapPhase, setChecklist, setProgressRow, slugify } from "./roadmap.mjs";
+import { advanceState, initState, writeShared } from "./state.mjs";
 import { completionFile, phaseStatus, readVerification } from "./status.mjs";
 import { frontmatter } from "./yaml.mjs";
 
@@ -56,7 +56,50 @@ export function roadmapVerb(g, sub, args) {
     return done(a, a.scope === "unreadable" ? 69 : 0);
   }
   if (sub === "annotate-dependencies") return done(annotate(g, args[0]));
+  if (sub === "install-draft") return done(installDraft(g));
   throw fail(`unknown roadmap verb ${sub}`);
+}
+
+// GSDF-95: the approved roadmapper draft becomes ROADMAP, the REQUIREMENTS traceability and a fresh STATE, through the
+// single writer (GSDC-12). The drafts stay in place as the record of what was approved.
+function installDraft(g) {
+  const drafts = path.join(path.dirname(sharedFile(g.codeRoot, "ROADMAP.md")), "drafts");
+  const draft = readIf(path.join(drafts, "ROADMAP.md"));
+  if (draft === null) throw fail("no .planning/drafts/ROADMAP.md");
+  const parsed = parseRoadmap(draft, g.cfg.gsd.requirement_id_regex);
+  if (parsed.scope !== "complete") throw fail(`draft ROADMAP is ${parsed.scope}: ${[...parsed.listedOnly, ...parsed.duplicates].join(", ") || "no phases"}`);
+  let trace;
+  try {
+    trace = JSON.parse(readIf(path.join(drafts, "traceability.json")) ?? "null");
+  } catch (e) {
+    throw fail(`drafts/traceability.json: invalid JSON (${e.message})`);
+  }
+  if (!trace || typeof trace !== "object" || Array.isArray(trace)) throw fail("drafts/traceability.json must map requirement id -> phase");
+  const known = new Set(parsed.phases.map((p) => p.padded));
+  const bad = Object.entries(trace).filter(([, ph]) => !known.has(padPhase(String(ph).replace(/^Phase\s+/i, ""))));
+  if (bad.length) throw fail(`traceability names phases missing from the draft: ${bad.map(([id, ph]) => `${id} -> ${ph}`).join(", ")}`);
+  const result = writeShared(g, () => {
+    writeTextAtomic(sharedFile(g.codeRoot, "ROADMAP.md"), lf(draft));
+    const reqFile = sharedFile(g.codeRoot, "REQUIREMENTS.md");
+    const reqText = readIf(reqFile);
+    if (reqText !== null) writeTextAtomic(reqFile, withTraceability(reqText, trace));
+    return { roadmap: rel(g.codeRoot, sharedFile(g.codeRoot, "ROADMAP.md")), phases: parsed.phases.length, traced: Object.keys(trace).length, requirements: reqText !== null };
+  });
+  const stateCreated = !fs.existsSync(sharedFile(g.codeRoot, "STATE.md"));
+  if (stateCreated) initState(g, {});
+  return { ...result, state: stateCreated ? "initialised" : "kept" };
+}
+
+// Replace (or append) the `## Traceability` section with one row per traced requirement.
+function withTraceability(text, trace) {
+  const lines = lf(text).trimEnd().split("\n");
+  const start = lines.findIndex((l) => /^##\s+Traceability\s*$/.test(l));
+  let end = lines.length;
+  if (start >= 0) for (let i = start + 1; i < lines.length; i++) if (/^##\s/.test(lines[i])) { end = i; break; }
+  const table = ["## Traceability", "", "| Requirement | Phase | Status |", "|-------------|-------|--------|",
+    ...Object.entries(trace).map(([id, ph]) => `| ${id} | Phase ${String(ph).replace(/^Phase\s+/i, "")} | Pending |`), ""];
+  const out = start >= 0 ? [...lines.slice(0, start), ...table, ...lines.slice(end)] : [...lines, "", ...table];
+  return `${out.join("\n").trimEnd()}\n`;
 }
 
 function annotate(g, ref) {

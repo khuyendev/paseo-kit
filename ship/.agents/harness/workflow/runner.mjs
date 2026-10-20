@@ -72,6 +72,8 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
     if (adopted.has(entry.agentId)) return;
     adopted.add(entry.agentId);
     await onAdopt?.({ agentId: entry.agentId, session: key, fromRun: parentRunId ?? null });
+    // FLOW-48: the adopted agent now belongs to this run (ph archive --run, swarm grouping).
+    await session.setLabels(entry.agentId, { "harness.run": runId }).catch((e) => out(`log warning: label of ${id8(entry.agentId)} not moved to ${runId}: ${errText(e)}`));
   }
 
   const lostReason = () => `daemon connection lost earlier in this run (${transportDown}); resume the run`;
@@ -130,14 +132,22 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
       return { tokens: u.output, usage: { ...u, costUsd: costUsd ?? null, reportedCostUsd: now.reportedCostUsd ?? null } };
     };
     const durationS = () => Math.round((clock.now() - t0) / 1000);
-    const result = (status, fields) => ({ status, agentId, model: identity.model, ...usageOf(), durationS: durationS(), ...(worktree && key !== undefined ? { worktree } : {}), ...fields });
+    const result = (status, fields) => ({ status, agentId, model: identity.model, ...usageOf(), durationS: durationS(), worktreePath: worktree?.path ?? null, ...(worktree && key !== undefined ? { worktree } : {}), ...fields });
+    // opts.timeoutS bounds the whole call (all turns of it); at the deadline the call ends null and the agent is archived.
+    const deadline = opts.timeoutS !== undefined ? t0 + opts.timeoutS * 1000 : null;
+    const waitOpts = (before) => {
+      if (deadline === null) return { turnsBefore: before };
+      const left = Math.ceil((deadline - clock.now()) / 1000);
+      if (left <= 0) throw new Error(`no reply within ${opts.timeoutS} s`);
+      return { turnsBefore: before, timeoutS: Math.min(left, cfg.wait_timeout_s) };
+    };
 
     async function waitReply(turnsBefore) {
       let text = null;
       let err = null;
       const once = async (before) => {
         try {
-          const r = await session.waitTurn(agentId, { turnsBefore: before });
+          const r = await session.waitTurn(agentId, waitOpts(before));
           maxContext = Math.max(maxContext, contextOf(r.usage));
           text = r.text;
           err = null;

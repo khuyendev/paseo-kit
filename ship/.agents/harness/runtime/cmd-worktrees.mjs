@@ -12,9 +12,8 @@ async function agentLiveness(ctx, names, line) {
   let agents;
   try {
     const session = await ctx.paseo();
-    // TODO(integration): use session.findAgents({"harness.name": name}) across orchestrators once paseo-client
-    // provides it (requested); until then only the caller's and the leader's agents are seen.
-    agents = [...(await session.listAgents(session.caller)), ...(session.leader ? await session.listAgents(session.leader) : [])];
+    // Every live agent of the daemon, not only the caller's pool: another orchestrator's worker may own the worktree.
+    agents = await session.findAgents();
   } catch (e) {
     line(`note daemon not reachable (${errText(e)}): worktrees of spawned agents are kept`);
     return live;

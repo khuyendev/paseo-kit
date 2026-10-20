@@ -7,9 +7,6 @@ import { doctorCommands } from "./doctor.mjs";
 import { freezeCommands } from "./freeze.mjs";
 import { taskCommands } from "./tasks.mjs";
 
-// TODO(integration): remove these re-exports once workflow/runtime-bridge.mjs imports from ./index.mjs (requested).
-export * from "./index.mjs";
-
 export const commands = [
   ...doctorCommands,
   ...startCommands,

@@ -223,8 +223,9 @@ Clock contract (fakes, M4 retries, M6 watchdog, M5 compact watcher): `{now(): ms
 
 | export | contract |
 | --- | --- |
-| `NODE_REQUIREMENT` | text `Node 20.17+ with path.matchesGlob`. |
-| `nodeRuntimeReady(version = process.versions.node, hasMatchesGlob)` | boolean. |
+| `NODE_RUNTIME` | `{minVersion, capabilities: [{name, probe}]}`: the one Node gate table (INST-23). |
+| `NODE_REQUIREMENT` | text derived from the table: `Node 20.17+ with path.matchesGlob`. |
+| `nodeRuntimeProblem(version = process.versions.node, runtime = NODE_RUNTIME)` | null when the gate passes, else `node <v> is older than <min>` / `node <v> lacks <capability>`. |
 | `MIN_CLAUDE_VERSION` | minimum Claude Code version for the harness-files mod (`2.1.296`). |
 | `FILE_PLUGIN_ID` | `harness-files@paseo-harness-kit` (owner selection key in `enabledPlugins`, PCLI-09). |
 | `homeDir(env)` | win32 `env.USERPROFILE`, else `env.HOME`, else `os.homedir()`; tests point it at a temp home. |
@@ -265,6 +266,8 @@ const session = await connect({ env, root, cfg, clock });   // or ctx.paseo() in
 | `turnsOf(agentId)` | turns tracked so far (baseline before sending; PCLI-11). |
 | `replyText(agentId, lastMessage = null)` | the final reply text (structured response resolved by the CLI helper). |
 | `fetchAgent(agentId)` | snapshot or null (not found). |
+| `findAgents(labels = {})` | live agents of the whole daemon carrying every given label (PHCL-32 worktree ownership). |
+| `setLabels(agentId, labels)` | add or replace labels (`updateAgent`; FLOW-48 moves an adopted session agent's `harness.run`). |
 | `listAgents(parentId = caller)` | live (non-archived) agents whose `paseo.parent-agent-id` label equals `parentId`. |
 | `resolveTargets(refs)` | PCLI-15: caller's pool, then the leader's; exact id, id prefix >= 6, exact title; errors `'<ref>' matches <n> agents; use the id`, `no live subagent named or id '<ref>'`, `name at least one agent (title, id or unique id prefix)` (all `UsageError`). |
 | `archive(agentId)`, `cancel(agentId)` | archive the agent / cancel its running turn. |
@@ -297,7 +300,7 @@ Command modules (fixed list in `ph.mjs`, imported in this order; a module file t
 | `./runtime/commands.mjs` | code-ph | doctor, spawn, fanout, send, watch, result, team, context, compact-self (+ hidden watcher), stop, archive, task, freeze, worktrees |
 | `./workflow/commands.mjs` | code-workflow | workflow, watch-run, run-stats, runs |
 | `./gsd/commands.mjs` | code-gsd-core | gsd |
-| `./adapter/commands.mjs` | code-harness | adapter (lint) |
+| `./adapter/commands.mjs` | code-harness | harness (`ph harness lint [--all]`, HARN-05) |
 
 Each module exports `commands`, an array of command definitions:
 
@@ -355,7 +358,7 @@ Tests use Node's runner (`node --test`), run offline, never touch `~/.paseo`, `~
 | member | meaning |
 | --- | --- |
 | `fake.daemon` | pass to `connect({daemon: fake.daemon})` / `main(argv, {daemon})`; with `down: "<msg>"` connect throws `Cannot connect to daemon at fake: <msg>`. |
-| `fake.client` | in-memory daemon client: `createAgent, sendAgentMessage, waitForFinish, fetchAgent, fetchAgents, archiveAgent, cancelAgent, setAgentModel, respondToPermission, listProviderModels, observeTimeline, fetchAgentTimeline, on, close`. |
+| `fake.client` | in-memory daemon client: `createAgent, sendAgentMessage, waitForFinish, fetchAgent, fetchAgents, archiveAgent, cancelAgent, updateAgent, setAgentModel, respondToPermission, listProviderModels, observeTimeline, fetchAgentTimeline, on, close`. |
 | `fake.calls` / `fake.callsOf(method)` | every client call in order: `{method, args}`. |
 | `fake.agents` | `Map id -> snapshot` (mutable). |
 | `fake.addAgent(partial)` | add an existing agent (defaults: random uuid, `status: "idle"`, `provider: "circle-agent"`, `model: "m"`, `cwd: "/fake"`, `labels: {}`, title = id8); `parent: <id>` sets the parent label; `status: "running"` gives it a manual turn (end it with `fake.finish`). |

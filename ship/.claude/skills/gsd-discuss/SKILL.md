@@ -5,7 +5,7 @@ description: Runs the GSD discuss step for one phase in the main session - finds
 
 # gsd-discuss
 
-Method text: follow `.agents/gsd/workflows/discuss-phase.md` (generated upstream text, unchanged), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win).
+Method text: follow `.agents/gsd/generated/workflows/discuss-phase.md` (generated upstream text, unchanged), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win).
 
 ## Kit overlay (GSDF-10, GSDF-11)
 

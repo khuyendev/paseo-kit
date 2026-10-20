@@ -8,7 +8,9 @@ import { runShell } from "./shell.mjs";
 import { errText } from "../lib/cli.mjs";
 
 export const MAX_ITEMS_PER_CALL = 4096;
-export const AGENT_OPTIONS = Object.freeze(["label", "phase", "schema", "agentType", "role", "model", "effort", "isolation", "readOnly", "cwd", "keep", "session"]);
+// FLOW-04 options plus `detail` and `timeoutS`, which the GSD scripts need (null reasons never retried, worktree
+// transfers and the fixer/debug deadlines: GSDF-01/45/42/50/67); neither is part of the cache key.
+export const AGENT_OPTIONS = Object.freeze(["label", "phase", "schema", "agentType", "role", "model", "effort", "isolation", "readOnly", "cwd", "keep", "session", "detail", "timeoutS"]);
 const SHELL_OPTIONS = new Set(["cwd", "input", "timeoutS", "tailChars"]);
 // Fixed by a session's first call (FLOW-47); model and effort may change.
 const SESSION_FIXED = ["agentType", "roleHash", "role", "readOnly", "cwd", "isolation", "provider"];
@@ -43,13 +45,15 @@ function checkAgentOptions(opts) {
   for (const k of ["label", "phase", "agentType", "role", "model", "effort", "cwd"]) {
     if (opts[k] !== undefined && typeof opts[k] !== "string") throw new Error(`agent(): ${k} must be a string`);
   }
+  if (opts.detail !== undefined && typeof opts.detail !== "boolean") throw new Error("agent(): detail must be a boolean");
+  if (opts.timeoutS !== undefined && !(Number.isFinite(opts.timeoutS) && opts.timeoutS > 0)) throw new Error("agent(): timeoutS must be a number > 0");
 }
 
 const fmtCost = (usd) => (typeof usd === "number" ? String(Math.round(usd * 10000) / 10000) : "?");
 const shellText = (cmd) => (Array.isArray(cmd) ? cmd.map(String).join(" ") : String(cmd));
 
 /**
- * o = {source, scriptPath, args, runId, root, env, limits: {maxConcurrent, maxAgents, budgetTotal, shellTimeoutS},
+ * o = {source, scriptPath, args, runId, attemptRunId (the script global `runId`: the first run of a resume chain), root, env, limits: {maxConcurrent, maxAgents, budgetTotal, shellTimeoutS},
  *      journalPath, cache, out, resolveChild(ref) -> {source, scriptPath}, extraSpent() -> tokens,
  *      host: {identify({prompt, opts}), admit(spec), adopt(entry, spec), runner(spec)}}
  * host.identify is synchronous (occurrence numbers are assigned at call time) and returns
@@ -103,6 +107,15 @@ export async function runWorkflow(o) {
     const occ = state.keyCount.get(key) ?? 0;
     state.keyCount.set(key, occ + 1);
     const wrap = (value) => (opts.schema ? { kind: "json", value: JSON.stringify(value) } : { kind: "text", value: String(value) });
+    // detail: true resolves {result, reason, agentId, worktree, durationS} instead of the bare result (null included).
+    const reply = (r) => {
+      if (opts.detail === true) {
+        const ok = r.status === "ok" || r.status === "cached";
+        const worktree = r.worktreePath ?? r.worktree?.path ?? null;
+        return { kind: "json", value: JSON.stringify({ result: ok ? r.result : null, reason: ok ? null : (r.reason ?? "unknown"), agentId: r.agentId ?? null, worktree, durationS: r.durationS ?? 0 }) };
+      }
+      return r.status === "ok" || r.status === "cached" ? wrap(r.result) : null;
+    };
     const base = () => ({ n: ++state.seq, key, occ, label, phase, ...(opts.session !== undefined ? { session: opts.session } : {}) });
     const spec = (n) => ({ n, runId: o.runId, workflowName: meta.name, label, phase, prompt, opts, identity });
 
@@ -113,13 +126,14 @@ export async function runWorkflow(o) {
       journal({ ...b, agentId: hit.agentId ?? null, model: hit.model ?? null, status: "cached", reason: null, result: hit.result, tokens: 0, usage: null, duration_s: 0, ...(hit.worktree ? { worktree: hit.worktree } : {}) });
       out(`agent cached #${b.n} ${label}`);
       if (opts.session !== undefined && hit.agentId) await host.adopt(hit, spec(b.n));
-      return wrap(hit.result);
+      return reply({ ...hit, status: "cached", durationS: 0 });
     }
     checkBudget();
     checkCap();
     if (identity.error) {
-      finish(base(), { status: "null", reason: identity.error, tokens: 0, durationS: 0 });
-      return null;
+      const r = { status: "null", reason: identity.error, tokens: 0, durationS: 0 };
+      finish(base(), r);
+      return reply(r);
     }
     await state.sem.acquire();
     let r;
@@ -154,7 +168,7 @@ export async function runWorkflow(o) {
       state.sem.release();
     }
     finish(b, r);
-    return r.status === "ok" ? wrap(r.result) : null;
+    return reply(r);
   }
 
   async function callShell(cmd, opts) {
@@ -185,6 +199,7 @@ export async function runWorkflow(o) {
     const titles = new Set((meta.phases ?? []).map((p) => p.title));
     let currentPhase;
     const bridge = {
+      runId: o.attemptRunId ?? o.runId,
       argsJson: argsValue === undefined ? undefined : JSON.stringify(argsValue),
       log: (m) => out(`log ${m}`),
       warn: (m) => out(`log warning: ${m}`),

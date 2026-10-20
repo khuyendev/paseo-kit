@@ -5,7 +5,7 @@ description: Pauses GSD work with a handoff file and resumes from it later. Use 
 
 # gsd-pause
 
-Method text: follow `.agents/gsd/workflows/pause-work.md` to pause and `.agents/gsd/workflows/resume-project.md` to resume (generated upstream text, unchanged), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win).
+Method text: follow `.agents/gsd/generated/workflows/pause-work.md` to pause and `.agents/gsd/generated/workflows/resume-project.md` to resume (generated upstream text, unchanged), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win).
 
 ## Kit overlay (GSDF-60)
 

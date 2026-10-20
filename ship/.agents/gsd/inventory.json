@@ -46,7 +46,8 @@
       "description": "Researches how to implement one GSD phase and writes its RESEARCH.md.",
       "include": [
         ".agents/gsd/overlays/kit-core.md",
-        ".agents/gsd/overlays/gsd-phase-researcher.md"
+        ".agents/gsd/overlays/gsd-phase-researcher.md",
+        ".agents/workflows/overlays/gsd-phase-researcher.md"
       ]
     },
     {
@@ -92,7 +93,8 @@
       "description": "Investigates one failure with the scientific method inside a .planning/debug session file.",
       "include": [
         ".agents/gsd/overlays/kit-core.md",
-        ".agents/gsd/overlays/gsd-debugger.md"
+        ".agents/gsd/overlays/gsd-debugger.md",
+        ".agents/workflows/overlays/gsd-debugger.md"
       ]
     },
     {
@@ -152,7 +154,8 @@
       "description": "Drafts the project roadmap: phases mapping every v1 requirement exactly once with success criteria.",
       "include": [
         ".agents/gsd/overlays/kit-core.md",
-        ".agents/gsd/overlays/gsd-roadmapper.md"
+        ".agents/gsd/overlays/gsd-roadmapper.md",
+        ".agents/workflows/overlays/gsd-roadmapper.md"
       ]
     },
     {
@@ -621,6 +624,27 @@
     },
     {
       "installed": ".agents/gsd/NOTICE.md",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/workflows/overlays/gsd-debugger.md",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/workflows/overlays/gsd-phase-researcher.md",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/workflows/overlays/gsd-roadmapper.md",
       "kind": "reference",
       "source": "kit-authored",
       "transformations": [],

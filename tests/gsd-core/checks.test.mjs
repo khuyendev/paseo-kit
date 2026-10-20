@@ -231,6 +231,7 @@ test("GSDC-27 handoff: tracer alone first in per-wave mode; tracer with a depend
   assert.deepEqual(t.owns, ["Path:src/t.js", "Path:.planning/phases/01-core/01-01-SUMMARY.md"]);
   assert.deepEqual([t.key, t.tracer, t.role, t.model, t.effort, t.summary], ["plan-01-01", true, "executor", "pro", "high", ".planning/phases/01-core/01-01-SUMMARY.md"]);
   assert.equal(t.planHash.length, 12);
+  assert.deepEqual([t.plan, t.planPath], ["01-01", ".planning/phases/01-core/01-01-PLAN.md"]);
   assert.deepEqual(t.verify[0], { task: 1, kind: "cmd", command: "cmd: node src/t.js", target: "node src/t.js" });
   const batch = project({ files, overlay: { gsd: { execution_mode: "batch" } } });
   assert.deepEqual((await gsd(batch, ["handoff", "1"])).json.waves.map((w) => w.tasks), [["01-01", "01-02", "01-03"], ["01-04"]]);

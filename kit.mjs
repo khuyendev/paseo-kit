@@ -7,6 +7,7 @@ const USAGE = [
   "usage: node kit.mjs install|update|status <project> [--force] [--enable-plugin]",
   "       node kit.mjs pull <project> [<part>...] [--force] [--kit DIR]",
   "       node kit.mjs machine check | apply [--no-reload] [--enable-paseo-plugins] [--link-user-skills] [--unlink-user-skills] | export",
+  "       node kit.mjs help",
 ];
 const PROJECT_VERBS = new Set(["install", "update", "status", "pull"]);
 
@@ -15,6 +16,13 @@ export async function main(argv, io = {}) {
   const err = io.err ?? ((line) => process.stderr.write(`${line}\n`));
   const env = io.env ?? process.env;
   const [verb, ...rest] = argv;
+  if (verb === "help" || verb === "--help") {
+    // INST-28: verbs, requirements, ownership, --force limits, upgrade and MCP removal; then the machine verbs.
+    const { HELP } = await import("./kit/install/help.mjs");
+    const { USAGE: MACHINE_USAGE } = await import("./kit/machine/index.mjs");
+    for (const line of [...HELP, "", MACHINE_USAGE]) out(line);
+    return 0;
+  }
   let modulePath, args;
   if (PROJECT_VERBS.has(verb)) [modulePath, args] = ["./kit/install/index.mjs", argv];
   else if (verb === "machine") [modulePath, args] = ["./kit/machine/index.mjs", rest];

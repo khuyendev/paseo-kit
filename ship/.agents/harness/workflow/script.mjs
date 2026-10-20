@@ -108,6 +108,7 @@ const __h = globalThis.__host;
 delete globalThis.__host;
 const __msg = (e) => (e && e.message) || String(e);
 globalThis.args = __h.argsJson === undefined ? undefined : JSON.parse(__h.argsJson);
+globalThis.runId = __h.runId;
 Math.random = () => { throw new Error("Math.random() is not available in workflow scripts (it would break resume); vary prompts by index instead"); };
 {
   const RealDate = Date;

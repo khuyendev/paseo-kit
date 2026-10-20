@@ -37,9 +37,7 @@ test("HOOK-24 each io guard reminder kind restates one AGENTS.md File I/O rule",
   assert.deepEqual(new Set(KIND_RULE.map(([kind]) => kind)), new Set(Object.keys(MSG)));
 });
 
-// TODO(integration): the shipped block lacks rule 1 (Grep for content, Glob for names) and phrases rule 5 differently;
-// requested from code-install (ship/blocks/AGENTS.md). Remove `todo` once the block carries the five rules.
-test("HOOK-24 a fresh install carries the five File I/O rules once and an update does not duplicate them", { todo: "ship/blocks/AGENTS.md rule wording pending (integration request)" }, async () => {
+test("HOOK-24 a fresh install carries the five File I/O rules once and an update does not duplicate them", async () => {
   const project = makeTempProject();
   const env = testEnv();
   const io = { env, out: () => {}, err: () => {} };

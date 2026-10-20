@@ -176,7 +176,13 @@ test("CONF-07 adapter and gsd sections are closed; .planning/config.json has no 
   failsWith(withOverlay({ gsd: { unknown_y: 1 } }), "invalid harness config gsd.unknown_y: unknown key");
   const p = project(undefined, { files: { ".planning/config.json": "{ garbage" } });
   assert.deepEqual(loadConfig(p.root), loadKitConfig());
-  const offenders = shipFiles().filter((f) => fs.readFileSync(f, "utf8").includes(".planning/config.json"));
+  // Upstream GSD text carried unchanged (D-111, GSDC-45/47) mentions the file; kit text and code must not.
+  const upstream = (f) => {
+    const rel = path.relative(SHIP_DIR, f).split(path.sep).join("/");
+    return rel.startsWith(".agents/gsd/upstream/") || rel.startsWith(".agents/gsd/generated/")
+      || (/^\.agents\/agents\/gsd-[^/]+\.md$/.test(rel) && rel !== ".agents/agents/gsd-skeleton-reviewer.md");
+  };
+  const offenders = shipFiles().filter((f) => !upstream(f) && fs.readFileSync(f, "utf8").includes(".planning/config.json"));
   assert.deepEqual(offenders, []);
 });
 
@@ -315,7 +321,8 @@ test("CONF-12 lint: no other shipped module opens the defaults or the overlay by
   const own = path.join(SHIP_DIR, ".agents", "harness", "config.mjs");
   const offenders = shipFiles()
     .filter((f) => /\.(mjs|js|ts)$/.test(f) && f !== own)
-    .filter((f) => /["'`][^"'`\n]*harness\.(defaults|config)\.json/.test(fs.readFileSync(f, "utf8")));
+    // FTOL-05 requires the defaults file in the backend's trusted set (hashed, never loaded as config).
+    .filter((f) => /["'`][^"'`\n]*harness\.(defaults|config)\.json/.test(fs.readFileSync(f, "utf8").replace(/TRUSTED_FIXED = [^\]]*\]/g, "")));
   assert.deepEqual(offenders, []);
 });
 

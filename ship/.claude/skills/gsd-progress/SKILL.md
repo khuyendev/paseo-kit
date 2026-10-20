@@ -5,7 +5,7 @@ description: Shows where a GSD project stands (position, recent summaries, decis
 
 # gsd-progress
 
-Method text: follow `.agents/gsd/workflows/progress.md` and, for `next`, `.agents/gsd/workflows/next.md` (generated upstream text, unchanged), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win).
+Method text: follow `.agents/gsd/generated/workflows/progress.md` and, for `next`, `.agents/gsd/generated/workflows/next.md` (generated upstream text, unchanged), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win).
 
 ## Kit overlay (GSDF-59)
 

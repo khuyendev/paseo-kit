@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import {
-  claudeCli, claudeVersion, homeDir, nodeRuntimeReady, paseoConfigFile, paseoHome, versionAtLeast,
+  claudeCli, claudeVersion, homeDir, NODE_REQUIREMENT, NODE_RUNTIME, nodeRuntimeProblem, paseoConfigFile, paseoHome, versionAtLeast,
 } from "../../ship/.agents/harness/platform.mjs";
 import { errText, failedLine, quoteName } from "../../ship/.agents/harness/lib/cli.mjs";
 import { fileDigest, sha256, textDigest } from "../../ship/.agents/harness/lib/hash.mjs";
@@ -23,11 +23,21 @@ test("PHCL-34 version gate and Node gate", () => {
   assert.equal(versionAtLeast("2.1.295 (Claude Code)", "2.1.296"), false);
   assert.equal(versionAtLeast("3.0.0", "2.1.296"), true);
   assert.equal(versionAtLeast("none", "2.1.296"), null);
-  assert.equal(nodeRuntimeReady("24.1.0", true), true);
-  assert.equal(nodeRuntimeReady("20.17.0", true), true);
-  assert.equal(nodeRuntimeReady("20.16.0", true), false);
-  assert.equal(nodeRuntimeReady("24.1.0", false), false);
-  assert.equal(nodeRuntimeReady(), true);
+  assert.equal(nodeRuntimeProblem("24.1.0"), null);
+  assert.equal(nodeRuntimeProblem(), null);
+});
+
+test("INST-23 Node gate boundaries are driven by NODE_RUNTIME", () => {
+  const { minVersion, capabilities } = NODE_RUNTIME;
+  assert.equal(nodeRuntimeProblem(minVersion), null);
+  const [maj, min, patch] = minVersion.split(".").map(Number);
+  const lower = patch > 0 ? `${maj}.${min}.${patch - 1}` : `${maj}.${min - 1}.99`;
+  assert.equal(nodeRuntimeProblem(lower), `node ${lower} is older than ${minVersion}`);
+  for (const cap of capabilities) {
+    const without = { minVersion, capabilities: capabilities.map((c) => (c === cap ? { ...c, probe: () => false } : c)) };
+    assert.equal(nodeRuntimeProblem(minVersion, without), `node ${minVersion} lacks ${cap.name}`);
+  }
+  assert.ok(NODE_REQUIREMENT.includes(capabilities[0].name));
 });
 
 test("PHCL-34 Claude CLI lookup: CLAUDE_CLI, then ~/.local/bin, then PATH; .mjs through node", () => {

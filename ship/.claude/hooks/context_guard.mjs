@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { contextOutput, DAY_MS, isScript, loadHookConfig, pruneOlderThan, readTailText, runHook, sha256 } from "./lib/hook_common.mjs";
+import { contextOutput, DAY_MS, isScript, loadHookConfig, pruneOlderThan, readJsonFile, readTailText, runHook, sha256 } from "./lib/hook_common.mjs";
 
 const STATE_PREFIX = "ph-context-guard-";
 
@@ -56,7 +56,7 @@ export function reminderText({ pct, used, window }, cfg) {
 
 function readState(dir) {
   try {
-    const s = JSON.parse(fs.readFileSync(path.join(dir, "state.json"), "utf8"));
+    const s = readJsonFile(path.join(dir, "state.json"));
     if (Number.isInteger(s.band) && Number.isInteger(s.epoch)) return s;
   } catch {}
   return { band: -1, epoch: 0 };

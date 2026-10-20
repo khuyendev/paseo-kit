@@ -101,3 +101,12 @@ test("PHCL-32 not a git repo exits 1; none prints no harness worktrees; a live a
   assertLine(d, /^note daemon not reachable \(Cannot connect to daemon at fake: refused\): worktrees of spawned agents are kept$/);
   assertLine(d, /^owner unknown {10}harness\/rev-/);
 });
+
+test("PHCL-32 a live agent of another orchestrator keeps its worktree; an archived one does not", async () => {
+  const s = setup({ git: true });
+  s.project.git("worktree", "add", path.join(wtDir(s), "rev-20261020-101010_abcd"), "-b", "harness/rev-20261020-101010_abcd");
+  const other = s.fake.addAgent({ parent: "0ther000-1111-4222-8333-444455556666", title: "rev", labels: { "harness.name": "rev" } });
+  assertLine(await s.ph(["worktrees", "--prune"]), /^in use {17}harness\/rev-/);
+  s.fake.agents.get(other.id ?? other).archivedAt = "2026-10-20T00:00:00Z";
+  assertLine(await s.ph(["worktrees", "--prune"]), "worktrees: 1 listed, 1 removed");
+});

@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { readJson } from "../lib/io.mjs";
 import { HEX64 } from "./tools.mjs";
 
 export const PRIVATE = Object.freeze({
@@ -60,7 +61,7 @@ export function readPrivate(file, fallback) {
     const stat = fs.lstatSync(file);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > PRIVATE.maxFileBytes) throw new Error(`unsafe private state file ${path.basename(file)}`);
     if (unsafeOwner(stat)) throw new Error(`unsafe private state file permissions ${path.basename(file)}`);
-    return JSON.parse(fs.readFileSync(file, "utf8"));
+    return readJson(file);
   } catch (e) {
     if (e.code === "ENOENT" && fallback !== undefined) return fallback;
     throw e;

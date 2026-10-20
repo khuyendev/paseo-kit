@@ -5,7 +5,7 @@ description: Executes a planned GSD phase wave by wave through the gsd-execute w
 
 # gsd-execute
 
-Method text: follow `.agents/gsd/workflows/execute-phase.md` and, for each plan, `.agents/gsd/workflows/execute-plan.md` (generated upstream text, unchanged; the executor's deviation rules reach it through its role include), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win).
+Method text: the orchestration of upstream `execute-phase` is the workflow script below; for each plan follow `.agents/gsd/generated/workflows/execute-plan.md` (generated upstream text, unchanged; the executor's deviation rules, `.agents/gsd/generated/executor-rules.md`, reach it through its role include), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win).
 
 ## Kit overlay
 

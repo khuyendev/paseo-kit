@@ -65,7 +65,7 @@ export function makeWorld(opts = {}) {
       const errors = world.outlineErrors?.shift?.() ?? [];
       if (!text.includes("## OUTLINE COMPLETE")) errors.push("no outline or marker");
       const crossPlan = (m?.plans ?? []).flatMap((p) => (p.consumes ?? []).map((c) => ({ plan: p.id, from: c.plan, symbol: c.symbol })));
-      return { code: errors.length ? 1 : 0, json: { valid: !errors.length, errors, warnings: [], crossPlan, needsWiring: crossPlan.length > 0, rows: rows() } };
+      return { code: errors.length ? 1 : 0, json: { passed: !errors.length, errors, warnings: [], crossPlan, needsWiring: crossPlan.length > 0, rows: rows() } };
     },
     supersede: () => ({ moved: [] }),
     "verify plan-structure": ([file]) => {
@@ -93,8 +93,8 @@ export function makeWorld(opts = {}) {
       const k = argv[argv.indexOf("--kind") + 1];
       const req = JSON.parse(input);
       const cur = attempts[k];
-      if (cur && cur.runId === req.runId && cur.inputDigest === req.inputDigest) Object.assign(cur, req.done ? { done: true, result: req.result } : {});
-      else attempts[k] = { key: digest(`${k}|${req.inputDigest}|${req.runId}`), runId: req.runId, inputDigest: req.inputDigest, before: req.before, done: Boolean(req.done), result: req.result ?? null, abandoned: cur ? cur.key : null };
+      if (cur && cur.runId === req.runId && cur.inputDigest === req.inputDigest) Object.assign(cur, { abandonedNow: null }, req.done ? { done: true, result: req.result } : {});
+      else attempts[k] = { key: digest(`${k}|${req.inputDigest}|${req.runId}`), runId: req.runId, inputDigest: req.inputDigest, before: req.before, done: Boolean(req.done), result: req.result ?? null, abandoned: cur && !cur.done ? [...cur.abandoned, { key: cur.key }] : [], abandonedNow: cur && !cur.done ? cur.key : null };
       ev(`attempt ${k}${req.done ? " done" : ""}`);
       return attempts[k];
     },

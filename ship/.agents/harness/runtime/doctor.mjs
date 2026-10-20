@@ -7,8 +7,10 @@ import { OVERLAY_REL } from "../config.mjs";
 import { TESTED_PASEO_CLI, clampThinking, filePluginState } from "../paseo-client/index.mjs";
 import { errText } from "../lib/cli.mjs";
 import { readJsonIf } from "../lib/io.mjs";
+import { policyLines } from "../lib/provider-policy.mjs";
 import { id8 } from "../lib/paths.mjs";
-import { FILE_PLUGIN_ID, MIN_CLAUDE_VERSION, NODE_REQUIREMENT, claudeVersion, nodeRuntimeReady, paseoConfigFile, versionAtLeast } from "../platform.mjs";
+import { FILE_PLUGIN_ID, MIN_CLAUDE_VERSION, NODE_REQUIREMENT, claudeVersion, nodeRuntimeProblem, paseoConfigFile, versionAtLeast } from "../platform.mjs";
+import { runGsd } from "../gsd/commands.mjs";
 import { AGENTS_DIR, listAgentTypes } from "./agents.mjs";
 import { resolveModel } from "./models.mjs";
 
@@ -62,52 +64,6 @@ function modLines(ctx, line, versionText) {
   else line("note", "file mod inactive or unsupported for workers: native Read/Edit/Write fallback applies only where owner restrictions permit it");
 }
 
-// The machine policy (MACH-04/05) as seen from a project, with the line texts of `kit machine check`.
-// TODO(integration): use the shared lib/provider-policy.mjs once code-foundation hosts it (requested by code-machine).
-const isList = (v) => v === undefined || v === null || Array.isArray(v);
-const listOf = (v) => (Array.isArray(v) ? v : []);
-
-export function policyLines(live, cfg) {
-  const providers = live?.agents?.providers ?? {};
-  const lines = [];
-  const required = cfg.agent_provider_disallowed_tools;
-  for (const [main, worker] of Object.entries(cfg.agent_providers)) {
-    const w = providers[worker];
-    if (!w) {
-      lines.push(["problem", `agent provider ${worker} (copy of ${main}) is missing; run kit.mjs machine apply`]);
-      continue;
-    }
-    if (!isList(w.disallowedTools)) {
-      lines.push(["problem", `agent provider ${worker}: disallowedTools is not a list; owner review needed in Paseo`]);
-      continue;
-    }
-    const have = listOf(w.disallowedTools);
-    const lacks = required.filter((t) => !have.includes(t));
-    const envDiff = Object.entries(cfg.agent_provider_env).filter(([k, v]) => w.env?.[k] !== v);
-    if (lacks.length) lines.push(["problem", `agent provider ${worker} does not disallow ${lacks.join(", ")}; run kit.mjs machine apply`]);
-    if (envDiff.length) lines.push(["problem", `agent provider ${worker} env lacks or differs: ${envDiff.map(([k, v]) => `${k}=${v}`).join(", ")}; run kit.mjs machine apply`]);
-    if (!lacks.length && !envDiff.length) {
-      const extra = new Set(have.filter((t) => !required.includes(t))).size;
-      lines.push(["ok", `agent provider ${worker}: ${required.length} required rule(s) and the kit env present; ${extra} owner extra rule(s) preserved`]);
-    }
-  }
-  const mainList = cfg.main_provider_disallowed_tools;
-  if (!mainList.length) return lines;
-  // Whether SendMessage is denied on a main provider never yields a problem (INV-06).
-  for (const main of Object.keys(cfg.agent_providers)) {
-    const m = providers[main];
-    if (!m) lines.push(["problem", `main provider ${main} is missing; run kit.mjs machine apply`]);
-    else if (!isList(m.disallowedTools)) lines.push(["problem", `main provider ${main}: disallowedTools is not a list; owner review needed in Paseo`]);
-    else {
-      const lacks = mainList.filter((t) => !listOf(m.disallowedTools).includes(t));
-      lines.push(lacks.length
-        ? ["problem", `main provider ${main} lacks ${lacks.join(", ")} (main sessions orchestrate through Paseo, not native subagents); run kit.mjs machine apply`]
-        : ["ok", `main provider ${main}: ${mainList.join(", ")} disallowed (orchestration goes through Paseo)`]);
-    }
-  }
-  return lines;
-}
-
 function paseoPolicyLines(ctx, line) {
   const file = paseoConfigFile(ctx.env);
   let live;
@@ -121,7 +77,7 @@ function paseoPolicyLines(ctx, line) {
     line("problem", `paseo config ${file} not found; run kit.mjs machine apply`);
     return;
   }
-  for (const [kind, text] of policyLines(live, ctx.cfg)) line(kind, text);
+  for (const { level, text } of policyLines(live, ctx.cfg)) line(level, text);
 }
 
 // Every repo-relative file the adapter names, with the key that names it.
@@ -146,13 +102,25 @@ function adapterLines(ctx, line) {
   if (!missing.length) line("ok", `adapter and gsd sections present; ${files.length} named file(s) exist`);
 }
 
+// GSDC-47: the vendored GSD snapshot and the generated method text are checked on every doctor run.
+async function gsdUpstreamLines(ctx, line) {
+  const lines = [];
+  const collect = (l) => lines.push(String(l));
+  const code = await runGsd(["upstream", "check"], { env: ctx.env, root: ctx.root, out: collect, err: collect, write: () => {}, errWrite: () => {} });
+  const summary = lines.find((l) => l.startsWith("check:")) ?? `check exit ${code}`;
+  if (code === 0) return line("ok", `gsd upstream ${summary}`);
+  for (const l of lines.filter((x) => x.startsWith("problem:"))) line("problem", `gsd upstream ${l.slice("problem:".length).trim()}`);
+  line("problem", `gsd upstream ${summary}`);
+}
+
 export async function runDoctor(ctx, { freemem = os.freemem, claudeVersionText = () => claudeVersion(ctx.env) } = {}) {
   let problems = 0;
   const line = (kind, text) => {
     if (kind === "problem") problems++;
     ctx.out(`${kind} ${text}`);
   };
-  line(nodeRuntimeReady() ? "ok" : "problem", `node ${process.versions.node} (needs ${NODE_REQUIREMENT})`);
+  const nodeProblem = nodeRuntimeProblem();
+  line(nodeProblem ? "problem" : "ok", `${nodeProblem ?? `node ${process.versions.node}`} (needs ${NODE_REQUIREMENT})`);
   const caller = ctx.env.PASEO_AGENT_ID?.trim();
   if (caller) line("ok", `PASEO_AGENT_ID ${caller}`);
   else line("problem", "PASEO_AGENT_ID is not set: run ph from an agent inside Paseo, so every agent is created as its subagent");
@@ -170,6 +138,7 @@ export async function runDoctor(ctx, { freemem = os.freemem, claudeVersionText =
   modLines(ctx, line, claudeVersionText());
   paseoPolicyLines(ctx, line);
   adapterLines(ctx, line);
+  await gsdUpstreamLines(ctx, line);
   const types = listAgentTypes(ctx.root);
   if (types.length) line("ok", `agent types in ${AGENTS_DIR}/ (${types.length}): ${types.join(", ")}`);
   else line("note", `no agent types in ${AGENTS_DIR}/`);

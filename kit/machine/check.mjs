@@ -1,5 +1,5 @@
 // `machine check`: read-only readiness lines `ok|problem|note <text>`; its only external call is `claude --version` (MACH-02, MACH-03).
-import { claudeVersion, MIN_CLAUDE_VERSION, NODE_REQUIREMENT, nodeRuntimeReady, versionAtLeast } from "../../ship/.agents/harness/platform.mjs";
+import { claudeVersion, MIN_CLAUDE_VERSION, NODE_REQUIREMENT, nodeRuntimeProblem, versionAtLeast } from "../../ship/.agents/harness/platform.mjs";
 import { claudeConfigDir, loadInputs, readLive } from "./context.mjs";
 import { linkDirs, linkLines, linkStates, readRecord } from "./links.mjs";
 import { kitPlugins, pluginLines } from "./plugins.mjs";
@@ -13,7 +13,10 @@ export function claudeGate(ctx, tpl) {
   return { ok, text: `Claude Code ${shown}${ok ? "" : " (unavailable or too old)"}; the harness-files mod needs >= ${MIN_CLAUDE_VERSION}` };
 }
 
-export const nodeGate = () => ({ ok: nodeRuntimeReady(), text: `node ${process.versions.node} (needs ${NODE_REQUIREMENT})` });
+export const nodeGate = () => {
+  const problem = nodeRuntimeProblem();
+  return { ok: problem === null, text: problem ? `${problem} (needs ${NODE_REQUIREMENT})` : `node ${process.versions.node} (needs ${NODE_REQUIREMENT})` };
+};
 
 // Prints the check and returns its exit code: 0, or 2 when any `problem`. Throws Fail (exit 1) when an input is unreadable.
 export function runCheck(ctx, { enablePlugins = false } = {}) {

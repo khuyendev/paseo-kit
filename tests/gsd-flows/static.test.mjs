@@ -69,8 +69,11 @@ test("GSDF-04 scripts and skills name only roster agents; a shipped agent dir ma
     assert.ok(ROSTER.includes(m[1]), `${f} names ${m[1]}`);
   }
   const agents = path.join(SHIP_DIR, ".agents", "agents");
-  // TODO(integration): the generated roster is written by code-gsd-core; compare once it exists.
-  if (fs.existsSync(agents)) for (const f of fs.readdirSync(agents).filter((x) => x.endsWith(".md"))) assert.ok(ROSTER.includes(f.replace(/\.md$/, "")), `unexpected agent ${f}`);
+  const shipped = fs.readdirSync(agents).filter((x) => x.endsWith(".md")).map((f) => f.replace(/\.md$/, "")).sort();
+  assert.deepEqual(shipped, [...ROSTER].sort());
+  for (const role of ["gsd-debugger", "gsd-phase-researcher", "gsd-roadmapper"]) {
+    assert.match(read(path.join(agents, `${role}.md`)), new RegExp(`^  - \.agents/workflows/overlays/${role}\.md$`, "m"), `${role} includes its flow overlay`);
+  }
   for (const f of kitFiles()) assert.doesNotMatch(read(f), DENY, f);
 });
 

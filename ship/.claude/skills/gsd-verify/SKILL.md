@@ -5,7 +5,7 @@ description: Verifies an executed GSD phase with one fresh gsd-verifier, then ro
 
 # gsd-verify
 
-Method text: follow `.agents/gsd/workflows/verify-work.md` and, after completion, `.agents/gsd/workflows/transition.md` (generated upstream text, unchanged), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win).
+Method text: follow `.agents/gsd/generated/workflows/verify-work.md` and, after completion, `.agents/gsd/generated/workflows/transition.md` (generated upstream text, unchanged), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win).
 
 ## Kit overlay
 

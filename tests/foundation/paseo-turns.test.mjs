@@ -112,6 +112,9 @@ function pluginFixture({ copy, selection, registered, direct, workerConfigDir = 
   fs.mkdirSync(path.join(plugin, "hooks"), { recursive: true });
   if (copy !== "no-plugin-json") fs.writeFileSync(path.join(plugin, ".claude-plugin", "plugin.json"), "{}");
   if (copy !== "no-register") fs.writeFileSync(path.join(plugin, "hooks", "register.ts"), "");
+  fs.writeFileSync(path.join(plugin, "hooks", "hooks.json"), "{}");
+  fs.mkdirSync(path.join(plugin, "scripts"), { recursive: true });
+  if (copy !== "no-discover") fs.writeFileSync(path.join(plugin, "scripts", "discover.mjs"), "");
   const env = testEnv(direct ? { CLAUDE_CODE_PLUGIN_DIRS: plugin } : {});
   let configDir = env.CLAUDE_CONFIG_DIR;
   if (workerConfigDir) {
@@ -138,7 +141,7 @@ const snapshotTree = (dir) => fs.readdirSync(dir, { recursive: true }).sort().ma
 });
 
 test("PCLI-09 mod directory only for a copied, selected, not natively loaded mod or a direct entry", () => {
-  for (const copy of ["copied", "no-plugin-json", "no-register"]) {
+  for (const copy of ["copied", "no-plugin-json", "no-register", "no-discover"]) {
     for (const selection of [undefined, false, true]) {
       for (const registered of [false, true]) {
         for (const direct of [false, true]) {

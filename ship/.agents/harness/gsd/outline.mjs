@@ -202,7 +202,8 @@ function summaryOwns(forms, summaryRel) {
   return `${form.prefix}${summaryRel}`;
 }
 
-export async function handoff(g, phase, { subset, prefix }) {
+// noTracerSplit: gap handoffs keep a wave whole (GSDF-30: gap closure is one execution wave).
+export async function handoff(g, phase, { subset, prefix, noTracerSplit = false }) {
   if (prefix !== undefined && !/^[a-z0-9-]+$/.test(prefix)) throw fail("--prefix takes lower-case letters, digits and dashes");
   const w = waveCheck(g, phase, subset);
   const { problems } = await ownershipProblems(g, w.plans);
@@ -221,7 +222,7 @@ export async function handoff(g, phase, { subset, prefix }) {
   for (const wave of w.waves) {
     const plans = wave.plans.map((id) => w.plans.find((p) => p.id === id));
     const tracers = plans.filter((p) => isTracer(p, mOf(p.id)));
-    if (mode === "per-wave" && tracers.length && tracers.length < plans.length) {
+    if (!noTracerSplit && mode === "per-wave" && tracers.length && tracers.length < plans.length) {
       segments.push({ planWave: wave.wave, plans: tracers, tracer: true });
       segments.push({ planWave: wave.wave, plans: plans.filter((p) => !tracers.includes(p)), tracer: false });
     } else segments.push({ planWave: wave.wave, plans, tracer: tracers.length > 0 });
@@ -230,7 +231,7 @@ export async function handoff(g, phase, { subset, prefix }) {
   const reqs = loadRequirements(g.codeRoot);
   const role = g.cfg.gsd.roles.executor ?? {};
   const dir = path.join(phase.dir, "handoff");
-  const own = new RegExp(`^${prefix ? `${prefix}-` : ""}w\d+\.args\.json$`);
+  const own = new RegExp(`^${prefix ? `${prefix}-` : ""}w\\d+\\.args\\.json$`);
   if (fs.existsSync(dir)) for (const name of fs.readdirSync(dir)) if (own.test(name)) fs.rmSync(path.join(dir, name));
   const out = [];
   segments.forEach((seg, i) => {
@@ -240,7 +241,8 @@ export async function handoff(g, phase, { subset, prefix }) {
       const summary = rel(g.codeRoot, summaryPath(phase, p.id));
       return {
         key: `plan-${p.id}`,
-        plan: rel(g.codeRoot, planPath(phase, p.id)),
+        plan: p.id,
+        planPath: rel(g.codeRoot, planPath(phase, p.id)),
         planHash: textDigest(p.text).slice(0, 12),
         summary,
         owns: [...p.owns, summaryOwns(g.cfg.adapter.ownership.owns_forms, summary)],

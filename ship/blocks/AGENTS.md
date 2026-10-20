@@ -1,6 +1,7 @@
 ## File I/O
 
-- Batch reads and edits with the available file tools: combine independent lookups, read the relevant sections of all known targets in one call, prefer batch edits for related changes and whole-file writes for new files.
+- Use Grep for content and Glob for file names; combine independent lookups in one call.
+- Batch reads and edits with the available file tools: read the relevant sections of all known targets in one call, prefer batch edits for related changes and whole-file writes for new files.
 - Do not re-read a file solely to verify a successful write; run the relevant checks instead.
 - Correctness takes priority over fewer tool calls.
 - Write long documents in parts: create the file with its first part, then append; a single long response hits the output cap and stalls.

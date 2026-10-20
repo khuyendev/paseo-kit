@@ -166,6 +166,17 @@ export class Session {
     return (res?.entries ?? []).map((e) => e.agent).filter((a) => a && !a.archivedAt && a.labels?.[PARENT_LABEL] === parentId);
   }
 
+  // Live agents carrying every given label, across orchestrators (PHCL-32 asks whether a named agent still exists).
+  async findAgents(labels = {}) {
+    const res = await this.client.fetchAgents({ filter: { labels } });
+    return (res?.entries ?? []).map((e) => e.agent).filter((a) => a && !a.archivedAt && Object.entries(labels).every(([k, v]) => a.labels?.[k] === v));
+  }
+
+  // Adds or replaces labels of an agent (FLOW-48 moves an adopted session agent's `harness.run` to the new run).
+  async setLabels(agentId, labels) {
+    await this.client.updateAgent(agentId, { labels });
+  }
+
   // PCLI-15: the caller's live subagents, then the leader's; no fallback outside these pools.
   async resolveTargets(refs) {
     if (!refs.length) throw new UsageError("name at least one agent (title, id or unique id prefix)");

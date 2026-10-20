@@ -1,30 +1,23 @@
 // Post-wave gate (GSDF-44, GSDF-51): adapter gates, build, tests and plan obligations, one gate-evidence file
 // per run (ADPT-17), failure attribution by owns then the adapter `attribute` hook; evidence validation.
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { loadConfig } from "../../harness/config.mjs";
 import { readJsonIf, writeJsonAtomic, writeTextAtomic } from "../../harness/lib/io.mjs";
 import { resolveInside, safeName, toSlash } from "../../harness/lib/paths.mjs";
-import { pidAlive, runArgv } from "../../harness/lib/proc.mjs";
+import { runArgv } from "../../harness/lib/proc.mjs";
+import { invokeHook } from "../../harness/adapter/hooks.mjs";
+import { withMutex } from "../../harness/adapter/mutex.mjs";
 import { head } from "./flow-git.mjs";
 import { contentHash, owned, ownsPath, ownsPrefixes } from "./flow-owns.mjs";
 
 const TIMEOUT_CODE = 124;
 const EXCERPT_LINES = 40;
 
-// ADPT-15: no shell; .mjs/.js through node; one JSON request on stdin, one JSON line back with v: 1.
-export async function runHook(root, cfg, script, request) {
-  const abs = path.resolve(root, script);
-  const argv = /\.(mjs|js)$/.test(abs) ? [process.execPath, abs] : [abs];
-  const r = await runArgv(argv, { cwd: root, input: JSON.stringify({ v: 1, codeRoot: root, ...request }), timeoutMs: cfg.adapter.hook_timeout_s * 1000 });
-  if (r.code !== 0 || r.timedOut) return { error: `hook ${script} ${r.timedOut ? "timed out" : `exited ${r.code}`}` };
-  try {
-    const res = JSON.parse(String(r.stdout).trim().split(/\r?\n/).pop());
-    return res?.v === 1 ? res : { error: `hook ${script} answered v ${res?.v}` };
-  } catch {
-    return { error: `hook ${script} printed no JSON line` };
-  }
+// ADPT-15 through the adapter's invoker (closed request and response shapes); a script fault is {error}.
+export async function runHook(root, cfg, script, { op, ...fields }) {
+  const r = await invokeHook(cfg, { codeRoot: root, script, op, ...fields });
+  return r.ok ? r.response : { error: r.reason };
 }
 
 // Split an obligation argument into argv without a shell (double and single quotes group words).
@@ -33,22 +26,6 @@ export function splitArgs(text) {
   const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
   for (let m; (m = re.exec(text)); ) out.push(m[1] ?? m[2] ?? m[3]);
   return out;
-}
-
-async function withMutex(name, fn) {
-  if (!name) return fn();
-  const lock = path.join(os.tmpdir(), `paseo-kit-mutex-${safeName(name)}.lock`);
-  for (;;) {
-    try {
-      fs.writeFileSync(lock, String(process.pid), { flag: "wx" });
-      break;
-    } catch {
-      const owner = Number(fs.existsSync(lock) ? fs.readFileSync(lock, "utf8") : 0);
-      if (!owner || !pidAlive(owner)) { fs.rmSync(lock, { force: true }); continue; }
-      await new Promise((r) => setTimeout(r, 1000));
-    }
-  }
-  try { return await fn(); } finally { fs.rmSync(lock, { force: true }); }
 }
 
 // Error lines before warnings (GSDF-51), bounded; the full log is linked from the evidence.
@@ -108,6 +85,7 @@ export async function gate(root, phaseDir, input) {
   const logDir = evidenceFile.replace(/\.json$/, ".logs");
   const steps = [];
   const notes = [];
+  // ADPT-10: the same machine-wide lock as every other adapter.mutex user.
   await withMutex(cfg.adapter.mutex, async () => {
     let gateRed = false;
     for (const g of cmds.gates ?? []) {
@@ -146,7 +124,7 @@ export async function gate(root, phaseDir, input) {
       if (targets.length && s.executed && (s.executed.count === 0 || targets.some((t) => !s.executed.targets.includes(t)))) { s.outcome = "failed"; s.text += `\nexecuted ${s.executed.count} of named targets ${targets.join(", ")}`; }
       steps.push(s);
     }
-  });
+  }, { log: (m) => notes.push(m) });
   const inputs = inputsOf(root, cfg, input.plans ?? [], prefixes);
   const evidence = { v: 1, waveId: input.waveId, at: new Date().toISOString(), inputs, steps: steps.map(({ text, ...s }) => s) };
   writeJsonAtomic(evidenceFile, evidence);

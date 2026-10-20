@@ -5,7 +5,7 @@ description: Investigates a failed or stuck GSD run read-only (git history, debu
 
 # gsd-forensics
 
-Method text: follow `.agents/gsd/workflows/forensics.md` (generated upstream text, unchanged), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win).
+Method text: follow `.agents/gsd/generated/workflows/forensics.md` (generated upstream text, unchanged), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win).
 
 ## Kit overlay (GSDF-63)
 

@@ -5,7 +5,7 @@ description: Maps an existing codebase into the 7 GSD docs of .planning/codebase
 
 # gsd-map-codebase
 
-Method text: follow `.agents/gsd/workflows/map-codebase.md` (the generated upstream GSD text, unchanged), then apply the common kit overlay `.agents/workflows/gsd-overlay.md` and the overlay below. The overlays win on conflict.
+Method text: follow `.agents/gsd/generated/workflows/map-codebase.md` (the generated upstream GSD text, unchanged), then apply the common kit overlay `.agents/workflows/gsd-overlay.md` and the overlay below. The overlays win on conflict.
 
 ## Kit overlay
 

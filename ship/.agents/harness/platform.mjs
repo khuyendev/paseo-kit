@@ -5,13 +5,21 @@ import os from "node:os";
 import path from "node:path";
 import { cmdWord } from "./lib/proc.mjs";
 
-export const NODE_REQUIREMENT = "Node 20.17+ with path.matchesGlob";
+// INST-23: the one Node gate. minVersion is the oldest Node the shipped runtime runs on; capabilities are the Node APIs
+// it uses beyond that version's baseline, each with a presence probe. The test-runner floor (tests/) is not a gate.
+export const NODE_RUNTIME = Object.freeze({
+  minVersion: "20.17.0",
+  capabilities: Object.freeze([{ name: "path.matchesGlob", probe: () => typeof path.matchesGlob === "function" }]),
+});
+export const NODE_REQUIREMENT = `Node ${NODE_RUNTIME.minVersion.replace(/\.0$/, "")}+ with ${NODE_RUNTIME.capabilities.map((c) => c.name).join(", ")}`;
 export const MIN_CLAUDE_VERSION = "2.1.296";
 export const FILE_PLUGIN_ID = "harness-files@paseo-harness-kit";
 
-export function nodeRuntimeReady(version = process.versions.node, hasMatchesGlob = typeof path.matchesGlob === "function") {
-  const [major, minor] = String(version).replace(/^v/, "").split(".").map(Number);
-  return (major > 20 || (major === 20 && minor >= 17)) && hasMatchesGlob;
+// null when this Node passes the gate, else the reason naming the version or the missing capability.
+export function nodeRuntimeProblem(version = process.versions.node, runtime = NODE_RUNTIME) {
+  if (!versionAtLeast(version, runtime.minVersion)) return `node ${version} is older than ${runtime.minVersion}`;
+  const missing = runtime.capabilities.find((c) => !c.probe());
+  return missing ? `node ${version} lacks ${missing.name}` : null;
 }
 
 export function homeDir(env = process.env) {

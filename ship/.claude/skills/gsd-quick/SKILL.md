@@ -5,7 +5,7 @@ description: Runs a small GSD task outside the phase plan - one plan of 1-3 task
 
 # gsd-quick
 
-Method text: follow `.agents/gsd/workflows/quick.md` (generated upstream text, unchanged), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win).
+Method text: follow `.agents/gsd/generated/workflows/quick.md` (generated upstream text, unchanged), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win).
 
 ## Kit overlay (GSDF-61)
 

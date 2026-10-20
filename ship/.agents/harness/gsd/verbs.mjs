@@ -1,13 +1,14 @@
 // The ported verb handlers: verb -> {options (parseArgs spec, null = raw argv), run(g, args, opts)}.
+import path from "node:path";
 import { textDigest } from "../lib/hash.mjs";
 import { done, fail, idList, none } from "./common.mjs";
 import { frontmatterGet, frontmatterValidate, historyDigest, initPayload, initProject, listArtifacts, researchPrompt, summaryExtract, supersede, verifyArtifacts, verifyKeyLinks, writeArtifact } from "./artifacts.mjs";
-import { debugCheckpoint, debugClose, debugCreate, debugList, debugStatus } from "./debug.mjs";
+import { debugBudget, debugCheckpoint, debugClose, debugCreate, debugList, debugStatus } from "./debug.mjs";
 import { commitVerb, evaluationScope, selectRevertCommits } from "./gitverbs.mjs";
 import { handoff, outlineCheck, outlineParseVerb, wavesVerb } from "./outline.mjs";
 import { checkOwns, coverage, decisionCoverage, failureDirections, planStructure, verifyCommandPaths } from "./plan-checks.mjs";
 import { findPhaseVerb, phaseAdd, phaseComplete, phaseInsert, phaseRemove, planIndex, requirementsVerb, roadmapVerb, uatPassed } from "./phases.mjs";
-import { normPlanId, planIds, readPlans, requirePhase } from "./planning.mjs";
+import { normPlanId, planIds, readPlan, readPlans, requirePhase } from "./planning.mjs";
 import { ATTEMPT_KINDS, readAttempt, recordAttempt, revisionsVerb } from "./revisions.mjs";
 import { stateVerb } from "./state.mjs";
 import { fingerprint, researchStatus, verificationStatusVerb } from "./status.mjs";
@@ -65,6 +66,7 @@ export const verbHandlers = {
   "roadmap.get-phase": { options: {}, run: (g, a) => roadmapVerb(g, "get-phase", a) },
   "roadmap.analyze": { options: {}, run: (g, a) => roadmapVerb(g, "analyze", a) },
   "roadmap.annotate-dependencies": { options: {}, run: (g, a) => roadmapVerb(g, "annotate-dependencies", a) },
+  "roadmap.install-draft": { options: {}, run: (g, a) => roadmapVerb(g, "install-draft", a) },
   "requirements.list": { options: {}, run: (g, a) => requirementsVerb(g, "list", a) },
   "requirements.mark-complete": { options: {}, run: (g, a) => requirementsVerb(g, "mark-complete", a) },
   "requirements.revert": { options: {}, run: (g, a) => requirementsVerb(g, "revert", a) },
@@ -80,6 +82,15 @@ export const verbHandlers = {
   "verify.plan-structure": {
     options: { plans: "string" },
     run: async (g, a, o) => {
+      // Upstream form: one PLAN file (also quick plans outside a phase); else a phase with optional --plans.
+      if (/-PLAN\.md$/i.test(a[0] ?? "")) {
+        const file = path.resolve(g.codeRoot, a[0]);
+        const id = path.basename(file).replace(/-PLAN\.md$/i, "");
+        const plan = readPlan({ dir: path.dirname(file), padded: id.split("-")[0] }, id);
+        if (!plan) throw none(`no plan file ${a[0]}`);
+        const r = await planStructure(g, null, plan);
+        return done(r, r.valid ? 0 : 1);
+      }
       const phase = phaseOf(g, a);
       const plans = readPlans(phase, subset(o, phase));
       if (!plans.length) throw none(`no plans in ${phase.name}`);
@@ -116,7 +127,7 @@ export const verbHandlers = {
     run: (g, a, o) => outlineCheck(g, phaseOf(g, a), { tracer: bool(o.tracer, true), plansPerPhase: Number(o["plans-per-phase"]) || undefined, wavesPerPhase: Number(o["waves-per-phase"]) || undefined }),
   },
   waves: { options: { plans: "string" }, run: (g, a, o) => wavesVerb(g, phaseOf(g, a), subset(o, phaseOf(g, a))) },
-  handoff: { options: { plans: "string", prefix: "string" }, run: (g, a, o) => handoff(g, phaseOf(g, a), { subset: subset(o, phaseOf(g, a)), prefix: o.prefix }) },
+  handoff: { options: { plans: "string", prefix: "string", "no-tracer-split": "bool" }, run: (g, a, o) => handoff(g, phaseOf(g, a), { subset: subset(o, phaseOf(g, a)), prefix: o.prefix, noTracerSplit: o["no-tracer-split"] === true }) },
   "revisions.record": revisions("record"),
   "revisions.check": revisions("check"),
   "revisions.hash": revisions("hash"),
@@ -181,7 +192,12 @@ export const verbHandlers = {
   "debug.status": { options: {}, run: (g, a) => debugStatus(g, a[0]) },
   "debug.list": { options: {}, run: (g) => debugList(g) },
   "debug.checkpoint": { options: {}, run: (g, a) => debugCheckpoint(g, a[0], json(g.stdin())) },
-  "debug.close": { options: { outcome: "string", summary: "string", why: "string", guard: "string" }, run: (g, a, o) => debugClose(g, a[0], o.outcome, o) },
+  "debug.budget": { options: {}, run: (g, a) => debugBudget(g, a[0], json(g.stdin())) },
+  "debug.close": {
+    // --evidence-stdin: stdin {evidence} (the verify rerun, ADPT-17) is appended to ## Evidence before closing.
+    options: { outcome: "string", summary: "string", why: "string", guard: "string", "evidence-stdin": "bool" },
+    run: (g, a, o) => debugClose(g, a[0], o.outcome, { ...o, ...(o["evidence-stdin"] ? { evidence: json(g.stdin()).evidence ?? null } : {}) }),
+  },
   "upstream.vendor": { options: null, run: (g, a) => upstreamVerb(g, "vendor", a) },
   "upstream.build": { options: null, run: (g, a) => upstreamVerb(g, "build", a) },
   "upstream.check": { options: null, run: (g, a) => upstreamVerb(g, "check", a) },

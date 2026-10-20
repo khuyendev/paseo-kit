@@ -5,7 +5,7 @@ import { runCheck } from "./check.mjs";
 import { Fail, machineContext } from "./context.mjs";
 import { runExport } from "./export.mjs";
 
-const USAGE = "usage: node kit.mjs machine check | apply [--no-reload] [--enable-paseo-plugins] [--link-user-skills] [--unlink-user-skills] | export";
+export const USAGE = "usage: node kit.mjs machine check | apply [--no-reload] [--enable-paseo-plugins] [--link-user-skills] [--unlink-user-skills] | export";
 const APPLY_FLAGS = { "--no-reload": "noReload", "--enable-paseo-plugins": "enablePlugins", "--link-user-skills": "link", "--unlink-user-skills": "unlink" };
 
 function parse(argv) {

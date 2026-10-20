@@ -111,3 +111,10 @@ test("PHCL-04 doctor low-RAM note and mod lines", async () => {
   const old = await doctor(s, { version: "2.1.100" });
   has(old, /^problem Claude Code 2\.1\.100 \(the harness-files mod needs >= 2\.1\.296/);
 });
+
+test("PHCL-04 GSDC-47 doctor runs gsd upstream check and reports its summary", async () => {
+  const s = setup();
+  paseoConfig(s, GOOD_PROVIDERS([]));
+  const r = await doctor(s);
+  has(r, /^ok gsd upstream check: 0 problems, \d+ warnings; \d+ references followed, \d+ verbs mapped$/);
+});

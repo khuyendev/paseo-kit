@@ -25,8 +25,8 @@ const phaseNumber = (dir) => /phases\/(\d+(?:\.\d+)?)-/.exec(dir)[1];
 const digestLine = (key, hash) => `Input digest (${key}): ${hash}`;
 const policyBlock = (path) => `<research_input_policy>\n${path ? `Approved research: ${path}. Read and use only this report.` : "Approved research: NONE. Do not read or use any RESEARCH.md on disk."}\n</research_input_policy>`;
 const NEVER_RETRY = /quota|credit|billing|auth|permission|usage limit|rate limit|\b429\b|too many requests|RESOURCE_EXHAUSTED/i;
-// TODO(integration), requested from code-workflow: agent option `detail: true` resolves {result, reason, agentId};
-// global `runId` is the run id, kept by --resume (GSDC-30 attempt keys).
+// agent option `detail: true` resolves {result, reason, agentId, worktree, durationS};
+// the global `runId` is the first run's id, kept by --resume (GSDC-30 attempt keys).
 async function call(prompt, opts) {
   const d = await agent(prompt, { ...opts, detail: true });
   return { result: d?.result ?? null, reason: d?.reason ?? null };
@@ -110,7 +110,6 @@ async function debugSession() {
       next,
       "Return JSON {status: continue|checkpoint|resolved|diagnosed, checkpoint?, verify?, summary}.",
     ].join("\n");
-    // TODO(integration): `timeoutS` (remaining minutes) and detail.durationS requested from code-workflow.
     const d = await agent(prompt, { label: `debugger-${slug}`, session: `debugger:${slug}`, agentType: "gsd-debugger", role: "debugger", schema: TURN_SCHEMA, timeoutS: Math.max(60, Math.floor(now.minutes * 60)), detail: true });
     await gsd(["debug", "budget", slug], { turns: 1, minutes: Math.ceil((d?.durationS ?? 0) / 60) });
     const indexAfter = (await shell(["git", "diff", "--cached", "--name-only"])).stdout + (await shell(["git", "stash", "list"])).stdout;
@@ -137,6 +136,6 @@ async function closeResolved(r, fm) {
   const g = await flow(["gate", ".planning/debug"], { waveId: `debug-${slug}`, plans: [{ id: slug, owns: fm.owns ?? [], verify: [{ task: "verify", ...r.verify }] }] });
   const step = (g.json?.failures ?? []).find((f) => f.plan === slug);
   if (!g.json?.green) return { status: "needs-owner", type: "human-verify", reason: `verify rerun did not pass: ${step?.outcome ?? g.json?.error ?? "failed"}`, evidence: g.json?.evidence ?? null };
-  await gsd(["debug", "close", slug, "--outcome", "resolved"], { evidence: g.json.evidence });
+  await gsd(["debug", "close", slug, "--outcome", "resolved", "--evidence-stdin"], { evidence: g.json.evidence });
   return { status: "resolved", evidence: g.json.evidence, summary: r.summary ?? null };
 }

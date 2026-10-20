@@ -5,7 +5,7 @@ description: Debugs one failure with a persistent .planning/debug session and a 
 
 # gsd-debug
 
-Method text: follow `.agents/gsd/workflows/debug.md` (generated upstream text, unchanged; the session-manager prompt blocks reach the debugger through its role include), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win). The supervised debug engine of earlier ports is not part of the kit.
+Method text: follow `.agents/gsd/generated/workflows/debug-session-manager.md` (generated upstream text, unchanged; its prompt blocks, `.agents/gsd/generated/debug-prompts.md`, reach the debugger through its role include), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win). The supervised debug engine of earlier ports is not part of the kit.
 
 ## Kit overlay (GSDF-64..67)
 

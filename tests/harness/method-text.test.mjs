@@ -134,3 +134,17 @@ test("HARN-16 harness skills ship the Apache-2.0 LICENSE and a NOTICE naming ups
   assert.equal(lf(path.join(KIT_DIR, "LICENSES", "harness-Apache-2.0.txt")), license);
   assert.match(lf(path.join(SKILLS, "harness", "NOTICE.md")), /Translated from Korean to English/);
 });
+
+test("HARN-17 ai-orchestrator ships its method text with the config-read agent limit and no Backlog", () => {
+  const text = lf(path.join(SKILLS, "ai-orchestrator", "SKILL.md"));
+  assert.match(text, /^name: ai-orchestrator$/m);
+  assert.ok(text.includes("Definition of Done") && text.includes("## Waiting for agents"));
+  assert.ok(text.includes("`max_subagents`"));
+  assert.doesNotMatch(text, /\b20\b/);
+  assert.doesNotMatch(text, /backlog/i);
+  checkFile("ai-orchestrator/SKILL.md");
+  const notice = lf(path.join(SKILLS, "ai-orchestrator", "NOTICE.md"));
+  for (const r of PROV.regions.filter((x) => x.file.startsWith("ai-orchestrator/"))) {
+    assert.ok(notice.includes(`\`SKILL.md\` lines ${r.from}-${r.to} -> ${r.lines} line(s)`));
+  }
+});

@@ -5,7 +5,7 @@ description: Reverts GSD commits of the last N commits, a phase or a plan with g
 
 # gsd-undo
 
-Method text: follow `.agents/gsd/workflows/undo.md` (generated upstream text, unchanged), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win).
+Method text: follow `.agents/gsd/generated/workflows/undo.md` (generated upstream text, unchanged), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win).
 
 ## Kit overlay (GSDF-62)
 

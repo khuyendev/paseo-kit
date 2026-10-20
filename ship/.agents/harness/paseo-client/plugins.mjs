@@ -28,7 +28,8 @@ export function filePluginState(root, env = process.env, versionText = null) {
     const enabled = settings(file).enabledPlugins ?? {};
     if (Object.hasOwn(enabled, FILE_PLUGIN_ID)) selection = enabled[FILE_PLUGIN_ID];
   }
-  const copied = fs.existsSync(path.join(plugin, ".claude-plugin", "plugin.json")) && fs.existsSync(path.join(plugin, "hooks", "register.ts"));
+  // The mod runs scripts/discover.mjs to find the backend (FTOL-05), so it counts as copied only with it.
+  const copied = [[".claude-plugin", "plugin.json"], ["hooks", "hooks.json"], ["hooks", "register.ts"], ["scripts", "discover.mjs"]].every((parts) => fs.existsSync(path.join(plugin, ...parts)));
   const entries = settings(path.join(configDir, "plugins", "installed_plugins.json")).plugins?.[FILE_PLUGIN_ID];
   const registered = Array.isArray(entries) && entries.some((e) => e?.scope === "user" || (e?.projectPath && samePath(e.projectPath, root)));
   const dirs = String(env.CLAUDE_CODE_PLUGIN_DIRS ?? "").split(path.delimiter).filter(Boolean);

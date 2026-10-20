@@ -8,7 +8,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { changedPathsInResult, configLoader, contextOutput, DAY_MS, firstLine, harnessModule, hookRoot, isScript, pruneOlderThan, resultText, runHook, sha256 } from "./lib/hook_common.mjs";
+import { changedPathsInResult, configLoader, contextOutput, DAY_MS, firstLine, harnessModule, hookRoot, isScript, pruneOlderThan, readJsonFile, resultText, runHook, sha256 } from "./lib/hook_common.mjs";
 
 const STARTED_AT = Date.now() - process.uptime() * 1000;
 export const LIMITS = Object.freeze({ budgetMs: 75_000, minStartMs: 10_000, slotWaitMs: 20_000, slotStaleMs: 180_000 });
@@ -33,10 +33,10 @@ export function collectTargets(input, event) {
   return [...seen.values()];
 }
 
-// HOOK-28: nearest ancestor holding `.agents/harness.config.json` (a worktree has its own), else the hook root.
-export function owningTree(file, fallbackRoot) {
+// HOOK-28: nearest ancestor holding the config overlay (a worktree has its own), else the hook root.
+export function owningTree(file, fallbackRoot, overlayRel) {
   for (let dir = path.dirname(file); ; dir = path.dirname(dir)) {
-    if (fs.existsSync(path.join(dir, ".agents", "harness.config.json"))) return dir;
+    if (fs.existsSync(path.join(dir, overlayRel))) return dir;
     if (path.dirname(dir) === dir) return fallbackRoot;
   }
 }
@@ -92,7 +92,7 @@ function createChecker(ctx) {
     const identity = [checker.argv, checker.timeout_s ?? null, sha256(JSON.stringify(checker))];
     const cacheFile = path.join(cacheDir, `${sha256(JSON.stringify([fold(tree), fold(file), identity, sha256(content)]))}.json`);
     try {
-      return JSON.parse(fs.readFileSync(cacheFile, "utf8"));
+      return readJsonFile(cacheFile);
     } catch {}
     if (budgetEnd - Date.now() < limits.minStartMs) return { status: "skip" };
     const slots = path.join(stateDir, `slots-${sha256(JSON.stringify(checker.argv)).slice(0, 24)}`);
@@ -123,12 +123,12 @@ function createChecker(ctx) {
 }
 
 // Each target paired with its tree's checker; targets without one are dropped before anything is spawned.
-async function resolveTargets(files, root, loadConfig) {
+async function resolveTargets(files, root, loadConfig, overlayRel) {
   const configs = new Map();
   let warning = null;
   const out = [];
   for (const file of files) {
-    const tree = owningTree(file, root);
+    const tree = owningTree(file, root, overlayRel);
     if (!configs.has(fold(tree))) {
       try {
         configs.set(fold(tree), loadConfig(tree).adapter.syntax_checkers);
@@ -147,7 +147,7 @@ const preFile = (stateDir, input) => path.join(stateDir, `pre-${sha256(`${input.
 
 function readPre(file) {
   try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
+    return readJsonFile(file);
   } catch {
     return {};
   } finally {
@@ -166,7 +166,8 @@ export async function runSyntaxCheck(input, {
   if (!files.length) return null;
   const root = hookRoot(input, env);
   const loadConfig = await configLoader(root);
-  const { targets, warning } = await resolveTargets(files, root, loadConfig);
+  const { OVERLAY_REL } = await harnessModule(root, "config.mjs");
+  const { targets, warning } = await resolveTargets(files, root, loadConfig, OVERLAY_REL);
   if (!targets.length) return warning ? { warning } : null;
   const { runArgv } = await harnessModule(root, "lib/proc.mjs");
   fs.mkdirSync(stateDir, { recursive: true });

@@ -22,6 +22,9 @@ export function defaultKitFiles() {
     ".claude/plugins/.claude-plugin/marketplace.json": '{"name":"paseo-harness-kit","plugins":[{"name":"harness-files","source":"./harness-files"}]}\n',
     ".claude/plugins/harness-files/.claude-plugin/plugin.json": '{"name":"harness-files"}\n',
     ".claude/plugins/harness-files/register.ts": "export default {};\n",
+    ".claude/plugins/harness-files/hooks/hooks.json": '{"modules":["./register.ts"]}\n',
+    ".claude/plugins/harness-files/hooks/register.ts": "export default {};\n",
+    ".claude/plugins/harness-files/scripts/discover.mjs": "// discover\n",
   };
   for (const name of HOOKS) files[`.claude/hooks/${name}.mjs`] = `// ${name}\n`;
   return files;

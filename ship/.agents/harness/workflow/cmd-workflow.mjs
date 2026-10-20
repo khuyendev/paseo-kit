@@ -78,7 +78,9 @@ async function prepare(ctx, deps) {
   }
   if (session) await runtime.assertCallerInRoot(session);
   const runId = opts["run-id"] ?? newRunId(new Date(ctx.clock.now()));
-  return { runsDir, prevDir, script, meta, args, budgetTotal, runtime, session, connectError, runId, runDir: path.join(runsDir, runId) };
+  // The script global `runId` stays the first run's id across --resume, so attempt keys survive (GSDC-30, GSDF-12).
+  const attemptRunId = prevDir ? (readJsonIf(path.join(prevDir, RUN_FILES.run))?.attemptRunId ?? opts.resume) : runId;
+  return { runsDir, prevDir, script, meta, args, budgetTotal, runtime, session, connectError, runId, attemptRunId, runDir: path.join(runsDir, runId) };
 }
 
 function writeRunStart(p, ctx, pid) {
@@ -87,7 +89,7 @@ function writeRunStart(p, ctx, pid) {
   writeJsonAtomic(path.join(p.runDir, RUN_FILES.args), p.args ?? null);
   const existing = readJsonIf(path.join(p.runDir, RUN_FILES.run));
   const info = {
-    runId: p.runId, parent: ctx.opts.resume ?? null, script: p.script.scriptPath, status: "running",
+    runId: p.runId, attemptRunId: p.attemptRunId, parent: ctx.opts.resume ?? null, script: p.script.scriptPath, status: "running",
     startedAt: existing?.status === "running" ? existing.startedAt : new Date(ctx.clock.now()).toISOString(),
     endedAt: null, agents: null, budget: p.budgetTotal, pid, name: p.meta.name, description: p.meta.description,
   };
@@ -149,7 +151,7 @@ async function runForeground(ctx, p) {
     await session.usage.track([caller]);
     const callerBase = session.usage.get(caller)?.output ?? 0;
     const r = await runWorkflow({
-      source: p.script.source, scriptPath: p.script.scriptPath, args: p.args, runId: p.runId, root: ctx.root, env: ctx.env,
+      source: p.script.source, scriptPath: p.script.scriptPath, args: p.args, runId: p.runId, attemptRunId: p.attemptRunId, root: ctx.root, env: ctx.env,
       limits: { maxConcurrent: ctx.cfg.max_subagents, maxAgents: ctx.cfg.max_agents_per_workflow, budgetTotal: p.budgetTotal, shellTimeoutS: ctx.cfg.wait_timeout_s },
       journalPath, cache: p.prevDir ? loadJournalCache(path.join(p.prevDir, RUN_FILES.journal)) : new Map(), out,
       resolveChild: (ref) => resolveScript(ctx.root, ref),

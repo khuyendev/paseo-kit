@@ -11,7 +11,7 @@ const WORKFLOWS = path.join(SHIP_DIR, ".agents", "workflows");
 const flowMod = await import(pathToFileURL(path.join(WORKFLOWS, "lib", "gsd-flow.mjs")).href);
 const configMod = await import(pathToFileURL(path.join(SHIP_DIR, ".agents", "harness", "config.mjs")).href);
 const AsyncFunction = (async () => {}).constructor;
-// FLOW-04 options plus the requested `detail` and `timeoutS` (TODO(integration) with code-workflow).
+// FLOW-04 options plus `detail` and `timeoutS` (as the engine).
 const AGENT_OPTS = new Set(["label", "phase", "schema", "agentType", "role", "model", "effort", "isolation", "readOnly", "cwd", "keep", "session", "detail", "timeoutS"]);
 const GROUPS = new Set(["research", "revisions", "attempt", "outline", "check", "verify", "verification", "state", "roadmap", "phase", "debug", "requirements", "init"]);
 

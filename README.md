@@ -1,0 +1,134 @@
+# paseo-kit
+
+A vanilla kit that installs into any project and lets one owner run multi-agent software work through
+[Paseo](https://github.com/getpaseo) and its `ph` CLI, with Claude Code as the only agent harness (main session and
+workers). It ships the GSD core (discuss -> research -> plan -> execute in waves -> verify, the `.planning/` format,
+generic role agents) and the harness method, which generates each project's adapter. The kit carries nothing
+specific to one project, engine or game (D-110); a project supplies only its adapter.
+
+## Requirements
+
+- Runtime (what a project runs): Node 20.17+ with `path.matchesGlob` (the gate table `NODE_RUNTIME` in
+  `.agents/harness/platform.mjs`; `ph doctor` and `kit.mjs machine` report it).
+- Kit tests (`npm test`): Node 24.
+- Claude Code >= 2.1.296 for the harness-files mod; Paseo CLI (tested with 0.11.2) with a running daemon; Git.
+
+## Install and update a project
+
+```
+node kit.mjs install <project> [--force] [--enable-plugin]
+node kit.mjs update  <project> [--force] [--enable-plugin]
+node kit.mjs status  <project>
+node kit.mjs pull    <project> [<part>...] [--force] [--kit DIR]
+node kit.mjs help
+```
+
+- `install` copies `ship/` onto the project root, writes the marked block into `AGENTS.md`, adds `@AGENTS.md` to
+  `CLAUDE.md`, adds the kit block to `.gitignore` (`/_workspace/`, `/.claude/worktrees/`), reconciles the kit hook
+  registrations in `.claude/settings.json`, seeds `.agents/harness.config.json` and `.agents/harness-history.md`
+  once, and records every kit part with its digest in `.agents/harness-kit.json`.
+- `update` takes kit changes and keeps local edits (listed, exit 2) unless `--force`; `status` is read-only; `pull`
+  copies locally edited parts back into the kit.
+- Ownership: kit-owned parts are tracked by digest; the overlay, the history table and `.planning/` belong to the
+  project and are never overwritten; install never edits Paseo settings. `--force` never overrides removed-local
+  parts, seeds, project-owned files, foreign settings keys or hooks, `CLAUDE.md` lines, `.gitignore` lines outside
+  the kit block, user-scope Claude config or version gates.
+- `--enable-plugin` activates the harness-files mod with `claude plugin install --scope project`; the kit never
+  toggles an owner's plugin selection otherwise.
+- Exit codes: 0 done; 1 usage or file error, nothing done; 2 done with conflicts, kept parts or blocked hooks.
+- A project of the old kit 0.1.0: move `.agents/harness-kit.json` aside, run `install`, resolve the listed conflicts,
+  delete retired files by hand. Old MCP file servers, when ready: `claude mcp remove --scope user fsbatch` and
+  `claude mcp remove --scope user filesystem`.
+
+## Machine setup
+
+```
+node kit.mjs machine check
+node kit.mjs machine apply [--no-reload] [--enable-paseo-plugins] [--link-user-skills] [--unlink-user-skills]
+node kit.mjs machine export
+```
+
+`apply` patches the Paseo config additively from `paseo/providers.json` (backup, atomic write, `paseo reload`): it
+adds missing providers and models (never removes one), gives the worker provider (`circle-agent`) the kit's deny
+list and env, and the main provider (`circle`) the deny list `Agent`, `Workflow` (main sessions orchestrate through
+`ph`, not native subagents). `--enable-paseo-plugins` installs the two kit Paseo plugins; `--link-user-skills` links
+the `kit-init` user skill into each Claude config dir. `check` reports the same policy lines as `ph doctor`.
+
+## Project flow
+
+1. `kit-init` (user skill) or `node kit.mjs install <project>`; then `node .agents/harness/ph.mjs doctor`.
+2. The shipped tiers `frontier`, `pro`, `standard` are unconfigured: `ph spawn` fails until the overlay maps them
+   (`tiers.<name>.provider: "circle/<model>"`).
+3. Map the codebase (`gsd-map-codebase`), then run the `harness` skill: it reads `.planning/codebase/` and writes
+   the project adapter (sections `adapter`, `gsd`, tiers) into `.agents/harness.config.json`, plus any project stack
+   skill and agents, with a row in `.agents/harness-history.md` (D-109). `ph harness lint` checks what it wrote.
+4. `gsd-new-project` (PROJECT, REQUIREMENTS, roadmap draft approved by the owner and installed by
+   `ph gsd roadmap install-draft`), then per phase `gsd-discuss`, `gsd-research`, `gsd-plan`, `gsd-execute`,
+   `gsd-verify`. `gsd-progress`, `gsd-pause`, `gsd-quick`, `gsd-undo`, `gsd-forensics` and `gsd-debug` cover the rest.
+5. `harness-evolve` records lessons and updates the adapter.
+
+## ph
+
+`node .agents/harness/ph.mjs <command>`; `ph help <command>` shows its usage. One line per item; exit 0 done,
+1 usage/config/file error, 2 done with problems; `ph gsd` adds 66 (nothing in scope) and 69 (could not look).
+Non-blocking commands end with a `next:` line naming the command to wait with.
+
+- Agents: `spawn`, `fanout` (`--collect DIR` waits), `send`, `watch`, `result`, `team`, `context`, `stop`,
+  `archive`, `compact-self`. Every agent is created as a subagent of the caller (`PASEO_AGENT_ID`) on the worker
+  provider, with the kit prompt notes and a model resolved from tiers, aliases, roles and `allowed_models`.
+- Coordination: `task` (shared task list), `freeze` (sha256 of phase files), `worktrees`.
+- Workflows: `workflow --script F | --name N [--args JSON] [--resume RUNID] [--budget N] [--detach]`, `watch-run`,
+  `run-stats`, `runs`. Scripts use `agent`, `parallel`, `pipeline`, `phase`, `log`, `budget`, `workflow`, `shell`
+  and the `runId` global; runs live in `_workspace/_runs/<runId>/` with a journal for resume and a model-time
+  watchdog. Running a workflow needs the owner's consent (ph skill).
+- `config` (effective config with provenance), `doctor`, `gsd <verb>`, `harness lint [--all]`.
+
+## GSD
+
+`.agents/gsd/upstream/` is a pinned snapshot of open-gsd/gsd-core (`UPSTREAM.json`); `ph gsd upstream build`
+generates the GSD agents (`.agents/agents/`) and method texts (`.agents/gsd/generated/`) from it with three path
+rewrites, and `ph gsd upstream check` (also run by `ph doctor`) proves they are unchanged. Kit overlays
+(`.agents/gsd/overlays/`, `.agents/workflows/overlays/`) are loaded after the upstream text and win on conflict; GSD
+settings come only from the `gsd` section of the overlay (there is no config file under `.planning/`). The workflow
+scripts in `.agents/workflows/gsd-*.js` orchestrate research, planning, execution and verification; every state
+change of `.planning/` goes through `ph gsd` (single writer).
+
+## Adapter
+
+The `adapter` section of `.agents/harness.config.json` is everything project-specific: `commands` (build, test,
+gates, verify runners), `verify_vocabulary`, `ownership`, `review_lenses`, `syntax_checkers`, `instructions`,
+`envelope`, `stack_skill`, `agents` (role -> project agent), `mutex`, `startup_globs`, `hook_timeout_s`,
+`attribution`; the `gsd` section holds roles, granularity, plan limits, execution mode, isolation and the loop
+bounds. Adapter scripts (parsers, resolvers, evidence parsers, attribution) speak one JSON request/response on
+stdin/stdout (ADPT-15). The kit ships a neutral adapter; `ph doctor` and `ph harness lint` check it.
+
+## File tools
+
+The harness-files Claude Code mod (`.claude/plugins/harness-files/`, enabled per project with `--enable-plugin`)
+gives agents three batch tools: `read_ranges`, `edit_multiple_files`, `write_multiple_files`. Every call is a
+permission-gated ticket executed by the project backend `.agents/harness/files/`, which the mod verifies against the
+install manifest before use; results are paged, edits commit atomically with receipts, fix IDs and line tags are
+session-bound. `read_limits` in the config bounds reads.
+
+## Hooks
+
+Registered from `ship/templates/settings.hooks.json`; hooks never block a tool call.
+
+- `context_guard.mjs`: reminds the main session to `ph compact-self` at `context_guard` bands.
+- `io_guard.mjs`: reminders for unbatched lookups, edits and re-reads (`io_guard` thresholds).
+- `syntax_check.mjs`: runs the adapter's `syntax_checkers` before and after edits and reports newly broken files.
+- `bash_long_command.mjs`: rescues over-long Bash commands on Windows.
+
+## UI
+
+Two read-only Paseo plugins in `plugins/` (installed by `machine apply --enable-paseo-plugins`, never into
+projects): `swarm-map` (live map of the agents `ph` spawns, grouped by brain and swarm, with context rings and run
+wave progress) and `planning-panel` (a workspace's `.planning/` on the GSD status ladder). Their tests need
+`npm install --ignore-scripts` once in each plugin folder.
+
+## Development
+
+`npm test` runs every suite offline (fake daemon, fake clock, temp projects and homes); `tests/e2e/` installs the
+kit into a temp project and drives the installed `ph`. `node kit/install/units.mjs --write` refreshes the shipped
+units in `kit.json`; `node kit/release-check.mjs [<range>]` checks `CHANGELOG.md` against `kit.json` and prompt-text
+commits (HARN-15). Third-party text: see `NOTICE.md`.
