@@ -1,0 +1,13 @@
+{
+  "name": "paseo-kit",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Claude Code + Paseo agent kit that ships the GSD core",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.mjs\""
+  }
+}
