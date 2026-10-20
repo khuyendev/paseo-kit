@@ -1,0 +1,410 @@
+{
+  "date": "2026-10-20",
+  "scope": "bounded live smoke; not full acceptance",
+  "codeCommit": "3577d71",
+  "triggers": [
+    {
+      "lane": "node-http",
+      "skill": "node-http-stack",
+      "date": "2026-10-20",
+      "model": "circle/gpt-6-astra[1m]",
+      "requests": [
+        {
+          "text": "Read-only: explain how to add a /ready endpoint to this Node HTTP service, including socket-test expectations; do not edit files.",
+          "should_trigger": true,
+          "triggered": true
+        },
+        {
+          "text": "Read-only: explain the difference between JavaScript let and const in a generic language tutorial; no project inspection needed.",
+          "should_trigger": false,
+          "triggered": false
+        },
+        {
+          "text": "Read-only: review this service's HTTP response handling and identify the project conventions to follow.",
+          "should_trigger": true,
+          "triggered": true
+        },
+        {
+          "text": "Read-only: identify how a test should check the JSON body returned by GET /health in this project.",
+          "should_trigger": true,
+          "triggered": true
+        },
+        {
+          "text": "Read-only: explain how to avoid leaking listening sockets in this Node service's tests.",
+          "should_trigger": true,
+          "triggered": true
+        },
+        {
+          "text": "Read-only: propose the verification steps for changing the unknown-route behavior of this HTTP fixture.",
+          "should_trigger": true,
+          "triggered": true
+        },
+        {
+          "text": "Read-only: describe this Node service's module layout and the correct build and test commands.",
+          "should_trigger": true,
+          "triggered": true
+        },
+        {
+          "text": "Read-only: advise how to extend the node:test socket suite with an additional route case without editing code.",
+          "should_trigger": true,
+          "triggered": true
+        },
+        {
+          "text": "Read-only: assess the implications of binding this fixture's HTTP listener to loopback and an ephemeral port.",
+          "should_trigger": true,
+          "triggered": true
+        },
+        {
+          "text": "Read-only: explain the conventions for implementing a new JSON HTTP endpoint in this repository.",
+          "should_trigger": true,
+          "triggered": true
+        },
+        {
+          "text": "Read-only: identify the checks a reviewer should apply to changes in src/server.mjs and test/service.test.mjs.",
+          "should_trigger": true,
+          "triggered": true
+        },
+        {
+          "text": "Read-only: explain HTTP 404 versus 410 for an API design class, without discussing this repository.",
+          "should_trigger": false,
+          "triggered": false
+        },
+        {
+          "text": "Read-only: write a short definition of a TCP socket for a glossary, without repository analysis.",
+          "should_trigger": false,
+          "triggered": false
+        },
+        {
+          "text": "Read-only: explain what a Git branch is; do not inspect or modify this repository.",
+          "should_trigger": false,
+          "triggered": false
+        },
+        {
+          "text": "Read-only: suggest a name for a team newsletter about web standards, not project implementation.",
+          "should_trigger": false,
+          "triggered": false
+        },
+        {
+          "text": "Read-only: explain C# integer overflow checking for a language tutorial unrelated to this Node project.",
+          "should_trigger": false,
+          "triggered": false
+        },
+        {
+          "text": "Read-only: explain the difference between compiled and interpreted languages in two sentences.",
+          "should_trigger": false,
+          "triggered": false
+        },
+        {
+          "text": "Read-only: proofread this sentence only: The server were available yesterday.",
+          "should_trigger": false,
+          "triggered": false
+        },
+        {
+          "text": "Read-only: describe the purpose of a JSON document in general, not this repository's formats.",
+          "should_trigger": false,
+          "triggered": false
+        },
+        {
+          "text": "Read-only: explain how a browser cache differs from a CPU cache, without codebase-specific recommendations.",
+          "should_trigger": false,
+          "triggered": false
+        }
+      ],
+      "precision": 1,
+      "recall": 1,
+      "confusion": {
+        "tp": 10,
+        "fp": 0,
+        "fn": 0,
+        "tn": 10
+      }
+    },
+    {
+      "lane": "compiled-cli",
+      "skill": "compiled-cli",
+      "date": "2026-10-20",
+      "model": "circle/gpt-6-astra[1m]",
+      "requests": [
+        {
+          "text": "Read-only: explain how to add a command to this C# CLI while preserving its exit-code conventions; do not edit.",
+          "should_trigger": true,
+          "triggered": true
+        },
+        {
+          "text": "Read-only: define compilation for a glossary, without looking at this project.",
+          "should_trigger": false,
+          "triggered": false
+        },
+        {
+          "text": "Read-only: review the greeting output contract of this compiled fixture and identify tests that cover it.",
+          "should_trigger": true,
+          "triggered": true
+        },
+        {
+          "text": "Read-only: identify the compiler and build command used for this project's C# executable.",
+          "should_trigger": true,
+          "triggered": true
+        },
+        {
+          "text": "Read-only: explain how to add a node:test case that drives the real compiled CLI in this repository.",
+          "should_trigger": true,
+          "triggered": true
+        },
+        {
+          "text": "Read-only: assess the command-line argument validation in src/Program.cs using this project's conventions.",
+          "should_trigger": true,
+          "triggered": true
+        },
+        {
+          "text": "Read-only: describe how to verify an invalid invocation of this CLI without changing files.",
+          "should_trigger": true,
+          "triggered": true
+        },
+        {
+          "text": "Read-only: recommend the checks for changing this fixture's usage error text while preserving behavior.",
+          "should_trigger": true,
+          "triggered": true
+        },
+        {
+          "text": "Read-only: explain the supported C# language/runtime constraints for this compiled project.",
+          "should_trigger": true,
+          "triggered": true
+        },
+        {
+          "text": "Read-only: describe how test/cli.test.mjs exercises the compiled artifact rather than a JavaScript substitute.",
+          "should_trigger": true,
+          "triggered": true
+        },
+        {
+          "text": "Read-only: identify the project-specific build and test steps a reviewer should use for a Program.cs change.",
+          "should_trigger": true,
+          "triggered": true
+        },
+        {
+          "text": "Read-only: explain JavaScript template literals in a generic tutorial unrelated to this C# project.",
+          "should_trigger": false,
+          "triggered": false
+        },
+        {
+          "text": "Read-only: explain why Unix command-line tools often use exit code zero for success; no repository analysis.",
+          "should_trigger": false,
+          "triggered": false
+        },
+        {
+          "text": "Read-only: suggest three names for a newsletter about programming languages.",
+          "should_trigger": false,
+          "triggered": false
+        },
+        {
+          "text": "Read-only: proofread this sentence only: The compiler produce a executable.",
+          "should_trigger": false,
+          "triggered": false
+        },
+        {
+          "text": "Read-only: explain HTTP status 404 versus 500, not this command-line fixture.",
+          "should_trigger": false,
+          "triggered": false
+        },
+        {
+          "text": "Read-only: explain the concept of a Git remote without running commands.",
+          "should_trigger": false,
+          "triggered": false
+        },
+        {
+          "text": "Read-only: compare JSON and CSV as data interchange formats without project-specific guidance.",
+          "should_trigger": false,
+          "triggered": false
+        },
+        {
+          "text": "Read-only: explain the history of the C language in two sentences, not C# project conventions.",
+          "should_trigger": false,
+          "triggered": false
+        },
+        {
+          "text": "Read-only: describe the difference between standard output and a display monitor for a beginner glossary.",
+          "should_trigger": false,
+          "triggered": false
+        }
+      ],
+      "precision": 1,
+      "recall": 1,
+      "confusion": {
+        "tp": 10,
+        "fp": 0,
+        "fn": 0,
+        "tn": 10
+      }
+    }
+  ],
+  "adapterFailures": [
+    {
+      "lane": "node-http",
+      "failedChecks": [
+        {
+          "name": "nonzero verify evidence",
+          "ok": false,
+          "detail": {
+            "v": 1,
+            "executed": {
+              "count": 2,
+              "targets": [
+                "health",
+                "missing"
+              ]
+            },
+            "failed": [],
+            "outcome": "passed"
+          }
+        }
+      ]
+    },
+    {
+      "lane": "compiled-cli-all",
+      "failedChecks": [
+        {
+          "name": "nonzero verify evidence",
+          "ok": false,
+          "detail": {
+            "v": 1,
+            "executed": {
+              "count": 2,
+              "targets": [
+                "greeting",
+                "usage"
+              ]
+            },
+            "failed": [],
+            "outcome": "passed"
+          }
+        }
+      ]
+    }
+  ],
+  "mod": {
+    "nativeDenial": {
+      "mode": "native",
+      "status": 0,
+      "session": "89f9a6ac-abaa-433b-86b6-c19fa99ac11b",
+      "calls": [
+        {
+          "type": "tool_use",
+          "id": "call_eyrB0c7YN6o4H1GCzY1EPFfs",
+          "name": "Write",
+          "input": {
+            "file_path": "C:/Users/fish/Desktop/paseo-kit-live-tests-20261020/mod/fixture/calibrated-native.txt",
+            "content": "SHOULD NOT WRITE\n"
+          }
+        }
+      ],
+      "results": [
+        {
+          "type": "tool_result",
+          "content": "<tool_use_error>File is in a directory that is denied by your permission settings.</tool_use_error>",
+          "is_error": true,
+          "tool_use_id": "call_eyrB0c7YN6o4H1GCzY1EPFfs"
+        }
+      ],
+      "denied": true,
+      "unchanged": true,
+      "beforeHex": "44454e494544204d55535420535441590a",
+      "afterHex": "44454e494544204d55535420535441590a",
+      "beforeSha256": "811cbdffd1500783349be98ad72503006f4523e86ae62da80df5c29cc56cc829",
+      "afterSha256": "811cbdffd1500783349be98ad72503006f4523e86ae62da80df5c29cc56cc829",
+      "pass": true
+    },
+    "modDenial": {
+      "mode": "mod",
+      "status": 0,
+      "session": "783364e2-ad00-4604-9119-7ac9d4ab3e86",
+      "calls": [
+        {
+          "type": "tool_use",
+          "id": "call_2GgwHIHIY5voAi8LwEZhoXHI",
+          "name": "mcp__harness-files__write_multiple_files",
+          "input": {
+            "files": [
+              {
+                "content": "SHOULD NOT WRITE\n",
+                "path": "C:/Users/fish/Desktop/paseo-kit-live-tests-20261020/mod/fixture/calibrated-mod.txt"
+              }
+            ]
+          }
+        }
+      ],
+      "results": [
+        {
+          "type": "tool_result",
+          "content": "<tool_use_error>Write permission deny: Permission to edit C:/Users/fish/Desktop/paseo-kit-live-tests-20261020/mod/fixture/calibrated-mod.txt has been denied.</tool_use_error>",
+          "is_error": true,
+          "tool_use_id": "call_2GgwHIHIY5voAi8LwEZhoXHI"
+        }
+      ],
+      "denied": true,
+      "unchanged": true,
+      "beforeHex": "44454e494544204d55535420535441590a",
+      "afterHex": "44454e494544204d55535420535441590a",
+      "beforeSha256": "811cbdffd1500783349be98ad72503006f4523e86ae62da80df5c29cc56cc829",
+      "afterSha256": "811cbdffd1500783349be98ad72503006f4523e86ae62da80df5c29cc56cc829",
+      "pass": true
+    },
+    "installerActivation": {
+      "status": 0,
+      "session": "a396c54e-217a-46f7-b76d-af9099da7815",
+      "model": "gpt-6-astra[1m]",
+      "tools": [
+        "mcp__harness-files__edit_multiple_files",
+        "mcp__harness-files__read_ranges",
+        "mcp__harness-files__write_multiple_files"
+      ],
+      "plugin": {
+        "name": "harness-files",
+        "path": "C:\\Users\\fish\\Desktop\\paseo-kit-live-tests-20261020\\mod\\activation-fixture\\.claude\\plugins\\harness-files",
+        "source": "harness-files@paseo-harness-kit",
+        "version": "0.1.0"
+      },
+      "calls": [
+        {
+          "type": "tool_use",
+          "id": "call_MghDwxerOdR5RnAizKZAizcL",
+          "name": "mcp__harness-files__read_ranges",
+          "input": {
+            "ranges": [
+              {
+                "path": "activation-probe.txt"
+              }
+            ]
+          }
+        }
+      ],
+      "results": [
+        {
+          "tool_use_id": "call_MghDwxerOdR5RnAizKZAizcL",
+          "type": "tool_result",
+          "content": "===== C:\\Users\\fish\\Desktop\\paseo-kit-live-tests-20261020\\mod\\activation-fixture\\activation-probe.txt lines 1-2 of 2, tag xtt1\n1| installed activation probe\n2| "
+        }
+      ],
+      "pass": true
+    }
+  },
+  "runtime": {
+    "nonceMatches": true,
+    "runs": [
+      {
+        "id": "wf_runtime_e84f05b9",
+        "status": "done",
+        "hasResult": true
+      },
+      {
+        "id": "wf_runtime_resume_e84f05b9",
+        "status": "done",
+        "hasResult": true
+      },
+      {
+        "id": "wf_runtime_impossible_e84f05b9",
+        "status": "failed",
+        "hasResult": false
+      }
+    ],
+    "shellExecutions": 2
+  }
+}
