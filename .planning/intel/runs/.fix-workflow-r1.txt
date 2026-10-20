@@ -1,0 +1,13 @@
+A reviewer checked your map against the sources. Review file: C:/Users/fish/Desktop/paseo-kit/.planning/intel/review/workflow-r1.md. Read it in full, then revise your map C:/Users/fish/Desktop/paseo-kit/.planning/intel/map/workflow.md in place.
+
+For every finding:
+- Verify it against the cited source lines yourself before changing anything; the reviewer can be wrong.
+- If it holds: fix the map (add the missing behavior with a new ID after your last one, correct the citation, the description or the proposal). Never renumber existing IDs; a behavior that turns out not to exist is kept with "Proposal: WITHDRAWN — <reason>".
+- If it does not hold: leave the map as is and say why, citing the lines.
+
+Then append a section at the end of the map:
+## Revision log r1
+Table: finding ID | accepted / rejected | what changed (behavior IDs) or why rejected (with citation).
+
+The earlier rules still apply: cite only lines you read, write in parts with each tool call under about 300 lines, never message the main/leader session, change no file except your map.
+Your final reply is one line: `revised <path> <a> accepted <r> rejected <n> new behaviors` and nothing else.
