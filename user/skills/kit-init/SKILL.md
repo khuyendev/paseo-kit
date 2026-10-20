@@ -1,0 +1,59 @@
+---
+name: kit-init
+description: "Sets up a project for paseo-kit: git repository, kit install with the harness-files mod, readiness checks, then the GSD codebase map and the harness adapter. Use when the owner asks to init, initialize, set up or bootstrap a project (\"init project này\", \"khởi tạo project\", \"thiết lập project\"), types /kit-init, or wants an existing project brought up to the kit. Not Claude Code's built-in /init, which only writes CLAUDE.md."
+---
+
+# kit-init: set up a project for paseo-kit
+
+The target is the current working directory unless the owner names another folder. Do the steps in order, report
+each result in one line, and end with a summary that lists every step as done, skipped (why) or needs-owner.
+
+Kit root: run `node <this skill folder>/scripts/kit-root.mjs` and use only its output as `<kit>`. It prints the kit
+folder holding `kit.mjs` and `kit.json`, or fails with `failed: no paseo-kit root above <path>`; on failure stop and
+tell the owner the skill is not linked from a kit checkout (`node <kit>/kit.mjs machine apply --link-user-skills`).
+
+Never add `--force` and never run `pull` without the owner's decision.
+
+## 1. Git
+
+- `git -C <project> rev-parse --show-toplevel`:
+  - fails: not a repository. Ask the owner before `git init` (the folder may be meant as part of another repository).
+    After `git init` do not commit unless asked.
+  - prints a parent folder: the project sits inside another repository. Tell the owner and ask whether to continue
+    there or create a separate repository.
+- Uncommitted changes: announce them before installing, so kit changes can be told apart from the owner's.
+
+## 2. Requirements (report only; install nothing globally)
+
+- Node.js (`node --version`; the kit needs Node 20.17+ with `path.matchesGlob`, Node 24 recommended).
+- Claude Code (`claude --version`; the harness-files mod needs 2.1.296+).
+- Paseo CLI (`paseo --version`) and whether its daemon is running.
+- Machine setup: `node <kit>/kit.mjs machine check`; report its `problem` lines and point to
+  `node <kit>/kit.mjs machine apply` for the owner. Do not run `apply` without the owner.
+
+## 3. Kit install with the mod
+
+- When `<project>/.agents/harness-kit.json` exists run `update`, else `install`, always with `--enable-plugin`:
+  `node <kit>/kit.mjs install <project> --enable-plugin` (or `update <project> --enable-plugin`).
+- Run it under the intended Claude config folder (`CLAUDE_CONFIG_DIR`, the one the Paseo provider uses, for example
+  `~/.claude-circle`): the mod's marketplace is registered in that user configuration.
+- Exit code 2 means conflicts (kit files changed in the project): report each `conflict` line and stop for the owner.
+  Never add `--force` and never run `node <kit>/kit.mjs pull` without the owner's decision.
+
+## 4. Status and doctor
+
+- `node <kit>/kit.mjs status <project>` and, from the project root, `node .agents/harness/ph.mjs doctor`; report every
+  `problem` line.
+- Say that the hooks and the harness-files mod take effect in a new Claude Code session.
+
+## 5. Next: map the codebase, then generate the adapter
+
+- Point the owner to `gsd-map-codebase` (writes the codebase map under `.planning/`), then to the `harness` skill's
+  adapter generator, which writes the project's adapter (build and test commands, tiers, review lenses) into
+  `.agents/harness.config.json`. Do not run them as part of this skill unless the owner asks.
+
+## Summary
+
+One line per step (git, requirements, install/update, status and doctor, next steps): done, skipped (why) or
+needs-owner (what), then the kit version from `<kit>/kit.json` and anything waiting for the owner (new session,
+conflicts, missing tools, machine apply).

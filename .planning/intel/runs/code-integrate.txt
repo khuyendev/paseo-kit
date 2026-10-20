@@ -1,0 +1,13 @@
+
+You are the integrator (agent name: code-integrate). The foundation coder and ten module coders have finished; each wrote .planning/integration/<agent>.md (what it built, gaps) and cross-module requests in .planning/integration/requests.md.
+
+Your job, in order:
+1. Read docs/INTERFACES.md, every .planning/integration/*.md and requests.md.
+2. Apply every open request (you may edit any file now; the module coders are done). Resolve mismatches between modules: registry registrations, config keys, function signatures, file paths, the shipped-units list in kit.json, template and hook matchers, workflow scripts calling gsd verbs and workflow APIs. Mark each request done or rejected (with why) in requests.md.
+3. Run the whole suite (`npm test`) and fix failures until it is green. Fix the cause in the right module; never weaken or delete a test to make it pass unless the test contradicts the specification (say so in your report).
+4. End-to-end offline check of the tracer from ROADMAP Phase 1 and the project flow of D-109 as far as offline fakes allow: install the kit into a temp project, run `ph doctor` and a `ph spawn`/`watch`/`result` round and a minimal workflow against the fake daemon, run the gsd verbs on a seeded `.planning/`. Add these as tests under tests/e2e/.
+5. Check the vanilla rule (D-110: no project-, engine- or game-specific content anywhere in ship/, kit/, plugins/, user/) and D-111 (harness and GSD method text unchanged: compare the carried harness skill against the old kit's text and the vendored GSD snapshot against UPSTREAM.json; only adapter-layer differences, each listed in the skill NOTICE). Fix violations.
+6. Write README.md (what the kit is, requirements, install/update, machine setup, project flow, ph overview, GSD flow, adapter, file tools, hooks, UI; short, accurate to the code), CHANGELOG.md (0.0.1 entry), NOTICE.md (Harness Apache-2.0, GSD MIT, pins).
+7. Write .planning/integration/code-integrate.md: requests applied/rejected, fixes per module, test totals, e2e results, vanilla/D-111 check results, remaining gaps (v1 requirement IDs still unimplemented, from the module reports, verified).
+
+Final reply: `done code-integrate tests <pass>/<total>, unimplemented v1 <N>` and nothing else.

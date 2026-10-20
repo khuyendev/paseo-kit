@@ -1,0 +1,7 @@
+{
+  "name": "paseo-harness-kit",
+  "owner": { "name": "paseo-harness-kit" },
+  "plugins": [
+    { "name": "harness-files", "source": "./harness-files", "description": "Permission-checked batch file tools (read_ranges, edit_multiple_files, write_multiple_files) with a trusted project backend." }
+  ]
+}

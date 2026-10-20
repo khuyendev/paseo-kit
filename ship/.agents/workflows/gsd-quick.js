@@ -1,0 +1,106 @@
+export const meta = {
+  name: "gsd-quick",
+  description: "GSD quick task: one plan of 1-3 tasks in .planning/quick/, executed through the executor contract; --full adds research, a 2-iteration checker and a verifier",
+  phases: [{ title: "Plan" }, { title: "Check" }, { title: "Execute" }, { title: "Verify" }],
+};
+
+// ---- shared GSD script helpers (scripts cannot import; keep identical across gsd-*.js) ----
+const PH = ".agents/harness/ph.mjs";
+const FLOW = ".agents/workflows/lib/gsd-flow.mjs";
+const PHASE_DIR_RE = /^\.planning\/phases\/\d+(\.\d+)?-[a-z0-9-]+$/;
+const lastJson = (text) => { try { return JSON.parse(String(text).trim().split(/\r?\n/).pop()); } catch { return null; } };
+// GSDF-03: the one verb helper; JSON goes on stdin, only validated values reach the argv.
+async function run(argv, input) {
+  const r = await shell(["node", ...argv], input === undefined ? {} : { input: typeof input === "string" ? input : JSON.stringify(input) });
+  return { code: r.code, json: lastJson(r.stdout), stderr: r.stderr };
+}
+async function loadCfg() {
+  const r = await shell(["node", PH, "config"]);
+  if (r.code !== 0) throw new Error(`ph config failed: ${String(r.stderr).split(/\r?\n/)[0]}`);
+  return JSON.parse(r.stdout);
+}
+const gsd = (argv, input) => run([PH, "gsd", ...argv], input);
+const flow = (argv, input) => run([FLOW, ...argv], input);
+const phaseNumber = (dir) => /phases\/(\d+(?:\.\d+)?)-/.exec(dir)[1];
+const digestLine = (key, hash) => `Input digest (${key}): ${hash}`;
+const policyBlock = (path) => `<research_input_policy>\n${path ? `Approved research: ${path}. Read and use only this report.` : "Approved research: NONE. Do not read or use any RESEARCH.md on disk."}\n</research_input_policy>`;
+const NEVER_RETRY = /quota|credit|billing|auth|permission|usage limit|rate limit|\b429\b|too many requests|RESOURCE_EXHAUSTED/i;
+// TODO(integration), requested from code-workflow: agent option `detail: true` resolves {result, reason, agentId};
+// global `runId` is the run id, kept by --resume (GSDC-30 attempt keys).
+async function call(prompt, opts) {
+  const d = await agent(prompt, { ...opts, detail: true });
+  return { result: d?.result ?? null, reason: d?.reason ?? null };
+}
+const fatal = (reason) => Boolean(reason && NEVER_RETRY.test(reason));
+const needsOwner = (stage, reason, extra = {}) => ({ status: "needs-owner", stage, reason, ...extra });
+async function discussOpen(phaseDir, nn) {
+  const ex = (await flow(["exists", `${phaseDir}/${nn}-DISCUSS-CHECKPOINT.json`, `${phaseDir}/${nn}-CONTEXT.md`])).json?.exists ?? {};
+  if (ex[`${phaseDir}/${nn}-DISCUSS-CHECKPOINT.json`]) return "discussion interrupted (DISCUSS-CHECKPOINT present); finish it with gsd-discuss";
+  if (!ex[`${phaseDir}/${nn}-CONTEXT.md`]) return "no CONTEXT.md; run gsd-discuss first";
+  return null;
+}
+async function sha(text) { return (await gsd(["hash"], text ?? "")).json?.hash ?? null; }
+async function fileSha(path) { const r = await flow(["read", path]); return r.json?.exists ? sha(r.json.text) : null; }
+// ---- end shared helpers ----
+
+const ISSUES_SCHEMA = { type: "object", properties: { issues: { type: "array", items: { type: "object", properties: { severity: { type: "string" }, description: { type: "string" } }, required: ["severity", "description"] } } }, required: ["issues"] };
+const EXEC_SCHEMA = { type: "object", properties: { taskResults: { type: "array" }, deviations: { type: "array" }, requests: { type: "array" } }, required: ["taskResults"] };
+const PLAN_SCHEMA = { type: "object", properties: { marker: { type: "string" } }, required: ["marker"] };
+const MAX_CHECKS = 2;
+
+const a = args ?? {};
+const description = typeof a.description === "string" ? a.description.trim() : "";
+if (!description) return { status: "failed", reason: "description is required" };
+const cfg = await loadCfg();
+const roadmap = (await flow(["exists", ".planning/ROADMAP.md"])).json?.exists?.[".planning/ROADMAP.md"];
+if (!roadmap) return { status: "refused", reason: "gsd-quick needs .planning/ROADMAP.md (run gsd-new-project first)" };
+const q = a.dir && /^\.planning\/quick\/\d{6}-[0-9a-z]{3}-[a-z0-9-]+$/.test(a.dir) ? { dir: a.dir, id: a.dir.split("/").pop().slice(0, 10) } : (await flow(["quick-dir", description])).json;
+if (!q?.dir) return { status: "failed", reason: "could not create the quick task directory" };
+const PLAN = `${q.dir}/${q.id}-PLAN.md`;
+const SUMMARY = `${q.dir}/${q.id}-SUMMARY.md`;
+const data = `DATA_START\n${description}\nDATA_END`;
+const context = a.contextPath ? `Owner decisions: ${a.contextPath} (locked).` : "";
+
+phase("Plan");
+if (a.full) {
+  const rs = await call([`Research what this quick task needs; write ${q.dir}/${q.id}-RESEARCH.md.`, `Task description (data):\n${data}`, context, "Do not build, test, install or commit."].filter(Boolean).join("\n\n"), { label: "quick-research", agentType: "gsd-phase-researcher", role: "research" });
+  if (!rs.result && fatal(rs.reason)) return { status: "failed", reason: `researcher failed: ${rs.reason}` };
+}
+const planPrompt = [`Write ONE plan ${PLAN} of 1-3 tasks for this quick task; every path repo-root-relative; owns lists exactly the files the tasks change plus ${SUMMARY}.`, `Task description (data):\n${data}`, context, a.full ? `Research: ${q.dir}/${q.id}-RESEARCH.md` : "", "Return JSON {marker}. Never ask the owner; never commit."].filter(Boolean).join("\n\n");
+const p = await call(planPrompt, { label: "quick-plan", session: "planner:quick", agentType: "gsd-planner", role: "planner", schema: PLAN_SCHEMA });
+if (!p.result && fatal(p.reason)) return { status: "failed", reason: `planner failed: ${p.reason}` };
+let st = await gsd(["verify", "plan-structure", PLAN]);
+if (st.code !== 0) return { status: "failed", reason: `quick plan invalid: ${(st.json?.errors ?? []).join("; ")}`, dir: q.dir };
+
+if (a.full) {
+  phase("Check");
+  for (let i = 1; ; i++) {
+    const c = await call([`Check the quick plan ${PLAN} read-only.`, "Return JSON {issues: [{severity (blocker|warning|info), description}]}."].join("\n\n"), { label: `quick-check-${i}`, agentType: "gsd-plan-checker", role: "checker", readOnly: true, schema: ISSUES_SCHEMA });
+    const open = (c.result?.issues ?? []).filter((x) => String(x.severity).toLowerCase() !== "info");
+    if (!open.length) break;
+    if (i >= MAX_CHECKS) return { status: "needs-owner", stage: "Check", reason: `${open.length} checker issues after ${MAX_CHECKS} iterations`, issues: open, dir: q.dir };
+    await call([`Revise ${PLAN} for these issues:`, JSON.stringify(open)].join("\n\n"), { label: `quick-revise-${i}`, session: "planner:quick", agentType: "gsd-planner", role: "planner", schema: PLAN_SCHEMA });
+    st = await gsd(["verify", "plan-structure", PLAN]);
+    if (st.code !== 0) return { status: "failed", reason: "quick plan invalid after revision", dir: q.dir };
+  }
+}
+
+phase("Execute");
+const ex = await call([
+  `<kit_executor_runtime>\nPlan: ${PLAN}\nWrite your SUMMARY to exactly: ${SUMMARY}\nEdit only the files the plan's owns lists. Rules 1-3 auto-fix inside owns (3 attempts per task); package installs are never Rule 3; Rule 4 returns status partial with the decision. Never commit, stage or stash; never write STATE, ROADMAP or REQUIREMENTS.\nReturn JSON {taskResults: [{task, status, evidence}], deviations, requests}.\n</kit_executor_runtime>`,
+].join("\n\n"), { label: "quick-exec", agentType: cfg.adapter.agents?.executor ?? "gsd-executor", role: "executor", schema: EXEC_SCHEMA });
+const summaryOk = (await flow(["exists", SUMMARY])).json?.exists?.[SUMMARY];
+const stop = (ex.result?.taskResults ?? []).find((t) => t.status === "partial" || t.status === "blocked");
+if (stop) return { status: "needs-owner", stage: "Execute", reason: `task ${stop.task} ${stop.status}: ${stop.evidence ?? ""}`, dir: q.dir };
+if (!summaryOk) return { status: "failed", reason: `executor wrote no ${SUMMARY}${ex.reason ? ` (${ex.reason})` : ""}`, dir: q.dir };
+
+if (a.full) {
+  phase("Verify");
+  await call([`Verify the quick task against its plan ${PLAN} and summary ${SUMMARY} (claims, not proof). Write ${q.dir}/${q.id}-VERIFICATION.md. Do not rerun builds or tests; do not commit.`].join("\n\n"), { label: "quick-verify", agentType: "gsd-verifier", role: "verifier" });
+}
+if (cfg.gsd.commit_policy.docs) {
+  const files = [PLAN, SUMMARY, ...(a.full ? [`${q.dir}/${q.id}-VERIFICATION.md`, `${q.dir}/${q.id}-RESEARCH.md`] : [])];
+  const c = await gsd(["commit", `docs(quick-${q.id}): ${description.split(/\r?\n/)[0].slice(0, 60)}`, "--files", ...files]);
+  if (c.code !== 0) log(`warning: quick commit failed: ${c.json?.error ?? c.code}`);
+}
+return { status: "done", id: q.id, dir: q.dir, plan: PLAN, summary: SUMMARY };

@@ -1,0 +1,147 @@
+// Revision hashes (GSDC-28, INV-39) and attempt records (GSDC-30): a changed owner input invalidates what was
+// built on it, a code change alone is only reported; an attempt is recorded before its agent is dispatched.
+import fs from "node:fs";
+import path from "node:path";
+import { writeJsonAtomic, readJsonIf } from "../lib/io.mjs";
+import { sha256, textDigest } from "../lib/hash.mjs";
+import { done, fail, none, nowIso, readIf, rel } from "./common.mjs";
+import { headOf } from "./git.mjs";
+import { phaseFile, planPath, planIds } from "./planning.mjs";
+import { loadRequirements } from "./requirements.mjs";
+import { loadRoadmap, roadmapPhase } from "./roadmap.mjs";
+
+export const RESEARCHER_ROLE_FILES = [".agents/agents/gsd-phase-researcher.md", ".agents/gsd/overlays/kit-core.md", ".agents/gsd/overlays/gsd-phase-researcher.md"];
+export const RESEARCH_FRAGMENT = ".agents/gsd/upstream/capabilities/research/fragments/plan-pre.md";
+export const FIXED_KEYS = new Set(["research", "inputs", "freeze", "plans", "checked", "handoff"]);
+
+const backticked = (text) => [...String(text ?? "").matchAll(/`([^`\s]+)`/g)].map((m) => m[1]).filter((p) => /[/.]/.test(p) && !/^https?:/.test(p));
+
+// The files of one key: `{label, abs}` entries; harness files (role text) are read from the invoking checkout.
+export function keyFiles(g, phase, key) {
+  const code = (p) => ({ label: p, abs: path.resolve(g.codeRoot, p) });
+  const harness = (p) => ({ label: `harness:${p}`, abs: path.resolve(g.harnessRoot, p) });
+  const inPhase = (name) => code(rel(g.codeRoot, path.join(phase.dir, name)));
+  const research = () => {
+    const ctxFile = phaseFile(phase, "CONTEXT.md");
+    const out = [inPhase(`${phase.padded}-CONTEXT.md`), code(".planning/REQUIREMENTS.md"), code(".planning/PROJECT.md")];
+    const roadmapEntry = roadmapPhase(loadRoadmap(g.codeRoot, g.cfg), phase.number);
+    const reqs = loadRequirements(g.codeRoot);
+    for (const id of roadmapEntry?.requirements ?? []) {
+      const spec = reqs.map.get(id)?.spec;
+      if (spec) out.push(code(spec.replace(/^`|`$/g, "")));
+    }
+    const refs = /<canonical_refs>([\s\S]*?)<\/canonical_refs>/.exec(readIf(ctxFile) ?? "")?.[1];
+    for (const p of backticked(refs)) out.push(code(p));
+    for (const p of g.cfg.adapter.instructions) out.push(code(p));
+    for (const p of [...RESEARCHER_ROLE_FILES, RESEARCH_FRAGMENT]) out.push(harness(p));
+    return out;
+  };
+  const inputs = () => [...research(), inPhase(`${phase.padded}-RESEARCH.md`), inPhase("research-attempt.json")];
+  const freeze = () => [...inputs(), inPhase(`${phase.padded}-PLAN-OUTLINE.md`), inPhase(`${phase.padded}-PLAN-OUTLINE.manifest.json`), inPhase(`${phase.padded}-WIRING.md`)];
+  const allPlans = () => [...freeze(), ...planIds(phase).map((id) => code(rel(g.codeRoot, planPath(phase, id))))];
+  if (key === "research") return research();
+  if (key === "inputs") return inputs();
+  if (key === "freeze") return freeze();
+  if (key === "plans" || key === "checked" || key === "handoff") return allPlans();
+  const m = /^plan:(.+)$/.exec(key);
+  if (m) return [...freeze(), code(rel(g.codeRoot, planPath(phase, m[1])))];
+  throw fail(`unknown revisions key ${key} (research, inputs, freeze, plan:<id>, plans, checked, handoff)`);
+}
+
+function digestOf(abs) {
+  try {
+    return textDigest(fs.readFileSync(abs, "utf8"));
+  } catch (e) {
+    if (e.code === "ENOENT" || e.code === "EISDIR") return "missing";
+    throw e;
+  }
+}
+
+// Hash of a key: its files (deduplicated, sorted) plus this phase's ROADMAP section, never another phase's.
+export function keyHash(g, phase, key) {
+  const seen = new Map();
+  for (const f of keyFiles(g, phase, key)) seen.set(f.label, f.abs);
+  const labels = [...seen.keys()].sort();
+  const lines = labels.map((label) => `${label}\0${digestOf(seen.get(label))}\n`);
+  const section = roadmapPhase(loadRoadmap(g.codeRoot, g.cfg), phase.number)?.section ?? null;
+  lines.push(`roadmap\0${section === null ? "missing" : textDigest(section)}\n`);
+  return { hash: sha256(lines.join("")), files: labels };
+}
+
+const revisionsFile = (phase) => path.join(phase.dir, "revisions.json");
+
+export const readRevisions = (phase) => readJsonIf(revisionsFile(phase), null) ?? { v: 1, keys: {}, lists: {} };
+
+export function recordRevision(g, phase, key) {
+  const { hash, files } = keyHash(g, phase, key);
+  const data = readRevisions(phase);
+  const list = sha256(files.join("\n")).slice(0, 16);
+  data.lists[list] = files;
+  data.keys[key] = { hash, list, at: nowIso(), head: headOf(g.codeRoot) };
+  const used = new Set(Object.values(data.keys).map((k) => k.list));
+  for (const id of Object.keys(data.lists)) if (!used.has(id)) delete data.lists[id];
+  writeJsonAtomic(revisionsFile(phase), data);
+  return { key, hash, files: files.length, head: data.keys[key].head };
+}
+
+export function checkRevision(g, phase, key) {
+  const recorded = readRevisions(phase).keys[key];
+  if (!recorded) throw none(`revisions key ${key} was never recorded`, { key });
+  const { hash } = keyHash(g, phase, key);
+  const head = headOf(g.codeRoot);
+  return { key, same: hash === recorded.hash, recorded: recorded.hash, current: hash, headChanged: recorded.head !== head, recordedHead: recorded.head, head };
+}
+
+export function revisionsVerb(g, sub, phase, key) {
+  if (sub === "record") return done(recordRevision(g, phase, need(key)));
+  if (sub === "hash") return done({ key: need(key), ...keyHash(g, phase, key) });
+  if (sub === "check") {
+    const r = checkRevision(g, phase, need(key));
+    return done({ status: r.same ? "same" : "changed", ...r }, r.same ? 0 : 1);
+  }
+  const data = readRevisions(phase);
+  if (key) {
+    const k = data.keys[key];
+    if (!k) throw none(`revisions key ${key} was never recorded`, { key });
+    return done({ key, ...k, files: data.lists[k.list] ?? [] });
+  }
+  if (!Object.keys(data.keys).length) throw none("no revisions recorded");
+  return done({ keys: Object.fromEntries(Object.entries(data.keys).map(([k, v]) => [k, { hash: v.hash, at: v.at, head: v.head, files: (data.lists[v.list] ?? []).length }])) });
+}
+
+const need = (key) => {
+  if (!key) throw fail("revisions needs a key");
+  return key;
+};
+
+// --- attempts ---
+
+export const ATTEMPT_KINDS = new Set(["gap", "verify", "research"]);
+export const attemptFile = (phase, kind) => path.join(phase.dir, `${kind}-attempt.json`);
+export const attemptKey = (kind, inputDigest, runId) => sha256(`${kind}\0${inputDigest}\0${runId}`);
+
+export const readAttempt = (phase, kind) => readJsonIf(attemptFile(phase, kind), null);
+
+// Record (or continue) the attempt of a run; an unfinished attempt of another run is abandoned, never adopted.
+export function recordAttempt(phase, kind, input) {
+  if (!ATTEMPT_KINDS.has(kind)) throw fail(`--kind must be gap, verify or research`);
+  const runId = String(input.runId ?? "").trim();
+  const inputDigest = String(input.inputDigest ?? "").trim();
+  if (!runId) throw fail("attempt record needs runId (the ph workflow run id)");
+  if (!inputDigest) throw fail("attempt record needs inputDigest");
+  const key = attemptKey(kind, inputDigest, runId);
+  const old = readAttempt(phase, kind);
+  const abandoned = [...(old?.abandoned ?? [])];
+  let current;
+  if (old && old.key === key) {
+    current = { ...old, ...pick(input, ["before", "done", "result"]), at: nowIso() };
+  } else {
+    if (old && !old.done) abandoned.push({ key: old.key, runId: old.runId, inputDigest: old.inputDigest, before: old.before ?? null, at: old.at });
+    current = { key, runId, inputDigest, before: input.before ?? null, done: Boolean(input.done), result: input.result ?? null, at: nowIso() };
+  }
+  const record = { kind, ...current, abandoned: abandoned.slice(-10) };
+  writeJsonAtomic(attemptFile(phase, kind), record);
+  return { ...record, abandonedNow: old && old.key !== key && !old.done ? old.key : null };
+}
+
+const pick = (obj, keys) => Object.fromEntries(keys.filter((k) => obj[k] !== undefined).map((k) => [k, obj[k]]));

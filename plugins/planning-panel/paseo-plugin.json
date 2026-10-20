@@ -1,0 +1,7 @@
+{
+  "id": "planning-panel",
+  "description": "Read-only view of a workspace's .planning/ folder: GSD phases, plans, waves, files and stats.",
+  "requirements": {
+    "paseo": "0.11.2"
+  }
+}

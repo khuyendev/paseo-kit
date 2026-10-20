@@ -1,0 +1,5 @@
+{
+  "_notes": "Project overlay over .agents/harness.defaults.json, loaded by .agents/harness/config.mjs. paseo-kit creates this file once and never overwrites it. Write only differences from the defaults. Maps such as tiers, adapter and gsd merge per entry: an entry you set replaces that whole default entry, so write nested entries whole. Machine keys (agent_providers, agent_provider_disallowed_tools, agent_provider_env, main_provider_disallowed_tools) and first_prompt_note are kit-owned and ignored here. The adapter and gsd sections are the project adapter, written by the harness skill after gsd-map-codebase. Check the effective values with: node .agents/harness/ph.mjs config",
+  "adapter": {},
+  "gsd": {}
+}

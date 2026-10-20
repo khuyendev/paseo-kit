@@ -1,0 +1,34 @@
+// Text of `node kit.mjs help` for the project verbs (INST-28); README carries the same facts at more length.
+import { MIN_CLAUDE_VERSION, NODE_REQUIREMENT } from "../../ship/.agents/harness/platform.mjs";
+import { USAGE } from "./index.mjs";
+
+export const HELP = [
+  ...USAGE,
+  "",
+  "verbs:",
+  "  install <project>   copy the kit parts into a project, wire settings, seed project files, write .agents/harness-kit.json",
+  "  update <project>    take kit changes; keep local edits (listed, exit 2) unless --force",
+  "  status <project>    read-only: list every kit part that differs",
+  "  pull <project> [<part>...] [--force] [--kit DIR]",
+  "                      copy locally edited parts (one or several) back into the kit (DIR, else $PASEO_KIT, else this kit)",
+  "  --enable-plugin     install/update only: activate the harness-files mod via claude plugin install --scope project",
+  "exit: 0 done; 1 usage or file error, nothing done; 2 done with conflicts, kept parts or blocked hooks left",
+  "",
+  "requirements:",
+  `  ${NODE_REQUIREMENT}; Claude Code >= ${MIN_CLAUDE_VERSION} for the harness-files mod; Paseo CLI with a running daemon; Git`,
+  "",
+  "ownership:",
+  "  kit-owned (tracked by digest): .agents/harness.defaults.json, .agents/harness/** runtime, kit agents, workflows, skills, hooks, .claude/plugins/**, the AGENTS.md block",
+  "  project-owned, seeded once and never overwritten: .agents/harness.config.json (overlay and adapter), .agents/harness-history.md, .planning/",
+  "  generated: .agents/harness-kit.json (the manifest)",
+  "  shared: .claude/settings.json (only the kit hook registrations are reconciled), CLAUDE.md (@AGENTS.md import), .gitignore (kit block)",
+  "  Paseo-owned: the Paseo config; install never edits Paseo settings; machine apply carries the provider deny rules",
+  "",
+  "--force never overrides: removed-local parts, seeds, project-owned skills, agents and hooks, settings keys and hooks other",
+  "  than kit registrations, CLAUDE.md lines, .gitignore lines outside the kit block, user-scope Claude config, version gates",
+  "",
+  "upgrade of a kit 0.1.0 project: move .agents/harness-kit.json aside (e.g. to .agents/harness-kit.old.json), run install,",
+  "  resolve the listed conflicts, delete retired files by hand",
+  "old MCP file servers, when ready: claude mcp remove --scope user fsbatch",
+  "                                  claude mcp remove --scope user filesystem",
+];

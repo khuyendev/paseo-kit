@@ -1,0 +1,256 @@
+// Commands on existing agents: send, watch, result, team, context, stop, archive (PHCL-11..13, PHCL-15, PHCL-16,
+// PHCL-19, PHCL-20).
+import path from "node:path";
+import { assertPromptSize } from "../paseo-client/index.mjs";
+import { UsageError, errText, failedLine } from "../lib/cli.mjs";
+import { readJsonIf, writeJsonAtomic } from "../lib/io.mjs";
+import { id8, resolveInside } from "../lib/paths.mjs";
+import { pidAlive } from "../lib/proc.mjs";
+import { resultJson } from "./result.mjs";
+import { readPrompt, waitHint } from "./start.mjs";
+
+export const RUNS_DIR = "_workspace/_runs";
+const SEND_NOW_WAIT_MS = 60000;
+const SEND_POLL_MS = 500;
+const SEND_POLL_MAX_MS = 15000;
+
+async function send(ctx) {
+  const text = readPrompt(ctx);
+  assertPromptSize(text, ctx.cfg);
+  const session = await ctx.paseo();
+  const targets = await session.resolveTargets(ctx.args);
+  const results = await Promise.allSettled(targets.map(async (a) => {
+    const now = await session.fetchAgent(a.id);
+    if (now?.status === "running") {
+      if (ctx.opts.now) await session.cancel(a.id);
+      await session.waitForFinish(a.id, ctx.opts.now ? SEND_NOW_WAIT_MS : ctx.cfg.wait_timeout_s * 1000);
+    }
+    await session.sendPrompt(a.id, text);
+    // Wait until the agent reports running, so a `ph watch` started right after does not see the stale idle state.
+    for (let waited = 0; waited < SEND_POLL_MAX_MS; waited += SEND_POLL_MS) {
+      if ((await session.fetchAgent(a.id))?.status === "running") break;
+      await ctx.clock.sleep(SEND_POLL_MS);
+    }
+  }));
+  const sent = [];
+  results.forEach((r, i) => {
+    const title = targets[i].title ?? targets[i].id;
+    if (r.status === "fulfilled") {
+      ctx.out(`sent ${title}`);
+      sent.push(title);
+    } else ctx.out(failedLine(`send ${title}`, r.reason));
+  });
+  if (sent.length) ctx.out(waitHint(ctx.ph, sent));
+  return sent.length === targets.length ? 0 : 2;
+}
+
+const orQ = (v) => (v === undefined || v === null ? "?" : v);
+
+// Raw waits only: watch subscribes no usage tracker and reads the numbers the daemon keeps for the last turn.
+async function watch(ctx) {
+  const session = await ctx.paseo();
+  const targets = await session.resolveTargets(ctx.args);
+  let idle = 0;
+  await Promise.all(targets.map(async (a) => {
+    try {
+      const st = await session.waitForFinish(a.id, ctx.cfg.wait_timeout_s * 1000);
+      if (st.status !== "idle") {
+        ctx.out(`failed ${a.title} ${id8(a.id)}: ${st.status === "error" ? `error: ${errText(st.error ?? "unknown error")}` : st.status}`);
+        return;
+      }
+      const f = st.final ?? a;
+      const u = f.lastUsage ?? {};
+      const from = Date.parse(f.lastUserMessageAt ?? "");
+      const to = Date.parse(f.updatedAt ?? "");
+      const duration = Number.isFinite(from) && Number.isFinite(to) ? Math.round((to - from) / 1000) : null;
+      ctx.out(`idle ${a.title} ${id8(a.id)} out_tokens=${orQ(u.outputTokens)} context_tokens=${orQ(u.contextWindowUsedTokens)} duration_s=${orQ(duration)}`);
+      idle++;
+    } catch (e) {
+      ctx.out(`failed ${a.title} ${id8(a.id)}: ${errText(e)}`);
+    }
+  }));
+  const failed = targets.length - idle;
+  ctx.out(`watch done: ${idle} idle, ${failed} failed`);
+  return failed ? 2 : 0;
+}
+
+async function result(ctx) {
+  const session = await ctx.paseo();
+  const targets = await session.resolveTargets(ctx.args);
+  for (const a of targets) {
+    if (ctx.opts.json) ctx.out(JSON.stringify(await resultJson(session, a)));
+    else {
+      if (targets.length > 1) ctx.out(`## ${a.title}`);
+      ctx.out(String(await session.replyText(a.id)));
+    }
+  }
+  return 0;
+}
+
+export function usedPct(agent) {
+  const u = agent?.lastUsage ?? {};
+  return u.contextWindowUsedTokens && u.contextWindowMaxTokens ? (100 * u.contextWindowUsedTokens) / u.contextWindowMaxTokens : null;
+}
+
+async function team(ctx) {
+  const session = await ctx.paseo();
+  session.requireCaller();
+  const live = await session.listAgents();
+  if (!live.length) ctx.out("no live subagents");
+  for (const a of live) {
+    const p = usedPct(a);
+    ctx.out(`${id8(a.id)} ${a.status} ${p === null ? "?" : Math.round(p)}% ${a.provider}/${a.model} ${a.title}`);
+  }
+  return 0;
+}
+
+function rotatePct(ctx) {
+  const raw = ctx.opts["rotate-pct"];
+  if (raw === undefined) return ctx.cfg.context_guard.start_pct;
+  const n = Number(raw);
+  if (!/^\d+(\.\d+)?$/.test(raw) || n <= 0 || n > 100) throw new UsageError(`--rotate-pct must be a number above 0 and at most 100, got '${raw}'`);
+  return n;
+}
+
+async function context(ctx) {
+  const rotate = rotatePct(ctx);
+  const session = await ctx.paseo();
+  const caller = session.requireCaller();
+  let agents;
+  if (ctx.opts.self) agents = [await session.fetchAgent(caller)].filter(Boolean);
+  else agents = ctx.args.length ? await session.resolveTargets(ctx.args) : await session.listAgents();
+  if (!agents.length) {
+    ctx.out("no live subagents");
+    return 0;
+  }
+  const sorted = [...agents].sort((x, y) => (usedPct(y) ?? -1) - (usedPct(x) ?? -1));
+  for (const a of sorted) {
+    const p = usedPct(a);
+    const u = a.lastUsage ?? {};
+    const pct = p === null ? "  n/a" : `${p.toFixed(0).padStart(4)}%`;
+    ctx.out(`${id8(a.id)} ${pct} ${orQ(u.contextWindowUsedTokens)}/${orQ(u.contextWindowMaxTokens)} ${a.status} ${a.title ?? ""}${p !== null && p >= rotate ? "  ROTATE" : ""}`);
+  }
+  return 0;
+}
+
+async function stop(ctx) {
+  const session = await ctx.paseo();
+  let failed = 0;
+  for (const a of await session.resolveTargets(ctx.args)) {
+    try {
+      await session.cancel(a.id);
+      ctx.out(`stopped ${a.title}`);
+    } catch (e) {
+      failed++;
+      ctx.out(failedLine(`stop ${a.title}`, e));
+    }
+  }
+  return failed ? 2 : 0;
+}
+
+// --run: end a workflow run for good, so watchers and resumes see a terminal state.
+async function runAgents(ctx, session, own) {
+  const runId = ctx.opts.run;
+  if (!/^[A-Za-z0-9._-]+$/.test(runId) || runId.includes("..")) throw new UsageError(`invalid run id '${runId}'`);
+  const runsDir = path.resolve(ctx.root, ctx.opts["runs-dir"] ?? RUNS_DIR);
+  const file = path.join(resolveInside(runsDir, runId), "run.json");
+  const info = readJsonIf(file);
+  if (!info) throw new Error(`no run ${runId} (${file})`);
+  if (info.status === "running" && pidAlive(info.pid)) {
+    try {
+      process.kill(info.pid);
+      ctx.out(`stopped runner pid ${info.pid}`);
+    } catch (e) {
+      ctx.out(`could not stop runner pid ${info.pid}: ${errText(e)}`);
+    }
+  }
+  // FLOW-48: agents adopted from an earlier run belong to this run too.
+  const adopted = new Set((info.adopted ?? []).map((a) => a.agentId));
+  const selected = own.filter((a) => a.labels?.["harness.run"] === runId || adopted.has(a.id));
+  return { selected, finish: () => info.status === "running" && writeJsonAtomic(file, { ...info, status: "stopped", endedAt: new Date(ctx.clock.now()).toISOString() }) };
+}
+
+async function archive(ctx) {
+  const { opts } = ctx;
+  const session = await ctx.paseo();
+  session.requireCaller();
+  const own = await session.listAgents();
+  let selected;
+  let finish = () => {};
+  if (opts.run !== undefined) ({ selected, finish } = await runAgents(ctx, session, own));
+  else if (ctx.args.length) selected = await session.resolveTargets(ctx.args);
+  else if (opts.idle || opts["name-prefix"] !== undefined) {
+    selected = own.filter((a) => (!opts.idle || a.status !== "running") && (opts["name-prefix"] === undefined || (a.title ?? "").startsWith(opts["name-prefix"])));
+  } else throw new UsageError("name agents, or use --idle / --name-prefix");
+  let ok = 0;
+  for (const a of selected) {
+    try {
+      await session.archive(a.id);
+      ok++;
+    } catch (e) {
+      ctx.out(failedLine(`archive ${a.title}`, e));
+    }
+  }
+  finish();
+  ctx.out(`archived ${ok} of ${selected.length} agents`);
+  return ok === selected.length ? 0 : 2;
+}
+
+export const agentCommands = [
+  {
+    name: "send",
+    summary: "deliver a message to agents between their turns (--now interrupts the running turn)",
+    usage: "ph send (--prompt T | --prompt-file F) [--now] NAME|ID...",
+    options: { prompt: "string", "prompt-file": "string", now: "bool" },
+    config: "required",
+    run: send,
+  },
+  {
+    name: "watch",
+    summary: "wait until the named agents are idle, one line per agent (run under Monitor)",
+    usage: "ph watch NAME|ID...",
+    options: {},
+    config: "required",
+    run: watch,
+  },
+  {
+    name: "result",
+    summary: "print the final reply of agents (--json: reply, usage, tokens, cost, skills)",
+    usage: "ph result [--json] NAME|ID...",
+    options: { json: "bool" },
+    config: "required",
+    run: result,
+  },
+  {
+    name: "team",
+    summary: "list your live subagents: id, status, context use, model, name",
+    usage: "ph team",
+    options: {},
+    config: "required",
+    run: team,
+  },
+  {
+    name: "context",
+    summary: "context-window use of your subagents or yourself, ROTATE at the threshold",
+    usage: "ph context [--self] [--rotate-pct N] [NAME|ID...]",
+    options: { self: "bool", "rotate-pct": "string" },
+    config: "required",
+    run: context,
+  },
+  {
+    name: "stop",
+    summary: "cancel the running turn of agents, keeping agent and context",
+    usage: "ph stop NAME|ID...",
+    options: {},
+    config: "required",
+    run: stop,
+  },
+  {
+    name: "archive",
+    summary: "archive agents by name, --idle, --name-prefix, or every agent of a workflow run",
+    usage: "ph archive NAME|ID... | --idle [--name-prefix P] | --name-prefix P | --run RUNID [--runs-dir D]",
+    options: { idle: "bool", "name-prefix": "string", run: "string", "runs-dir": "string" },
+    config: "required",
+    run: archive,
+  },
+];

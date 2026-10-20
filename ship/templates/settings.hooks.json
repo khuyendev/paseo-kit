@@ -1,0 +1,37 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Grep|Glob|Write|Edit|MultiEdit|NotebookEdit|mcp__harness-files__.*",
+        "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/io_guard.mjs\"", "timeout": 10 }]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/bash_long_command.mjs\"", "timeout": 10 }]
+      },
+      {
+        "matcher": "Edit|MultiEdit|Write|mcp__harness-files__(edit|write)_multiple_files",
+        "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/syntax_check.mjs\"", "timeout": 90 }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Read|Grep|Glob|mcp__harness-files__read_ranges",
+        "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/io_guard.mjs\"", "timeout": 10 }]
+      },
+      {
+        "matcher": "*",
+        "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/context_guard.mjs\"", "timeout": 10 }]
+      },
+      {
+        "matcher": "Edit|MultiEdit|Write|mcp__harness-files__(edit|write)_multiple_files",
+        "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/syntax_check.mjs\"", "timeout": 90 }]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/context_guard.mjs\"", "timeout": 10 }]
+      }
+    ]
+  }
+}

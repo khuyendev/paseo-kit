@@ -1,0 +1,208 @@
+# Kit overlay — the harness generates the project adapter
+
+This file is the paseo-kit's adapter layer for the `harness` and `harness-evolve` skills. The method in `SKILL.md`
+and the other references is carried unchanged; this overlay says what the method produces in this kit and the
+kit's rules for it. Where the two differ for a kit project, this overlay wins.
+
+## Contents
+
+1. [What the harness output is for](#1-what-the-harness-output-is-for)
+2. [When to run](#2-when-to-run)
+3. [Inputs](#3-inputs)
+4. [The adapter sections](#4-the-adapter-sections)
+5. [Adapter scripts](#5-adapter-scripts)
+6. [Stack skill and project agents](#6-stack-skill-and-project-agents)
+7. [Model tiers and roles](#7-model-tiers-and-roles)
+8. [Lint](#8-lint)
+9. [Trigger tests and eval records](#9-trigger-tests-and-eval-records)
+10. [History row, report and confirmation](#10-history-row-report-and-confirmation)
+11. [Evolve](#11-evolve)
+
+## 1. What the harness output is for
+
+The kit ships a generic GSD core (plan, execute, verify, debug) that knows nothing about any project. The harness
+fills that gap: it reads the codebase map and writes the **project adapter**, the project data the GSD core, the
+GSD flows and the kit hooks read by name. The adapter is:
+
+- the `adapter` and `gsd` sections of `.agents/harness.config.json` (plus the `tiers` the roles use);
+- one stack skill in `.claude/skills/<stack>/` (how to write code in this stack);
+- project agents in `.agents/agents/`, only where a kit GSD agent is not enough;
+- the scripts the adapter names (verify resolvers, parsers, checkers).
+
+The method's steps still guide the work: step 0 (inspect what exists), the role-vs-skill split, the overlap checks
+before any new agent or skill (step 3, step 4-0), model choice (step 3), skill writing (step 4) and testing
+(step 6), and the history table (step 7). Building a generic agent team is not a kit goal; do it only when the owner
+asks for one.
+
+## 2. When to run
+
+- After `gsd-map-codebase` wrote `.planning/codebase/*.md`, before `gsd-new-project` plans anything.
+- When the owner asks to generate, regenerate or extend the adapter (a new language, a new test runner).
+- Lessons from runs and feedback on an existing adapter go to `harness-evolve` (section 11).
+
+## 3. Inputs
+
+- `.planning/codebase/*.md`: STACK, INTEGRATIONS, ARCHITECTURE, STRUCTURE, CONVENTIONS, TESTING, CONCERNS.
+- `node .agents/harness/ph.mjs config`: the effective adapter and its sources (kit defaults are neutral).
+- `.agents/agents/` (the kit's GSD agents and any project agents), `.claude/skills/`, `CLAUDE.md`, `AGENTS.md`.
+- `.agents/harness-history.md` (earlier adapter changes and their reasons).
+- The code itself: run the build and test commands you intend to write before writing them.
+
+## 4. The adapter sections
+
+Write each entry you set **whole**: an overlay entry replaces the kit default entry entirely, and closed
+validation names any missing nested key (ADPT-14). Omit an entry to keep the kit default. Every command is an argv
+array run without a shell from the code root (`["npm", "test"]`, never `"npm test"`).
+
+| Entry | ID | What to write |
+| --- | --- | --- |
+| `adapter.commands` | ADPT-02 | `{build, test, build_timeout_s, test_timeout_s, gates: [{name, argv}], verify: {<runner>: {argv, timeout_s}}}`; `build`/`test` are argv or `null` (a null command is reported `not configured` and never counts green); verify runners may use the placeholders `{argument}` and `{targets}` (each target one argv element) |
+| `adapter.verify_vocabulary` | ADPT-03 | `{<kind>: {prefix, parser, resolver, runner, evidence_parser, exit_code_sufficient}}`: the `<automated>` obligation kinds plans may use (for example `test:` naming test filters); keep the default `build` and `cmd:` kinds; give every new kind a resolver (does the target exist), a runner (a key of `commands.verify`) and an evidence parser (how many targets really ran) unless its exit code alone is proof |
+| `adapter.ownership` | ADPT-04 | `{owns_forms: [{prefix, maps_to}], shared: {globs, predicate}, source_roots}`: how plans name the files they own, which files are shared (lock files, generated registries) and where source lives |
+| `adapter.review_lenses` | ADPT-05 | `[{name, text, stage, applies_to}]`: code-review lenses for this stack (stage `code`, `skeleton` or `plan_review`; `applies_to` globs); none = the kit lens `correctness` |
+| `adapter.syntax_checkers` | ADPT-06 | `{".ext": {argv, timeout_s, max_parallel}}`: a fast checker per file extension; it gets the file path as its last argument, prints `file:line:col: message` and exits non-zero on a syntax error |
+| `adapter.instructions` | ADPT-07 | repo-relative instruction files (coding rules, layout) every planner, checker and executor reads |
+| `adapter.envelope` | ADPT-08 | optional `[{axis, values or range, source}]`: the operating envelope a fix is judged against (platforms, sizes, versions) |
+| `adapter.stack_skill`, `adapter.agents` | ADPT-09 | the stack skill's folder name; GSD role -> project agent type, only for roles a project agent replaces (`architect` enables the wiring stage) |
+| `adapter.mutex` | ADPT-10 | optional machine-wide lock name for heavy commands (one build at a time across worktrees) |
+| `adapter.startup_globs`, `adapter.hook_timeout_s`, `adapter.attribution` | ADPT-13 | files whose change needs a cold-start smoke test; adapter script timeout; optional failure-attribution script |
+| `gsd.roles` | ADPT-11 | `{<role>: {model, effort, reason}}` for the roles whose model or effort differs from the agent definition; a non-empty `reason` on every entry |
+| `gsd.granularity`, `gsd.plan_limits` | ADPT-12 | plan size for this codebase; split plans for real reasons (overlapping owns in one wave, an ordering coupling, a gating spike, a plan too big for one coder context) |
+| other `gsd` keys | ADPT-13 | `execution_mode`, `isolation`, `commit_policy`, `branching`, `protected_branches`, `requirement_id_regex`, `research`, `plan_review`, `skeleton_lanes`, loop bounds, `debug`, `fixer`, `parallelization`, `review_depth`: set only what the project needs to differ |
+| `tiers` | CONF-11 | the shipped tiers are unconfigured; set `frontier`, `pro` and `standard` to `circle/<model>` with the owner's choice of models |
+
+Example (a Node web service):
+
+```json
+{
+  "tiers": {
+    "frontier": {"provider": "circle/<strongest model>", "thinking": "high"},
+    "pro": {"provider": "circle/<strong model>", "thinking": "high"},
+    "standard": {"provider": "circle/<fast model>", "thinking": "low"}
+  },
+  "adapter": {
+    "commands": {"build": ["npm", "run", "build"], "test": ["npm", "test"], "build_timeout_s": 300,
+      "test_timeout_s": 600, "gates": [], "verify": {"jest": {"argv": ["npx", "jest", "{targets}"], "timeout_s": 600}}},
+    "verify_vocabulary": {
+      "build": {"prefix": "build", "parser": null, "resolver": null, "runner": null, "evidence_parser": null, "exit_code_sufficient": true},
+      "cmd": {"prefix": "cmd:", "parser": null, "resolver": null, "runner": null, "evidence_parser": null, "exit_code_sufficient": true},
+      "test": {"prefix": "test:", "parser": null, "resolver": "tools/adapter/resolve-test.mjs", "runner": "jest",
+        "evidence_parser": "tools/adapter/jest-evidence.mjs", "exit_code_sufficient": false}
+    },
+    "syntax_checkers": {".js": {"argv": ["node", "--check"], "timeout_s": 20}},
+    "stack_skill": "node-service"
+  },
+  "gsd": {"roles": {"executor": {"model": "pro", "effort": "medium", "reason": "multi-file structural changes in src/"}}}
+}
+```
+
+## 5. Adapter scripts
+
+Scripts the adapter names (resolver, parser, evidence parser, shared predicate, attribution) are project files,
+usually under a project folder such as `tools/adapter/`. The core runs them without a shell: a `.mjs`/`.js` path
+with the current node, any other path directly; cwd = the code root; timeout `adapter.hook_timeout_s`. The request
+is one JSON object on stdin `{v: 1, op, codeRoot, phaseDir?, ...}`; the response is one JSON line on stdout
+`{v: 1, ...}`:
+
+| `op` | request fields | response |
+| --- | --- | --- |
+| `parse` | `kind, argument` | `{targets: [string]}` |
+| `resolve` | `kind, targets, plan, filesModified` | `{results: [{target, status: ok\|pending_creation\|missing\|unresolvable, detail?}]}` |
+| `shared` | `paths` | `{shared: [path]}` |
+| `evidence` | `kind, argument, targets, exitCode, stdoutPath, stderrPath` | `{executed: {count, targets}, failed: [string], outcome: passed\|failed\|unavailable}` |
+| `attribute` | `failures: [{text, file?}], plans: [{id, owns}]` | `{assignments: [{failure, plan\|null}]}` |
+
+A non-zero exit, a timeout, another `v`, a missing field or unparsable output counts as `unresolvable`, never as a
+pass. Test each script by hand with one request before relying on it. An evidence parser must report how many
+targets really ran: a test runner that exits 0 after running nothing is a failure, not a pass.
+
+## 6. Stack skill and project agents
+
+- Write one stack skill `.claude/skills/<stack>/SKILL.md`: how to write, build and test code in this stack, the
+  project's conventions from `CONVENTIONS.md`, and the traps from `CONCERNS.md`. Executor and fixer prompts tell
+  the agent to follow it. Follow the skill-writing guide (description with "use when" triggers, body under 500
+  lines, details in `references/`).
+- Reuse the kit's GSD agents in `.agents/agents/` (`gsd-executor`, `gsd-code-reviewer`, `gsd-code-fixer`,
+  `gsd-verifier` and the others) before creating any agent. A project agent is justified only when a role needs
+  knowledge or tools the stack skill cannot give the generic agent (for example an interface architect for a
+  codebase with a wiring layer); map it in `adapter.agents`.
+- Agent front matter keys: `name`, `description`, `tools` (advisory), `model` (a tier), `include` (repo-relative
+  files loaded into the prompt). Nothing else.
+
+## 7. Model tiers and roles
+
+Coding work reads the tiers this way (D-59): **standard** = coding with a clear procedure (a known pattern, a
+mechanical change, a fix with a stated cause); **pro** = multi-step structural coding (design, cross-module
+changes, review, verification); **frontier** = planning and long autonomous work that changes its plan from
+results. Agent files name only a tier in `model:`. Concrete model ids appear only in `tiers` and in `gsd.roles`
+entries, each with a non-empty `reason`.
+
+## 8. Lint
+
+`node .agents/harness/ph.mjs harness lint` checks what the harness generated: the files listed in the Scope of the
+latest history row written by the harness or harness-evolve, and every skill, agent and script the adapter names.
+It fails (exit 2, one line per finding) on: an adapter that fails closed validation; a named agent, skill or
+script that does not exist; skill front matter without `name` or a `description` with a "use when" trigger; a
+SKILL.md over 500 lines; a reference over 300 lines without a contents list; a README, CHANGELOG or INSTALLATION
+file in a skill folder; a generated file under `.claude/commands/`; agent front matter without `name` or
+`description` or with other keys; a concrete model id in an agent file; a role entry without `reason`; operational
+use of in-session primitives (`Agent(`, `Workflow(`, `SendMessage(`, `Task*`, `TeamCreate`, `TeamDelete`, team
+flags); workflow scripts with `Date.now()`, `Math.random()` or a non-literal `meta`, `phase()` titles missing from
+`meta.phases`; orchestrator skills without an execution mode at the top, an unlabelled stage of a mixed one, or no
+`## Test scenarios` with a normal and an error flow; malformed history rows and eval records. Warnings (exit 0):
+bare mentions of primitives, an agent with Write but not Edit, unguarded `agent()`/`parallel()` results used as
+arrays, a generated skill without a trigger record. `--all` also reports other owner content, as warnings only.
+Fix every failure before reporting; never change provider settings to satisfy lint.
+
+The semantic checks of the method (stage inputs and outputs connect, mode handoffs, a dry run, step 6-5) stay
+manual: record that you did them in the history row's Change cell.
+
+## 9. Trigger tests and eval records
+
+Every project skill the harness generates gets a trigger test: 10 requests that should invoke it and 10 near
+misses (step 6-4), each run in a fresh agent (`ph fanout --collect` or a workflow; inspect `skills` in the result
+JSON) on `circle/gpt-6-luna-fast[1m]` unless the owner names another model. Record it in
+`.agents/skill-tests/<skill>/triggers.json`:
+
+```json
+{"skill": "node-service", "date": "2026-10-20", "model": "circle/gpt-6-luna-fast[1m]",
+ "requests": [{"text": "...", "should_trigger": true, "triggered": true}],
+ "precision": 1.0, "recall": 0.9}
+```
+
+and put precision and recall in the history row. With-skill versus baseline runs and the blind A/B workflow of the
+skill-testing guide stay optional; when you run them, the records follow the guide's exact field names:
+`eval_metadata.json {eval_id, eval_name, prompt, assertions}`, `grading.json {expectations: [{text, passed,
+evidence}], summary: {passed, failed, total, pass_rate}}`, `timing.json {total_tokens, duration_ms,
+total_duration_seconds}`.
+
+## 10. History row, report and confirmation
+
+Append one row per change to `.agents/harness-history.md`, newest last:
+
+```markdown
+| Date | Change | Scope | Reason | Supersedes |
+|------|--------|-------|--------|------------|
+| 2026-10-20 | Generate adapter (node-service stack skill, jest test kind) | .agents/harness.config.json, .claude/skills/node-service/SKILL.md, tools/adapter/resolve-test.mjs | map-codebase done; first adapter; triggers p=1.0 r=0.9 | |
+```
+
+Date is ISO (`YYYY-MM-DD`) and never earlier than the row above; Scope lists repo-relative paths separated by
+commas (lint checks exactly these files); Supersedes names the earlier row's date and change when this row undoes
+it, else stays empty.
+
+Then report to the owner, in the owner's language: what was written (each adapter entry, the stack skill, any
+agent and script), the commands you ran and their results, the lint result, and what you could not decide. Ask
+the owner to confirm before any GSD flow relies on the adapter. Files the harness writes (adapter, skills, agents,
+history rows) are in English whatever language the owner uses.
+
+## 11. Evolve
+
+`harness-evolve` evolves the adapter the same way the method evolves a harness. Its sources in this kit:
+`.agents/harness-history.md`; `git log` of `.agents/`, `.claude/`, `AGENTS.md` and `CLAUDE.md`; run records
+`_workspace/_runs/*/run.json` and the `null` reasons in `journal.jsonl`; `_workspace/review-metrics.jsonl` (review
+findings per run); and each phase's `.planning/phases/<NN>-<slug>/deferred.md`. Map each lesson to the adapter part
+it touches (a verify kind that keeps failing to resolve -> its resolver; repeated review findings of one kind -> a
+review lens or the stack skill; a gate that is slow -> `commands` timeouts or `mutex`). Apply one change at a time,
+run lint, re-run at least 3 + 3 trigger requests when a skill description changed, and append a history row.
+Lessons that apply to every project go back to the kit with `node <kit>/kit.mjs pull <project> <files> --kit
+<kit dir>`.

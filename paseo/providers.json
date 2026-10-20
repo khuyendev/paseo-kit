@@ -1,0 +1,467 @@
+{
+  "_notes": "Paseo providers of paseo-kit, written by kit.mjs machine export. kit.mjs machine apply adds missing providers and missing models only; existing providers, models and credentials are never changed or removed. The main provider stores its disallowedTools (owner denies plus main_provider_disallowed_tools); a worker stores no disallowedTools and none of the agent_provider_env keys: apply renders them from the kit defaults. {{HOME}} is the home folder; {{secret:NAME}} is filled only at apply time from $PASEO_KIT_NAME, a live provider on the same ANTHROPIC_BASE_URL, or $NAME. apply then runs paseo reload (--no-reload skips it); the daemon is never restarted.",
+  "providers": {
+    "circle": {
+      "extends": "claude",
+      "label": "Claude Code (Circle)",
+      "description": "Claude Code for the main sessions you open",
+      "env": {
+        "CLAUDE_CONFIG_DIR": "{{HOME}}/.claude-circle",
+        "ANTHROPIC_BASE_URL": "{{secret:ANTHROPIC_BASE_URL}}",
+        "ANTHROPIC_AUTH_TOKEN": "{{secret:ANTHROPIC_AUTH_TOKEN}}",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "gpt-6-luna-fast[1m]",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5-5[1m]",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5",
+        "API_TIMEOUT_MS": "3000000"
+      },
+      "models": [
+        {
+          "id": "claude-opus-5-5[1m]",
+          "label": "Opus 5.5 (1M)",
+          "thinkingOptions": [
+            {
+              "id": "low",
+              "label": "Low"
+            },
+            {
+              "id": "medium",
+              "label": "Medium",
+              "isDefault": true
+            },
+            {
+              "id": "high",
+              "label": "High"
+            },
+            {
+              "id": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "id": "max",
+              "label": "Max"
+            }
+          ]
+        },
+        {
+          "id": "claude-sonnet-5-5[1m]",
+          "label": "Sonnet 5.5 (1M)",
+          "isDefault": true,
+          "thinkingOptions": [
+            {
+              "id": "off",
+              "label": "Off"
+            },
+            {
+              "id": "low",
+              "label": "Low"
+            },
+            {
+              "id": "medium",
+              "label": "Medium"
+            },
+            {
+              "id": "high",
+              "label": "High",
+              "isDefault": true
+            },
+            {
+              "id": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "id": "max",
+              "label": "Max"
+            }
+          ]
+        },
+        {
+          "id": "claude-haiku-4-5",
+          "label": "Haiku 4.5"
+        },
+        {
+          "id": "gpt-6.1-sol[1m]",
+          "label": "GPT-6.1 Sol (1M)",
+          "thinkingOptions": [
+            {
+              "id": "low",
+              "label": "Low"
+            },
+            {
+              "id": "medium",
+              "label": "Medium",
+              "isDefault": true
+            },
+            {
+              "id": "high",
+              "label": "High"
+            },
+            {
+              "id": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "id": "max",
+              "label": "Max"
+            }
+          ]
+        },
+        {
+          "id": "gpt-6.1-sol-fast[1m]",
+          "label": "GPT-6.1 Sol Fast (1M)",
+          "thinkingOptions": [
+            {
+              "id": "low",
+              "label": "Low"
+            },
+            {
+              "id": "medium",
+              "label": "Medium",
+              "isDefault": true
+            },
+            {
+              "id": "high",
+              "label": "High"
+            },
+            {
+              "id": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "id": "max",
+              "label": "Max"
+            }
+          ]
+        },
+        {
+          "id": "gpt-6-astra[1m]",
+          "label": "GPT-6 Astra (1M)",
+          "thinkingOptions": [
+            {
+              "id": "low",
+              "label": "Low"
+            },
+            {
+              "id": "medium",
+              "label": "Medium",
+              "isDefault": true
+            },
+            {
+              "id": "high",
+              "label": "High"
+            },
+            {
+              "id": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "id": "max",
+              "label": "Max"
+            }
+          ]
+        },
+        {
+          "id": "gpt-6-astra-fast[1m]",
+          "label": "GPT-6 Astra Fast (1M)",
+          "thinkingOptions": [
+            {
+              "id": "low",
+              "label": "Low"
+            },
+            {
+              "id": "medium",
+              "label": "Medium",
+              "isDefault": true
+            },
+            {
+              "id": "high",
+              "label": "High"
+            },
+            {
+              "id": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "id": "max",
+              "label": "Max"
+            }
+          ]
+        },
+        {
+          "id": "gpt-6-luna-fast[1m]",
+          "label": "GPT-6 Luna Fast (1M)",
+          "thinkingOptions": [
+            {
+              "id": "low",
+              "label": "Low"
+            },
+            {
+              "id": "medium",
+              "label": "Medium",
+              "isDefault": true
+            },
+            {
+              "id": "high",
+              "label": "High"
+            },
+            {
+              "id": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "id": "max",
+              "label": "Max"
+            }
+          ]
+        },
+        {
+          "id": "gemini-3.8-flash-high[1m]",
+          "label": "Gemini 3.8 Flash High (1M)",
+          "thinkingOptions": [
+            {
+              "id": "high",
+              "label": "High",
+              "isDefault": true
+            }
+          ]
+        }
+      ],
+      "disallowedTools": [
+        "Agent",
+        "Workflow"
+      ]
+    },
+    "circle-agent": {
+      "extends": "claude",
+      "label": "Claude Code (Circle, harness agents)",
+      "description": "Claude Code for harness agents (workers created through ph)",
+      "env": {
+        "CLAUDE_CONFIG_DIR": "{{HOME}}/.claude-circle",
+        "ANTHROPIC_BASE_URL": "{{secret:ANTHROPIC_BASE_URL}}",
+        "ANTHROPIC_AUTH_TOKEN": "{{secret:ANTHROPIC_AUTH_TOKEN}}",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5-5[1m]",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5-5[1m]",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5",
+        "API_TIMEOUT_MS": "3000000"
+      },
+      "models": [
+        {
+          "id": "claude-opus-5-5[1m]",
+          "label": "Opus 5.5 (1M)",
+          "thinkingOptions": [
+            {
+              "id": "low",
+              "label": "Low"
+            },
+            {
+              "id": "medium",
+              "label": "Medium",
+              "isDefault": true
+            },
+            {
+              "id": "high",
+              "label": "High"
+            },
+            {
+              "id": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "id": "max",
+              "label": "Max"
+            }
+          ]
+        },
+        {
+          "id": "claude-sonnet-5-5[1m]",
+          "label": "Sonnet 5.5 (1M)",
+          "isDefault": true,
+          "thinkingOptions": [
+            {
+              "id": "off",
+              "label": "Off"
+            },
+            {
+              "id": "low",
+              "label": "Low"
+            },
+            {
+              "id": "medium",
+              "label": "Medium"
+            },
+            {
+              "id": "high",
+              "label": "High",
+              "isDefault": true
+            },
+            {
+              "id": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "id": "max",
+              "label": "Max"
+            }
+          ]
+        },
+        {
+          "id": "claude-haiku-4-5",
+          "label": "Haiku 4.5"
+        },
+        {
+          "id": "gpt-6.1-sol[1m]",
+          "label": "GPT-6.1 Sol (1M)",
+          "thinkingOptions": [
+            {
+              "id": "low",
+              "label": "Low"
+            },
+            {
+              "id": "medium",
+              "label": "Medium",
+              "isDefault": true
+            },
+            {
+              "id": "high",
+              "label": "High"
+            },
+            {
+              "id": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "id": "max",
+              "label": "Max"
+            }
+          ]
+        },
+        {
+          "id": "gpt-6.1-sol-fast[1m]",
+          "label": "GPT-6.1 Sol Fast (1M)",
+          "thinkingOptions": [
+            {
+              "id": "low",
+              "label": "Low"
+            },
+            {
+              "id": "medium",
+              "label": "Medium",
+              "isDefault": true
+            },
+            {
+              "id": "high",
+              "label": "High"
+            },
+            {
+              "id": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "id": "max",
+              "label": "Max"
+            }
+          ]
+        },
+        {
+          "id": "gpt-6-astra[1m]",
+          "label": "GPT-6 Astra (1M)",
+          "thinkingOptions": [
+            {
+              "id": "low",
+              "label": "Low"
+            },
+            {
+              "id": "medium",
+              "label": "Medium",
+              "isDefault": true
+            },
+            {
+              "id": "high",
+              "label": "High"
+            },
+            {
+              "id": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "id": "max",
+              "label": "Max"
+            }
+          ]
+        },
+        {
+          "id": "gpt-6-astra-fast[1m]",
+          "label": "GPT-6 Astra Fast (1M)",
+          "thinkingOptions": [
+            {
+              "id": "low",
+              "label": "Low"
+            },
+            {
+              "id": "medium",
+              "label": "Medium",
+              "isDefault": true
+            },
+            {
+              "id": "high",
+              "label": "High"
+            },
+            {
+              "id": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "id": "max",
+              "label": "Max"
+            }
+          ]
+        },
+        {
+          "id": "gpt-6-luna-fast[1m]",
+          "label": "GPT-6 Luna Fast (1M)",
+          "thinkingOptions": [
+            {
+              "id": "low",
+              "label": "Low"
+            },
+            {
+              "id": "medium",
+              "label": "Medium",
+              "isDefault": true
+            },
+            {
+              "id": "high",
+              "label": "High"
+            },
+            {
+              "id": "xhigh",
+              "label": "Extra High"
+            },
+            {
+              "id": "max",
+              "label": "Max"
+            }
+          ]
+        },
+        {
+          "id": "gemini-3.8-flash-high[1m]",
+          "label": "Gemini 3.8 Flash High (1M)",
+          "thinkingOptions": [
+            {
+              "id": "high",
+              "label": "High",
+              "isDefault": true
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "metadataGeneration": {
+    "providers": [
+      {
+        "provider": "circle",
+        "model": "gemini-3.8-flash-high"
+      }
+    ]
+  }
+}

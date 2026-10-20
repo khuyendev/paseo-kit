@@ -1,0 +1,124 @@
+// Shared plumbing of the kit hooks: stdin parsing, the config root rule, the never-block wrapper (HOOK-04, HOOK-05).
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+export const TAIL_BYTES = 1024 * 1024;
+export const DAY_MS = 24 * 60 * 60 * 1000;
+
+// A broken or missing harness config: the only failure a hook reports (one stderr line, HOOK-05).
+export class HookConfigError extends Error {}
+
+export const sha256 = (text) => crypto.createHash("sha256").update(String(text)).digest("hex");
+export const firstLine = (e) => String(e?.message ?? e).split(/\r?\n/)[0].slice(0, 300);
+
+// HOOK-04: one root rule for every kit hook.
+export function hookRoot(input, env = process.env) {
+  return path.resolve(env.PASEO_HARNESS_ROOT || env.CLAUDE_PROJECT_DIR || input?.cwd || process.cwd());
+}
+
+// Modules of the installed runtime are loaded by absolute file URL from the root, never by a relative import (INV-09).
+export function harnessModule(root, rel) {
+  return import(pathToFileURL(path.join(root, ".agents", "harness", rel)).href);
+}
+
+// Returns loadConfig of the project's config.mjs; any failure to load it is a configuration error.
+export async function configLoader(root) {
+  try {
+    const { loadConfig } = await harnessModule(root, "config.mjs");
+    return loadConfig;
+  } catch (e) {
+    throw new HookConfigError(firstLine(e));
+  }
+}
+
+export async function loadHookConfig(input, env = process.env) {
+  const root = hookRoot(input, env);
+  const loadConfig = await configLoader(root);
+  try {
+    return loadConfig(root);
+  } catch (e) {
+    throw new HookConfigError(firstLine(e));
+  }
+}
+
+// The last bytes of a transcript as text; the first, possibly cut, line fails JSON parsing and is skipped by callers.
+export function readTailText(file, bytes = TAIL_BYTES) {
+  const size = fs.statSync(file).size;
+  const len = Math.min(size, bytes);
+  const buf = Buffer.alloc(len);
+  const fd = fs.openSync(file, "r");
+  try {
+    fs.readSync(fd, buf, 0, len, size - len);
+  } finally {
+    fs.closeSync(fd);
+  }
+  return buf.toString("utf8");
+}
+
+// Text of a tool result or tool_response: a string, content blocks, or an object holding either.
+export function resultText(value) {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(resultText).join("\n");
+  if (value && typeof value === "object") {
+    if (typeof value.text === "string") return value.text;
+    if ("content" in value) return resultText(value.content);
+  }
+  return "";
+}
+
+// Files the two harness-files write tools changed, from their reply lines (FTOL `edited <abs>: N edit(s)...`, `wrote <abs> (N chars)`).
+export function changedPathsInResult(text) {
+  const out = [];
+  for (const line of String(text).split(/\r?\n/)) {
+    const m = /^edited (.+?): \d+ edits?\b/.exec(line) ?? /^wrote (.+) \(\d+ chars\)$/.exec(line);
+    if (m) out.push(m[1]);
+  }
+  return out;
+}
+
+export function pruneOlderThan(dir, maxAgeMs, filter = () => true) {
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  const cutoff = Date.now() - maxAgeMs;
+  for (const name of names) {
+    if (!filter(name)) continue;
+    const p = path.join(dir, name);
+    try {
+      if (fs.statSync(p).mtimeMs < cutoff) fs.rmSync(p, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+export const contextOutput = (hookEventName, additionalContext) => ({ hookSpecificOutput: { hookEventName, additionalContext } });
+
+const fold = (p) => (process.platform === "win32" ? p.toLowerCase() : p);
+
+export function isScript(moduleUrl) {
+  try {
+    return Boolean(process.argv[1]) && fold(fs.realpathSync(process.argv[1])) === fold(fs.realpathSync(fileURLToPath(moduleUrl)));
+  } catch {
+    return false;
+  }
+}
+
+// HOOK-05: exit 0 on every path; a config error is one stderr line `<name> unavailable: <msg>`, anything else is silent.
+// The handler returns null or {output, warning}.
+export async function runHook(name, handler) {
+  try {
+    const input = JSON.parse(fs.readFileSync(0, "utf8").replace(/^﻿/, ""));
+    if (!input || typeof input !== "object" || Array.isArray(input)) return;
+    const result = await handler(input);
+    if (result?.warning) process.stderr.write(`${name} unavailable: ${result.warning}\n`);
+    if (result?.output) process.stdout.write(JSON.stringify(result.output));
+  } catch (e) {
+    if (e instanceof HookConfigError) process.stderr.write(`${name} unavailable: ${e.message}\n`);
+  } finally {
+    process.exitCode = 0;
+  }
+}

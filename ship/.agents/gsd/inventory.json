@@ -1,0 +1,631 @@
+{
+  "_notes": "Every installed GSD method file (GSDC-53). source = path in the upstream snapshot .agents/gsd/upstream, or kit-authored. ph gsd upstream build generates the agent and skill-workflow entries (upstream body unchanged except the three path rewrites, D-111); ph gsd upstream check compares them. Overlays are kit-authored and applied after the upstream text through include (they win on conflict). extra_verbs: rows a project or a bump adds to the not-ported verb table.",
+  "v": 1,
+  "snapshot": ".agents/gsd/upstream",
+  "entries": [
+    {
+      "installed": ".agents/agents/gsd-planner.md",
+      "kind": "agent",
+      "source": "agents/gsd-planner.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": ".agents/gsd/overlays/gsd-planner.md",
+      "model": "pro",
+      "description": "Creates GSD phase plans (PLAN.md files with tasks, waves, must_haves) for one phase or one plan of an outline.",
+      "include": [
+        ".agents/gsd/overlays/kit-core.md",
+        ".agents/gsd/overlays/gsd-planner.md",
+        ".agents/gsd/generated/plan-phase-contracts.md"
+      ]
+    },
+    {
+      "installed": ".agents/agents/gsd-plan-checker.md",
+      "kind": "agent",
+      "source": "agents/gsd-plan-checker.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": ".agents/gsd/overlays/gsd-plan-checker.md",
+      "model": "pro",
+      "description": "Checks GSD plans against the phase goal, requirements and decisions before execution; returns VERIFICATION PASSED or ISSUES FOUND.",
+      "include": [
+        ".agents/gsd/overlays/kit-core.md",
+        ".agents/gsd/overlays/gsd-plan-checker.md"
+      ]
+    },
+    {
+      "installed": ".agents/agents/gsd-phase-researcher.md",
+      "kind": "agent",
+      "source": "agents/gsd-phase-researcher.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": ".agents/gsd/overlays/gsd-phase-researcher.md",
+      "model": "pro",
+      "description": "Researches how to implement one GSD phase and writes its RESEARCH.md.",
+      "include": [
+        ".agents/gsd/overlays/kit-core.md",
+        ".agents/gsd/overlays/gsd-phase-researcher.md"
+      ]
+    },
+    {
+      "installed": ".agents/agents/gsd-executor.md",
+      "kind": "agent",
+      "source": "agents/gsd-executor.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": ".agents/gsd/overlays/gsd-executor.md",
+      "model": "standard",
+      "description": "Executes one GSD plan inside its owned files and writes the plan SUMMARY to the granted path.",
+      "include": [
+        ".agents/gsd/overlays/kit-core.md",
+        ".agents/gsd/overlays/gsd-executor.md",
+        ".agents/gsd/generated/executor-rules.md"
+      ]
+    },
+    {
+      "installed": ".agents/agents/gsd-verifier.md",
+      "kind": "agent",
+      "source": "agents/gsd-verifier.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": ".agents/gsd/overlays/gsd-verifier.md",
+      "model": "pro",
+      "description": "Verifies a GSD phase goal-backward from plans, summaries and gate evidence and writes VERIFICATION.md.",
+      "include": [
+        ".agents/gsd/overlays/kit-core.md",
+        ".agents/gsd/overlays/gsd-verifier.md"
+      ]
+    },
+    {
+      "installed": ".agents/agents/gsd-debugger.md",
+      "kind": "agent",
+      "source": "agents/gsd-debugger.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": ".agents/gsd/overlays/gsd-debugger.md",
+      "model": "pro",
+      "description": "Investigates one failure with the scientific method inside a .planning/debug session file.",
+      "include": [
+        ".agents/gsd/overlays/kit-core.md",
+        ".agents/gsd/overlays/gsd-debugger.md"
+      ]
+    },
+    {
+      "installed": ".agents/agents/gsd-codebase-mapper.md",
+      "kind": "agent",
+      "source": "agents/gsd-codebase-mapper.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": ".agents/gsd/overlays/gsd-codebase-mapper.md",
+      "model": "standard",
+      "description": "Maps one focus area of an existing codebase into .planning/codebase documents.",
+      "include": [
+        ".agents/gsd/overlays/kit-core.md",
+        ".agents/gsd/overlays/gsd-codebase-mapper.md"
+      ]
+    },
+    {
+      "installed": ".agents/agents/gsd-project-researcher.md",
+      "kind": "agent",
+      "source": "agents/gsd-project-researcher.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": ".agents/gsd/overlays/gsd-project-researcher.md",
+      "model": "standard",
+      "description": "Researches one dimension (stack, features, architecture, pitfalls) for a new project.",
+      "include": [
+        ".agents/gsd/overlays/kit-core.md",
+        ".agents/gsd/overlays/gsd-project-researcher.md"
+      ]
+    },
+    {
+      "installed": ".agents/agents/gsd-research-synthesizer.md",
+      "kind": "agent",
+      "source": "agents/gsd-research-synthesizer.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": ".agents/gsd/overlays/gsd-research-synthesizer.md",
+      "model": "standard",
+      "description": "Synthesizes the project research files into .planning/research/SUMMARY.md.",
+      "include": [
+        ".agents/gsd/overlays/kit-core.md",
+        ".agents/gsd/overlays/gsd-research-synthesizer.md"
+      ]
+    },
+    {
+      "installed": ".agents/agents/gsd-roadmapper.md",
+      "kind": "agent",
+      "source": "agents/gsd-roadmapper.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": ".agents/gsd/overlays/gsd-roadmapper.md",
+      "model": "pro",
+      "description": "Drafts the project roadmap: phases mapping every v1 requirement exactly once with success criteria.",
+      "include": [
+        ".agents/gsd/overlays/kit-core.md",
+        ".agents/gsd/overlays/gsd-roadmapper.md"
+      ]
+    },
+    {
+      "installed": ".agents/agents/gsd-code-reviewer.md",
+      "kind": "agent",
+      "source": "agents/gsd-code-reviewer.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": ".agents/gsd/overlays/gsd-code-reviewer.md",
+      "model": "pro",
+      "description": "Reviews the code a GSD plan changed through the given lenses and reports findings with triggers and confidence.",
+      "include": [
+        ".agents/gsd/overlays/kit-core.md",
+        ".agents/gsd/overlays/gsd-code-reviewer.md"
+      ]
+    },
+    {
+      "installed": ".agents/agents/gsd-code-fixer.md",
+      "kind": "agent",
+      "source": "agents/gsd-code-fixer.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": ".agents/gsd/overlays/gsd-code-fixer.md",
+      "model": "standard",
+      "description": "Fixes confirmed code-review findings inside the plan's owned files.",
+      "include": [
+        ".agents/gsd/overlays/kit-core.md",
+        ".agents/gsd/overlays/gsd-code-fixer.md"
+      ]
+    },
+    {
+      "installed": ".agents/gsd/generated/workflows/map-codebase.md",
+      "kind": "skill-workflow",
+      "source": "gsd-core/workflows/map-codebase.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/generated/workflows/new-project.md",
+      "kind": "skill-workflow",
+      "source": "gsd-core/workflows/new-project.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/generated/workflows/discuss-phase.md",
+      "kind": "skill-workflow",
+      "source": "gsd-core/workflows/discuss-phase.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/generated/workflows/execute-plan.md",
+      "kind": "skill-workflow",
+      "source": "gsd-core/workflows/execute-plan.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/generated/workflows/verify-work.md",
+      "kind": "skill-workflow",
+      "source": "gsd-core/workflows/verify-work.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/generated/workflows/quick.md",
+      "kind": "skill-workflow",
+      "source": "gsd-core/workflows/quick.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/generated/workflows/progress.md",
+      "kind": "skill-workflow",
+      "source": "gsd-core/workflows/progress.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/generated/workflows/next.md",
+      "kind": "skill-workflow",
+      "source": "gsd-core/workflows/next.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/generated/workflows/pause-work.md",
+      "kind": "skill-workflow",
+      "source": "gsd-core/workflows/pause-work.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/generated/workflows/resume-project.md",
+      "kind": "skill-workflow",
+      "source": "gsd-core/workflows/resume-project.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/generated/workflows/transition.md",
+      "kind": "skill-workflow",
+      "source": "gsd-core/workflows/transition.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/generated/workflows/undo.md",
+      "kind": "skill-workflow",
+      "source": "gsd-core/workflows/undo.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/generated/workflows/health.md",
+      "kind": "skill-workflow",
+      "source": "gsd-core/workflows/health.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/generated/workflows/forensics.md",
+      "kind": "skill-workflow",
+      "source": "gsd-core/workflows/forensics.md",
+      "transformations": [
+        "path-rewrite"
+      ],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/generated/workflows/debug-session-manager.md",
+      "kind": "skill-workflow",
+      "source": "agents/gsd-debug-session-manager.md",
+      "transformations": [
+        "path-rewrite",
+        "strip-front-matter"
+      ],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/generated/executor-rules.md",
+      "kind": "reference",
+      "source": "agents/gsd-executor.md",
+      "transformations": [
+        "anchor-extraction",
+        "path-rewrite"
+      ],
+      "overlay": null,
+      "anchors": [
+        {
+          "block": "deviation_rules"
+        },
+        {
+          "block": "analysis_paralysis_guard"
+        },
+        {
+          "block": "summary_creation"
+        }
+      ]
+    },
+    {
+      "installed": ".agents/gsd/generated/plan-phase-contracts.md",
+      "kind": "reference",
+      "source": "gsd-core/workflows/plan-phase.md",
+      "transformations": [
+        "anchor-extraction",
+        "path-rewrite"
+      ],
+      "overlay": null,
+      "anchors": [
+        {
+          "after": "## 8. Spawn gsd-planner Agent",
+          "block": "tracked_source_paths"
+        },
+        {
+          "after": "## 8. Spawn gsd-planner Agent",
+          "block": "failing_direction_contract"
+        },
+        {
+          "after": "## 8. Spawn gsd-planner Agent",
+          "block": "downstream_consumer"
+        },
+        {
+          "after": "## 8. Spawn gsd-planner Agent",
+          "block": "deep_work_rules"
+        },
+        {
+          "after": "## 8. Spawn gsd-planner Agent",
+          "block": "quality_gate"
+        },
+        {
+          "after": "## 12. Revision Loop",
+          "block": "instructions"
+        }
+      ]
+    },
+    {
+      "installed": ".agents/gsd/generated/debug-prompts.md",
+      "kind": "reference",
+      "source": "agents/gsd-debug-session-manager.md",
+      "transformations": [
+        "anchor-extraction",
+        "path-rewrite"
+      ],
+      "overlay": null,
+      "anchors": [
+        {
+          "after": "## Step 2: Spawn gsd-debugger Agent",
+          "fence": "markdown",
+          "placeholders": [
+            "{slug}",
+            "{debug_file_path}",
+            "{goal}"
+          ]
+        },
+        {
+          "after": "### 3d. CHECKPOINT REACHED",
+          "fence": "markdown",
+          "placeholders": [
+            "{slug}",
+            "{debug_file_path}",
+            "{user_response}"
+          ]
+        }
+      ]
+    },
+    {
+      "installed": ".agents/gsd/upstream/gsd-core/templates/DEBUG.md",
+      "kind": "template",
+      "source": "gsd-core/templates/DEBUG.md",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/upstream/gsd-core/templates/state.md",
+      "kind": "template",
+      "source": "gsd-core/templates/state.md",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/upstream/gsd-core/templates/roadmap.md",
+      "kind": "template",
+      "source": "gsd-core/templates/roadmap.md",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/upstream/gsd-core/templates/requirements.md",
+      "kind": "template",
+      "source": "gsd-core/templates/requirements.md",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/upstream/gsd-core/templates/project.md",
+      "kind": "template",
+      "source": "gsd-core/templates/project.md",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/upstream/gsd-core/templates/context.md",
+      "kind": "template",
+      "source": "gsd-core/templates/context.md",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/upstream/gsd-core/templates/research.md",
+      "kind": "template",
+      "source": "gsd-core/templates/research.md",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/upstream/gsd-core/templates/summary.md",
+      "kind": "template",
+      "source": "gsd-core/templates/summary.md",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/upstream/gsd-core/templates/verification-report.md",
+      "kind": "template",
+      "source": "gsd-core/templates/verification-report.md",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/upstream/gsd-core/templates/UAT.md",
+      "kind": "template",
+      "source": "gsd-core/templates/UAT.md",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/upstream/gsd-core/templates/continue-here.md",
+      "kind": "template",
+      "source": "gsd-core/templates/continue-here.md",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/upstream/gsd-core/templates/phase-prompt.md",
+      "kind": "template",
+      "source": "gsd-core/templates/phase-prompt.md",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/upstream/capabilities/research/fragments/plan-pre.md",
+      "kind": "template",
+      "source": "capabilities/research/fragments/plan-pre.md",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/upstream/LICENSE",
+      "kind": "reference",
+      "source": "LICENSE",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/overlays/kit-core.md",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/overlays/gsd-planner.md",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/overlays/gsd-plan-checker.md",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/overlays/gsd-phase-researcher.md",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/overlays/gsd-executor.md",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/overlays/gsd-verifier.md",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/overlays/gsd-debugger.md",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/overlays/gsd-codebase-mapper.md",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/overlays/gsd-project-researcher.md",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/overlays/gsd-research-synthesizer.md",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/overlays/gsd-roadmapper.md",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/overlays/gsd-code-reviewer.md",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/gsd/overlays/gsd-code-fixer.md",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/agents/gsd-skeleton-reviewer.md",
+      "kind": "agent",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/agents/finding-verifier.md",
+      "kind": "agent",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null
+    },
+    {
+      "installed": ".agents/harness/gsd/",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null,
+      "note": "ph gsd verbs (kit plumbing)"
+    },
+    {
+      "installed": ".agents/gsd/NOTICE.md",
+      "kind": "reference",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null
+    }
+  ],
+  "extra_verbs": {}
+}

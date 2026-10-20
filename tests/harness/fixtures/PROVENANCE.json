@@ -1,0 +1,856 @@
+{
+  "source": {
+    "repo": "paseo-harness-kit",
+    "tag": "ref-final",
+    "commit": "4441a88e5083727a282a4a7efb5872b1d4dac777",
+    "upstream": {
+      "repo": "https://github.com/revfactory/harness",
+      "version": "2.1.0",
+      "commit": "92d9f1b29e7af81acebf51a9fcd1832e739a1414",
+      "license": "Apache-2.0"
+    }
+  },
+  "categories": {
+    "a": "paths: .agents/agents/, .claude/skills/<name>/, CLAUDE.md (never project/...)",
+    "b": "single skill tree: the ph skills-sync step and .agents/skills source wording removed (D-10)",
+    "c": "runtime mapping: the new ph (node .agents/harness/ph.mjs, workflow resume shape, watch-run, run dir, kit CLI)",
+    "d": "Claude Code only: no codex/ or opencode/ examples, no non-Claude MCP adapters; circle/<model> only",
+    "e": "no Backlog wording",
+    "f": "config key names and record formats of the new defaults",
+    "g": "one line in each SKILL.md loading the kit overlay (HARN-03)",
+    "h": "the D-59 reading of coding tiers, stated in the overlay only"
+  },
+  "files": [
+    {
+      "file": "harness/SKILL.md",
+      "path": "project/.agents/skills/harness/SKILL.md",
+      "sha256": "9c7b29c834eeb2d0e603502815bff5072ab8a49e1bd66c89b945d007f2584ccc"
+    },
+    {
+      "file": "harness-evolve/SKILL.md",
+      "path": "project/.agents/skills/harness-evolve/SKILL.md",
+      "sha256": "2425d61bf1e76eb0253463d3f1050761ef4ae61fe9d5701346832743a3161b40"
+    },
+    {
+      "file": "harness/references/execution-modes.md",
+      "path": "project/.agents/skills/harness/references/execution-modes.md",
+      "sha256": "ff5998db7aa45eebfad4f9bd5de0b00c1cc1367395c101afb037bb5702d8e1d1"
+    },
+    {
+      "file": "harness/references/model-selection-guide.md",
+      "path": "project/.agents/skills/harness/references/model-selection-guide.md",
+      "sha256": "0c003c1fe70f922e906181f2dc77d86d267650cb9ec42c263dd4247b79b20cbf"
+    },
+    {
+      "file": "harness/references/team-patterns.md",
+      "path": "project/.agents/skills/harness/references/team-patterns.md",
+      "sha256": "79abe2b12f1fe19792fad3f79b72840791b7a279e170b76ba4cc55ee9e1e3e91"
+    },
+    {
+      "file": "harness/references/workflow-recipes.md",
+      "path": "project/.agents/skills/harness/references/workflow-recipes.md",
+      "sha256": "e2f69ab8933ce4e3ca96a939ff3dd5a88105dabf388e4cd740ba00f2e67a6387"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "path": "project/.agents/skills/harness/references/orchestrator-template.md",
+      "sha256": "538117a54071264ed15d09a11d422d9b2e693021c7841f63cdc55fd8a182f5db"
+    },
+    {
+      "file": "harness/references/qa-agent-guide.md",
+      "path": "project/.agents/skills/harness/references/qa-agent-guide.md",
+      "sha256": "fc66c5a13b9851c9a0d510c61ce80947510e0af7af23a0847c0e33bc2e6fde19"
+    },
+    {
+      "file": "harness/references/skill-writing-guide.md",
+      "path": "project/.agents/skills/harness/references/skill-writing-guide.md",
+      "sha256": "c00c57ea66943577571257c6290164f7f6fa29dd6c2bce2038cc1ae1c016b40d"
+    },
+    {
+      "file": "harness/references/skill-testing-guide.md",
+      "path": "project/.agents/skills/harness/references/skill-testing-guide.md",
+      "sha256": "de18c37f5277783a7dd79d37ebef9b100b38fa60c9abc9a3b33fe0f8309f2e13"
+    },
+    {
+      "file": "harness/references/team-examples.md",
+      "path": "project/.agents/skills/harness/references/team-examples.md",
+      "sha256": "73dfc9a2c64cf3ec18c2309178aa5b2ccf37882fbad6b9e913a15ef50e95f076"
+    },
+    {
+      "file": "harness/references/paseo-runtime.md",
+      "path": "project/.agents/skills/harness/references/paseo-runtime.md",
+      "sha256": "be2d837b3d7dcd67d84606dea57a9ad0ead940dfb54ed1adc5eb78f117f8c81a"
+    },
+    {
+      "file": "harness/LICENSE",
+      "path": "project/.agents/skills/harness/LICENSE",
+      "sha256": "bae1caa988a742c5a756faa45e33b6c72f21f9873b8e7f1e0ce87fcf0a4c747b"
+    },
+    {
+      "file": "harness/NOTICE.md",
+      "path": "project/.agents/skills/harness/NOTICE.md",
+      "sha256": "4e57087bbf37ebb096ccbba7a759352172674e21adb56a917008cbcf7eea53ba"
+    }
+  ],
+  "regions": [
+    {
+      "file": "harness/SKILL.md",
+      "from": 10,
+      "to": 10,
+      "lines": 3,
+      "categories": [
+        "c",
+        "g"
+      ],
+      "sha256": "9900ecf6659d60684999fe2c864f00e8c8e7d3a25e5c24ed83c0dadbf8725145"
+    },
+    {
+      "file": "harness/SKILL.md",
+      "from": 14,
+      "to": 14,
+      "lines": 1,
+      "categories": [
+        "a"
+      ],
+      "sha256": "d55a4a7a8a9c9bf689d12afccaedd966301eac3434026d50a0ac0c43440317bf"
+    },
+    {
+      "file": "harness/SKILL.md",
+      "from": 27,
+      "to": 27,
+      "lines": 1,
+      "categories": [
+        "a"
+      ],
+      "sha256": "9d055b75002ca9b8c77fccb841f888b9b97e232ea68b3ffb399d1e8d7d1ad1e6"
+    },
+    {
+      "file": "harness/SKILL.md",
+      "from": 102,
+      "to": 102,
+      "lines": 1,
+      "categories": [
+        "a"
+      ],
+      "sha256": "a171db0cc791e2615dc3b748e85f463c807bd06e2f5f99d3d75ed7506a9c957a"
+    },
+    {
+      "file": "harness/SKILL.md",
+      "from": 112,
+      "to": 112,
+      "lines": 1,
+      "categories": [
+        "a"
+      ],
+      "sha256": "b8e783633793fc6cfd839adfeacc7105aeceeacbe7ddaba65c81c6f2d1a30d48"
+    },
+    {
+      "file": "harness/SKILL.md",
+      "from": 116,
+      "to": 116,
+      "lines": 1,
+      "categories": [
+        "f"
+      ],
+      "sha256": "c4be5d90bac102f78076fa64b940aa4329ba90ac00d3985235a7800bad86a6b1"
+    },
+    {
+      "file": "harness/SKILL.md",
+      "from": 135,
+      "to": 135,
+      "lines": 1,
+      "categories": [
+        "d"
+      ],
+      "sha256": "81abb0bc0732a9993a0b4a451d6aa817c4a54f9b564867b7995e6d55ff26b243"
+    },
+    {
+      "file": "harness/SKILL.md",
+      "from": 150,
+      "to": 150,
+      "lines": 1,
+      "categories": [
+        "a",
+        "b",
+        "d"
+      ],
+      "sha256": "5052136d55ebc8d6616488eedc176f572638bb1cc7034189e59500ac3e2c0756"
+    },
+    {
+      "file": "harness/SKILL.md",
+      "from": 154,
+      "to": 154,
+      "lines": 1,
+      "categories": [
+        "a"
+      ],
+      "sha256": "ca4abbfa352bd357cbff329e4607ac856ef5c5c97ee4425eeeddb7b18197d775"
+    },
+    {
+      "file": "harness/SKILL.md",
+      "from": 217,
+      "to": 217,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "b64921d232447f23fdb41505db10dc5fe21c9f518e74f20ce68a5037a627271e"
+    },
+    {
+      "file": "harness/SKILL.md",
+      "from": 233,
+      "to": 235,
+      "lines": 3,
+      "categories": [
+        "c"
+      ],
+      "sha256": "7db0f9f17a25cc76a32eaa288b2f57d406049f4f280b6bab58206fecc648a23f"
+    },
+    {
+      "file": "harness/SKILL.md",
+      "from": 306,
+      "to": 306,
+      "lines": 1,
+      "categories": [
+        "b"
+      ],
+      "sha256": "5738c84d242ebbf17842155c48546f6570a784058d44c4efba2520112afcb922"
+    },
+    {
+      "file": "harness/SKILL.md",
+      "from": 374,
+      "to": 374,
+      "lines": 1,
+      "categories": [
+        "b"
+      ],
+      "sha256": "8351a637745789da5b7d91ce6a3359f1a9d4ecb049b99fdb3147a0e3e64c4068"
+    },
+    {
+      "file": "harness/SKILL.md",
+      "from": 387,
+      "to": 388,
+      "lines": 2,
+      "categories": [
+        "a"
+      ],
+      "sha256": "f61d2d4e5d0b2fff96f71a213d4faeec170ff152a04c41a05d52e5498288bb26"
+    },
+    {
+      "file": "harness-evolve/SKILL.md",
+      "from": 10,
+      "to": 9,
+      "lines": 2,
+      "categories": [
+        "g"
+      ],
+      "sha256": "12236cc1bcd9bcc30fd41d36fae2383c668b785201df01fbbdabab3e9c180526"
+    },
+    {
+      "file": "harness-evolve/SKILL.md",
+      "from": 24,
+      "to": 24,
+      "lines": 1,
+      "categories": [
+        "b"
+      ],
+      "sha256": "ab46c239567c3a36f70a4f9a84b5d8d58c507192fb0c707d2a44b7b53620e7bc"
+    },
+    {
+      "file": "harness-evolve/SKILL.md",
+      "from": 69,
+      "to": 71,
+      "lines": 3,
+      "categories": [
+        "a",
+        "f"
+      ],
+      "sha256": "b85bca21fddfa3b6f2957c3a22b2221ddecbfc1e62f6221f5c73861e41d42d4c"
+    },
+    {
+      "file": "harness-evolve/SKILL.md",
+      "from": 74,
+      "to": 74,
+      "lines": 1,
+      "categories": [
+        "b"
+      ],
+      "sha256": "5c03502e0a1b9b6d217cc87f26f296e32ae55d88d2d77ab07b4241ada841b82f"
+    },
+    {
+      "file": "harness-evolve/SKILL.md",
+      "from": 78,
+      "to": 78,
+      "lines": 1,
+      "categories": [
+        "c",
+        "f"
+      ],
+      "sha256": "735f64c2c7d81d55e032d377406b1dd491638dae377718d7c18238aa3deeea3f"
+    },
+    {
+      "file": "harness/references/execution-modes.md",
+      "from": 3,
+      "to": 3,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "b1674eef0a26dd0c5077751edcb773899b51aecb48cc449df4f900667e6ef4e6"
+    },
+    {
+      "file": "harness/references/execution-modes.md",
+      "from": 152,
+      "to": 152,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "bfffbdc8e231be74eaacb8090d21dc3b78c69fa33473ef58f4c2f6ab611ee94a"
+    },
+    {
+      "file": "harness/references/execution-modes.md",
+      "from": 174,
+      "to": 179,
+      "lines": 6,
+      "categories": [
+        "c"
+      ],
+      "sha256": "d35d06b7c4eb008f043d650b3c24f931f47f80e2364c21819c66a7c2880bef97"
+    },
+    {
+      "file": "harness/references/execution-modes.md",
+      "from": 181,
+      "to": 182,
+      "lines": 2,
+      "categories": [
+        "c",
+        "f"
+      ],
+      "sha256": "de17e192ef119bc0664c27cdbf8b5b444f6aa18fded4a5c9773459f82144d57b"
+    },
+    {
+      "file": "harness/references/execution-modes.md",
+      "from": 187,
+      "to": 187,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "c2275d381ba05db504b0aca8bec05a44b004d276d9724d368b702983cdab8d7f"
+    },
+    {
+      "file": "harness/references/model-selection-guide.md",
+      "from": 3,
+      "to": 3,
+      "lines": 1,
+      "categories": [
+        "f"
+      ],
+      "sha256": "0f9dd706c1412da02763e500c771fb84d0198e8eb6bf5ee9f53dc93ee4a52443"
+    },
+    {
+      "file": "harness/references/model-selection-guide.md",
+      "from": 5,
+      "to": 5,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "b1674eef0a26dd0c5077751edcb773899b51aecb48cc449df4f900667e6ef4e6"
+    },
+    {
+      "file": "harness/references/model-selection-guide.md",
+      "from": 122,
+      "to": 122,
+      "lines": 1,
+      "categories": [
+        "f"
+      ],
+      "sha256": "5f4a369a3e66a19602a44b009240f56532f4a0d562bf1d1956f555d2bf3956f3"
+    },
+    {
+      "file": "harness/references/team-patterns.md",
+      "from": 5,
+      "to": 5,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "b1674eef0a26dd0c5077751edcb773899b51aecb48cc449df4f900667e6ef4e6"
+    },
+    {
+      "file": "harness/references/team-patterns.md",
+      "from": 182,
+      "to": 182,
+      "lines": 1,
+      "categories": [
+        "f"
+      ],
+      "sha256": "8c2ff70233b05bb631e5d8e48e474489d8aa6dfa4c22a61d04b861810ac8845a"
+    },
+    {
+      "file": "harness/references/team-patterns.md",
+      "from": 191,
+      "to": 191,
+      "lines": 1,
+      "categories": [
+        "d"
+      ],
+      "sha256": "3155235c49fe81bea7b36a58dcde788f79676868a09ffc8603bb7c2af33e38c4"
+    },
+    {
+      "file": "harness/references/team-patterns.md",
+      "from": 235,
+      "to": 235,
+      "lines": 1,
+      "categories": [
+        "d"
+      ],
+      "sha256": "8c54ae9f7494ff2eb949799b53c42ee9996c93f1e972e81402acaded184f2499"
+    },
+    {
+      "file": "harness/references/team-patterns.md",
+      "from": 266,
+      "to": 266,
+      "lines": 1,
+      "categories": [
+        "b"
+      ],
+      "sha256": "fddbd5ca47b3671c74b540fe7e9b008e670b2a1fd98869faa538673904216a1f"
+    },
+    {
+      "file": "harness/references/team-patterns.md",
+      "from": 276,
+      "to": 276,
+      "lines": 1,
+      "categories": [
+        "d"
+      ],
+      "sha256": "dee1761b27ef87346b695d76c2a17ef98703eff8c753e2c2d9fc0152d9667cd9"
+    },
+    {
+      "file": "harness/references/team-patterns.md",
+      "from": 278,
+      "to": 278,
+      "lines": 1,
+      "categories": [
+        "d"
+      ],
+      "sha256": "6c71dddeb5a9298e83685e647e92b74080a672aab3d3629e2ef86a747a88aff0"
+    },
+    {
+      "file": "harness/references/workflow-recipes.md",
+      "from": 3,
+      "to": 3,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "b1674eef0a26dd0c5077751edcb773899b51aecb48cc449df4f900667e6ef4e6"
+    },
+    {
+      "file": "harness/references/workflow-recipes.md",
+      "from": 202,
+      "to": 202,
+      "lines": 1,
+      "categories": [
+        "f"
+      ],
+      "sha256": "dc9a451263920ffa31c400880d593f8e9150a6e56a7653504feafbd78b7361d0"
+    },
+    {
+      "file": "harness/references/workflow-recipes.md",
+      "from": 204,
+      "to": 204,
+      "lines": 1,
+      "categories": [
+        "d"
+      ],
+      "sha256": "bcd937c65804087fb02cd0e3f85bd55549f2710ed1bdeba971ae2d3a198d6d7a"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "from": 3,
+      "to": 3,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "b1674eef0a26dd0c5077751edcb773899b51aecb48cc449df4f900667e6ef4e6"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "from": 28,
+      "to": 28,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "3a5e0e83cb9500291c1899cd95cb2a2bfd98a167bece266e59360e00247487cb"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "from": 48,
+      "to": 48,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "d01d6e6631f6e2c142f29d6f3c75c7a0a2dc8f3f0de20ca52f251e5b8e7ad807"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "from": 63,
+      "to": 63,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "3df8b637f4d7f5970e4e095d7e9707e2e4e9528a1f2a67e7a8258e5a08e6111c"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "from": 65,
+      "to": 65,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "7da52a2e9b355b3c6b2757bbff611d724610e743850cabb730c902cd0a5e63e4"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "from": 79,
+      "to": 80,
+      "lines": 2,
+      "categories": [
+        "c"
+      ],
+      "sha256": "f3bdc42a581c3f25e941917a69f8790455d980a39566d9993583dd2a5d975849"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "from": 111,
+      "to": 111,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "97239a38c4da0f43cb406e5330c6fa8db8465c0e99dbea7b52c7748294fa3b45"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "from": 133,
+      "to": 133,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "fc5cabc4ff948ecbdc33507ec58e562ea3d13999a2f7d88c790f9addfc44fa36"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "from": 135,
+      "to": 136,
+      "lines": 2,
+      "categories": [
+        "c"
+      ],
+      "sha256": "f80606500f3e37d203e8bc07187307d5e25245555977aa786c2bc7a47d02afe5"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "from": 141,
+      "to": 142,
+      "lines": 2,
+      "categories": [
+        "c"
+      ],
+      "sha256": "7267853be58e6af09c9e4ba8ebfee8728b4906c4127df95d15c2938e24f76e71"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "from": 152,
+      "to": 152,
+      "lines": 1,
+      "categories": [
+        "d"
+      ],
+      "sha256": "6cbfef2751206efbe763dd1e8045860020063d557835e136d0a60207592a352a"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "from": 156,
+      "to": 156,
+      "lines": 1,
+      "categories": [
+        "d"
+      ],
+      "sha256": "ec176b32fd3cf969a0614e9840f9f6dcf244e07c0adc0434622c23751fb47462"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "from": 158,
+      "to": 160,
+      "lines": 3,
+      "categories": [
+        "c"
+      ],
+      "sha256": "6d94addb2f52ce409f77c99b40f13d975b6f57772ccb57d91027d55a591c51a2"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "from": 166,
+      "to": 168,
+      "lines": 3,
+      "categories": [
+        "c",
+        "d"
+      ],
+      "sha256": "ce0bb4dfa9fe3c4a994fc3e4eab3d178d9f566ff9f2863568c6efd744469e3bc"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "from": 174,
+      "to": 174,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "9843448b5fe6570418cd37f32b3c17d1e6e9d71eadac1de3e3825af5f52250c0"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "from": 180,
+      "to": 180,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "7ff0767b45bd0af43f2bce3cb39be6502b7b6e90a0c842344936569085544868"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "from": 185,
+      "to": 185,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "b9eebc8a026e7f1000376cf2e9729f5b5aa21237ec50adc228df60159349defa"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "from": 196,
+      "to": 196,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "83208eb2c99974f068c8cd0f6ffd3108f1bdc82732efb323cbd5a4c66c3ee185"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "from": 221,
+      "to": 221,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "9fc650fdb373ca9ddec43c3de7b9c8bb96cc83680bf193f202f4ffd1508bbb7e"
+    },
+    {
+      "file": "harness/references/orchestrator-template.md",
+      "from": 272,
+      "to": 272,
+      "lines": 1,
+      "categories": [
+        "d"
+      ],
+      "sha256": "8e440cd946abe51f19ebd99e3ee85147337d08f505ae973b5237db974eb1f267"
+    },
+    {
+      "file": "harness/references/qa-agent-guide.md",
+      "from": 3,
+      "to": 3,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "b1674eef0a26dd0c5077751edcb773899b51aecb48cc449df4f900667e6ef4e6"
+    },
+    {
+      "file": "harness/references/qa-agent-guide.md",
+      "from": 87,
+      "to": 87,
+      "lines": 1,
+      "categories": [
+        "d"
+      ],
+      "sha256": "4fbbed4f55e4f84254e29fe167a1836c388acca7be9f643f02ba70c2c96fb51d"
+    },
+    {
+      "file": "harness/references/qa-agent-guide.md",
+      "from": 143,
+      "to": 143,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "d6cd4909092bd1926396ce9e539d4718f4b8e3e958c58081f8add4eb8d1ab262"
+    },
+    {
+      "file": "harness/references/qa-agent-guide.md",
+      "from": 209,
+      "to": 209,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "4d2d7bc75fe01d4d61b80a95cf55ab018e4f6c61f783f9984593988bb1352282"
+    },
+    {
+      "file": "harness/references/skill-writing-guide.md",
+      "from": 3,
+      "to": 3,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "b1674eef0a26dd0c5077751edcb773899b51aecb48cc449df4f900667e6ef4e6"
+    },
+    {
+      "file": "harness/references/skill-writing-guide.md",
+      "from": 237,
+      "to": 237,
+      "lines": 1,
+      "categories": [
+        "b"
+      ],
+      "sha256": "70eb2a2dcba05462307dc21010cab7ef7034071c4de7d195328f6f458338ff6b"
+    },
+    {
+      "file": "harness/references/skill-testing-guide.md",
+      "from": 3,
+      "to": 3,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "b1674eef0a26dd0c5077751edcb773899b51aecb48cc449df4f900667e6ef4e6"
+    },
+    {
+      "file": "harness/references/skill-testing-guide.md",
+      "from": 76,
+      "to": 76,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "e4200c15e0dfe10ff9848fbe32c599ddde16a800079183469ddb6987e39c3a8d"
+    },
+    {
+      "file": "harness/references/team-examples.md",
+      "from": 3,
+      "to": 3,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "b1674eef0a26dd0c5077751edcb773899b51aecb48cc449df4f900667e6ef4e6"
+    },
+    {
+      "file": "harness/references/team-examples.md",
+      "from": 35,
+      "to": 36,
+      "lines": 2,
+      "categories": [
+        "c"
+      ],
+      "sha256": "6b5ab00a529488c8bfe31350eeb2860fafd28cf734e853863275a70a7cfdc1f5"
+    },
+    {
+      "file": "harness/references/team-examples.md",
+      "from": 38,
+      "to": 39,
+      "lines": 2,
+      "categories": [
+        "c"
+      ],
+      "sha256": "35f02eecebefc3975c1bf716a210caf98f37f64fb04660bfc4b8eb9dc4404189"
+    },
+    {
+      "file": "harness/references/team-examples.md",
+      "from": 41,
+      "to": 43,
+      "lines": 3,
+      "categories": [
+        "c"
+      ],
+      "sha256": "31b4caa726c4d6c9c82b8f85461422ae1680162283bc74fe971c965c1d76ce17"
+    },
+    {
+      "file": "harness/references/team-examples.md",
+      "from": 118,
+      "to": 119,
+      "lines": 2,
+      "categories": [
+        "c"
+      ],
+      "sha256": "e58448a4a52d4f425c18463a6157c602176a8df73e770afca747dde42196f13a"
+    },
+    {
+      "file": "harness/references/team-examples.md",
+      "from": 121,
+      "to": 121,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "c799cabc8c1de05b71abbe9821d05c28315bce2ab6c1f39872a40353c3dbc5a6"
+    },
+    {
+      "file": "harness/references/team-examples.md",
+      "from": 132,
+      "to": 133,
+      "lines": 2,
+      "categories": [
+        "c"
+      ],
+      "sha256": "baf3b0a424367372160a2c20300b345c29ccb8d3be219d6c285938f7ecec62b8"
+    },
+    {
+      "file": "harness/references/team-examples.md",
+      "from": 135,
+      "to": 135,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "159b74f5089ebce6406df5a7460cf698559d9fa00b5dedecfca618dcfa8b920c"
+    },
+    {
+      "file": "harness/references/team-examples.md",
+      "from": 146,
+      "to": 147,
+      "lines": 2,
+      "categories": [
+        "a"
+      ],
+      "sha256": "b957a5ce2892da7da6fee2a410f14df5d6aee77a95bda370ae3fc54240324925"
+    },
+    {
+      "file": "harness/references/paseo-runtime.md",
+      "from": 1,
+      "to": 433,
+      "lines": 423,
+      "categories": [
+        "c",
+        "d",
+        "f"
+      ],
+      "sha256": "f5b55e450cd804b0942be740ba79c135c418cf40c83a0f8a1d085fb799db77f0"
+    }
+  ]
+}

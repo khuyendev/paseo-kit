@@ -1,0 +1,6 @@
+{
+  "name": "harness-files",
+  "version": "0.1.0",
+  "author": { "name": "paseo-harness-kit" },
+  "description": "Three batch file tools backed by the project's trusted one-shot Node backend; target I/O runs through native Bash so Claude Code's permission chain applies."
+}

@@ -1,0 +1,18 @@
+---
+name: gsd-quick
+description: Runs a small GSD task outside the phase plan - one plan of 1-3 tasks under .planning/quick/, executed by a gsd-executor; --full adds discussion, research, a checker and a verifier. Use when the owner asks for a quick fix, small change or one-off task in a project with a ROADMAP. Not for phase work (gsd-plan) or trivial one-line fixes (do those inline).
+---
+
+# gsd-quick
+
+Method text: follow `.agents/gsd/workflows/quick.md` (generated upstream text, unchanged), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win).
+
+## Kit overlay (GSDF-61)
+
+- A trivial one-line fix: do it inline in the main session, no plan.
+- Requires `.planning/ROADMAP.md`; the run refuses otherwise.
+- `--full`: first discuss the gray areas in the main session and write the decisions to a CONTEXT file in the quick directory; pass its path as `contextPath`.
+- Args file `_workspace/args/gsd-quick.json`: `{"description": "<task text>", "full": false}` (`"contextPath"` and `"dir"` from the discussion when `--full`). Run `node .agents/harness/ph.mjs workflow --name gsd-quick --args-file _workspace/args/gsd-quick.json --detach` and wait as `next:` says. The description reaches agents only as data.
+- The run creates `.planning/quick/<YYMMDD-xxx>-<slug>/` (slug at most 40 characters), plans ONE plan of 1-3 tasks with repo-root-relative paths, executes it through the executor contract and, with `--full`, adds research, a checker loop of at most 2 iterations and a verifier.
+- One `docs(quick-<id>)` commit per `gsd.commit_policy.docs`; no STATE table row (quick tasks are listed from the directory).
+- `needs-owner`: show the reason (a Rule-4 decision, a blocked task, checker issues after 2 iterations).
