@@ -2081,3 +2081,56 @@ test("MOB-04 screen narrow: the compact top bar keeps Working and shows the alar
     assert.equal(byTestId(handle, "View", "office-topbar")[0].props.style.flexWrap, "wrap");
   });
 });
+
+// ---- mobile fit (owner feedback 2026-10-22: sideways swiping through a room wider than the phone is unpleasant)
+
+import { columnSnaps, narrowFit } from "../../plugins/office/client/narrow.ts";
+
+test("MOB-05 narrow fit: one column fills the width on whole device pixels; snaps centre each column", () => {
+  assert.deepEqual(narrowFit(390, 3), { zoom: 4, devicePx: 4, factor: 1 / 3 }, "iPhone: 341 of 390 dp, one sprite pixel per device pixel");
+  assert.deepEqual(narrowFit(411, 2.625), { zoom: 4, devicePx: 4, factor: 4 / (4 * 2.625) });
+  assert.deepEqual(narrowFit(375, 2), { zoom: 2, devicePx: 2, factor: 0.5 }, "a 2x phone: zoom 2, 256 dp");
+  assert.deepEqual(narrowFit(430, 3), { zoom: 4, devicePx: 4, factor: 1 / 3 }, "never above the largest sprite zoom");
+  assert.deepEqual(narrowFit(390, 1), { zoom: 2, devicePx: 1, factor: 0.5 }, "a 1x narrow window downscales the smallest zoom");
+  assert.deepEqual(narrowFit(390, Number.NaN), narrowFit(390, 1));
+  assert.deepEqual(narrowFit(Number.NaN, 3), { zoom: 2, devicePx: 1, factor: 1 / 6 });
+  assert.deepEqual(columnSnaps(4, 4, 1 / 3, 390), [0, 317, 658, 975]);
+  assert.deepEqual(columnSnaps(1, 4, 1 / 3, 390), [0], "a building narrower than the view does not scroll");
+  assert.deepEqual(columnSnaps(0, 4, 1 / 3, 390), []);
+});
+
+test("MOB-06 screen narrow on a 3x phone: zoom-4 sprites shown at a third, column snaps, no zoom buttons; wide again restores them", async () => {
+  globalThis.__officeWindowScale = 3;
+  try {
+    await withScreen(officeFixture(), async ({ host, handle }) => {
+      layBody(handle, PHONE);
+      byTestId(handle, "View", "office-viewport")[0].props.onLayout({ nativeEvent: { layout: { width: PHONE.width, height: 600 } } });
+      await settle(handle, 8);
+      const fitView = byTestId(handle, "View", "office-fit")[0];
+      const laidOut = fitView.children.find((c) => c && c.type === "View").props.style;
+      const cols = laidOut.width / (16 * TILE * 4);
+      assert.ok(Number.isInteger(cols) && cols >= 2, `laid out at zoom 4: ${laidOut.width}`);
+      assert.ok(Math.abs(fitView.props.style.width - laidOut.width / 3) < 1e-6, "shown at a third");
+      assert.equal(laidOut.transform.at(-1).scale, 1 / 3);
+      for (const id of ["office-zoom-in", "office-zoom-out", "office-overview"]) assert.equal(byTestId(handle, "Pressable", id).length, 0, id);
+      const inner = handle.find("ScrollView").find((n) => n.props.horizontal);
+      assert.deepEqual(inner.props.snapToOffsets, columnSnaps(cols, 4, 1 / 3, PHONE.width));
+      const scale4 = [...new Set(spriteKeys(host).filter((k) => scaleOf(k) === 4))];
+      assert.ok(scale4.some((k) => k.startsWith("room-layer:")) && scale4.some((k) => k.startsWith("character")), scale4.slice(0, 4).join());
+      const failed = scale4.map((k) => one(k)).filter((s) => !s.ok);
+      assert.deepEqual(failed, [], "every zoom-4 sprite renders under the PNG cap");
+      // A scroll of the shown scene maps back to scene pixels: the east columns load.
+      const before = new Set(spriteKeys(host));
+      inner.props.onScroll({ nativeEvent: { contentOffset: { x: 634 }, layoutMeasurement: { width: PHONE.width } } });
+      await settle(handle, 6);
+      assert.ok(spriteKeys(host).some((k) => !before.has(k) && scaleOf(k) === 4), "scrolled columns request their layers");
+      layBody(handle, { width: 1200, height: 700 });
+      await settle(handle, 6);
+      assert.equal(byTestId(handle, "Pressable", "office-zoom-in").length, 1);
+      assert.ok(textsOf(handle).includes(str("sceneZoomLevel", { zoom: 2 })), "back to the smallest offered level");
+      assert.equal(handle.find("ScrollView").find((n) => n.props.horizontal).props.snapToOffsets, undefined);
+    });
+  } finally {
+    delete globalThis.__officeWindowScale;
+  }
+});

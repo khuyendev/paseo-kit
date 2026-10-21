@@ -173,7 +173,8 @@ function createReactNative(animations) {
     Easing: easing,
     Platform: { OS: "web", select: (options) => options.web ?? options.default },
     StyleSheet: { create: (styles) => styles, flatten, hairlineWidth: 1, absoluteFill: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0 } },
-    useWindowDimensions: () => ({ width: 1280, height: 800, scale: 1, fontScale: 1 }),
+    // A test sets globalThis.__officeWindowScale for a phone's device pixel ratio (the narrow fit, client/narrow.ts).
+    useWindowDimensions: () => ({ width: 1280, height: 800, scale: globalThis.__officeWindowScale ?? 1, fontScale: 1 }),
   });
 }
 

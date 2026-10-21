@@ -187,7 +187,9 @@ const officeFiles = (dir) => sources("office", [dir]).filter(([f]) => f.includes
 const importSpecs = (text) => [...normalise(text).matchAll(/(?:from|import)\s+["']([^"']+)["']/g)].map((m) => m[1]);
 
 // A client file may only use host primitives: no DOM-like element, no document or window access, a short list of react-native values.
-const RN_ALLOWED = ["View", "Text", "Image", "Pressable", "Animated", "ScrollView", "Easing", "Platform"];
+// useWindowDimensions (2026-10-22, phone layout): the reactive device pixel ratio for the narrow fit (client/narrow.ts); it exists
+// in react-native and react-native-web alike, unlike window.devicePixelRatio. The static Dimensions module stays out.
+const RN_ALLOWED = ["View", "Text", "Image", "Pressable", "Animated", "ScrollView", "Easing", "Platform", "useWindowDimensions"];
 function primitiveViolations(text) {
   const code = normalise(text).replace(/^\s*\/\/.*$/gm, "");
   const found = [];

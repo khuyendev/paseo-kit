@@ -13,9 +13,11 @@ has not been seen on a phone, so the scope sentence above still holds for what w
 On a screen 600 px wide or less the panels follow habblaud's phone layout (`client/narrow.ts`): the top bar wraps and
 keeps only Working and, while non-zero, Needs you and Errors, with a button that opens the project list as an overlay
 (a scrim, a close button or a picked room closes it); the agent drawer opens as a bottom sheet (58 % of the height),
-and the feed becomes an Activity bar at the bottom that shows the newest line and opens the feed (44 %). The office
-keeps its integer zoom levels, so a room (512 px at zoom 2) is wider than a phone and scrolls sideways; fitting a room
-to the phone width needs a fractional scale whose crispness is not measured (D-12).
+and the feed becomes an Activity bar at the bottom that shows the newest line and opens the feed (44 %). The office fits
+one building column (a north room, the corridor and a south room) to the phone's width: sprites load at the zoom whose
+pixels land on whole device pixels (zoom 4 shown at a third on a 3x phone, 341 of 390 points) and a sideways swipe
+snaps to the next column, centred. The zoom buttons and Overview are hidden there. Crispness on a real phone is not
+measured (D-12).
 
 - One building. A room per Paseo project; in it a desk cluster per workspace with its sign and its status light.
 - A sidebar with one checkbox per project, "All" and "None": an unchecked project leaves the scene and the counters (the

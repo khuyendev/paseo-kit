@@ -6,7 +6,7 @@
 import { useRpc, usePaseo, type PluginScreenProps, type PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { ScrollView, Pressable, Text, View } from "react-native";
+import { ScrollView, Pressable, Text, View, useWindowDimensions } from "react-native";
 import { ZOOM_LEVELS, TILE, type ZoomCandidate } from "../shared/art-types.ts";
 import type { AgentView } from "../shared/model-types.ts";
 import { spritesRpc } from "../shared/sprites-rpc.ts";
@@ -50,7 +50,7 @@ import { Drawer } from "./drawer.tsx";
 import { EMPTY_EFFECT_QUEUE, enqueueEffect, finishEffect, type EffectQueue } from "./effects.ts";
 import { buildBuilding } from "../shared/layout/building.ts";
 import { DOUBLE_PRESS_BEATS, FEED_REFRESH_BEATS, NARROW_GAP_PX, NARROW_SCRIM_OPACITY, SEARCH_RESULTS_MAX, SIDEBAR_MAX_ROWS } from "./limits-panels.ts";
-import { feedHeight, layoutMode, sheetHeight, sidePanelWidth } from "./narrow.ts";
+import { columnSnaps, feedHeight, layoutMode, narrowFit, sheetHeight, sidePanelWidth } from "./narrow.ts";
 import { EMPTY_FEED, feedDrafts, feedRows, pushFeed, type FeedState } from "./feed.ts";
 import { FeedBar, FeedPanel } from "./feed-panel.tsx";
 import { agentTarget, journeyFootAt, nextRequest, searchAgents } from "./hud.ts";
@@ -585,6 +585,22 @@ export function OfficeScreen(props: PluginScreenProps) {
   const outer = useRef<ScrollHandle | null>(null);
   const inner = useRef<ScrollHandle | null>(null);
   const viewRef = useRef<Viewport>({ x: 0, y: 0, w: SCENE_DEFAULT_VIEWPORT.w, h: SCENE_DEFAULT_VIEWPORT.h });
+  // The narrow fit shows the scene at `factor` of its laid-out size (client/narrow.ts): scroll events and the view's measure arrive
+  // in shown px (`shownRef`), the camera and the culling work in scene px (`viewRef` = shown / factor), and every scroll request
+  // goes back through `scrollScene`. The factor is 1 in the wide layout.
+  const factorRef = useRef(1);
+  const shownRef = useRef<Viewport>({ ...viewRef.current });
+  const syncView = (): void => {
+    const f = factorRef.current;
+    const s = shownRef.current;
+    viewRef.current = { x: s.x / f, y: s.y / f, w: s.w / f, h: s.h / f };
+  };
+  const scrollScene = (handle: ScrollHandle | null, options: { x?: number; y?: number }, animated = false): void => {
+    const f = factorRef.current;
+    if (options.x !== undefined) shownRef.current = { ...shownRef.current, x: options.x * f };
+    if (options.y !== undefined) shownRef.current = { ...shownRef.current, y: options.y * f };
+    scrollTo(handle, { ...(options.x !== undefined ? { x: options.x * f } : {}), ...(options.y !== undefined ? { y: options.y * f } : {}) }, animated);
+  };
   const pushViewport = useCallback(() => {
     const view = { ...viewRef.current };
     const current = latest.current;
@@ -595,8 +611,8 @@ export function OfficeScreen(props: PluginScreenProps) {
     (target: CameraTarget, animated = false) => {
       const current = latest.current;
       const cam = cameraFor(target, current.building, viewRef.current, current.zoom, current.placement);
-      scrollTo(outer.current, { y: cam.y }, animated);
-      scrollTo(inner.current, { x: cam.x }, animated);
+      scrollScene(outer.current, { y: cam.y }, animated);
+      scrollScene(inner.current, { x: cam.x }, animated);
       viewRef.current = { ...viewRef.current, x: cam.x, y: cam.y };
       pushViewport();
     },
@@ -615,6 +631,24 @@ export function OfficeScreen(props: PluginScreenProps) {
     const h = numberOr(layout?.height, 0);
     setBody((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
   }, []);
+  // Narrow fit: one building column fills the phone's width on whole device pixels; the zoom buttons and Overview step aside.
+  const pixelRatio = numberOr(useWindowDimensions().scale, 1);
+  const fit = narrow ? narrowFit(body.w, pixelRatio) : null;
+  const fitZoom = fit?.zoom ?? null;
+  const factor = fit?.factor ?? 1;
+  factorRef.current = factor;
+  useEffect(() => {
+    const current = latest.current.zoom;
+    const target = fitZoom ?? ((ZOOM_LEVELS as readonly number[]).includes(current) ? current : defaultZoom(ZOOM_LEVELS));
+    if (target !== current) {
+      latest.current = { ...latest.current, zoom: target };
+      setZoom(target);
+    }
+    syncView();
+    setViewport({ ...viewRef.current });
+    // syncView reads refs only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fitZoom, factor]);
   // A room list left open in the narrow layout does not reappear after a switch to wide and back.
   useEffect(() => {
     if (!narrow) setRoomsOpen(false);
@@ -646,8 +680,8 @@ export function OfficeScreen(props: PluginScreenProps) {
     setZoom(smallest);
     const current = latest.current;
     const cam = cameraFor({ scope: "building", rect: current.building.rect, roomId: null, workspaceId: null, agentId: null }, current.building, viewRef.current, smallest, current.placement);
-    scrollTo(outer.current, { y: cam.y });
-    scrollTo(inner.current, { x: cam.x });
+    scrollScene(outer.current, { y: cam.y });
+    scrollScene(inner.current, { x: cam.x });
     viewRef.current = { ...viewRef.current, x: cam.x, y: cam.y };
     setViewport({ ...viewRef.current });
   }, []);
@@ -697,8 +731,8 @@ export function OfficeScreen(props: PluginScreenProps) {
       const y = Math.max(0, Math.round((view.y + view.h / 2) * scale - view.h / 2));
       latest.current = { ...latest.current, zoom: next };
       viewRef.current = { ...view, x, y };
-      scrollTo(outer.current, { y });
-      scrollTo(inner.current, { x });
+      scrollScene(outer.current, { y });
+      scrollScene(inner.current, { x });
       setZoom(next);
       setViewport({ ...viewRef.current });
     },
@@ -707,7 +741,9 @@ export function OfficeScreen(props: PluginScreenProps) {
   const onOuterScroll = useCallback(
     (event: { nativeEvent?: { contentOffset?: { y?: number }; layoutMeasurement?: { height?: number } } }) => {
       const e = event?.nativeEvent;
-      viewRef.current = { ...viewRef.current, y: numberOr(e?.contentOffset?.y, viewRef.current.y), h: numberOr(e?.layoutMeasurement?.height, viewRef.current.h) };
+      const s = shownRef.current;
+      shownRef.current = { ...s, y: numberOr(e?.contentOffset?.y, s.y), h: numberOr(e?.layoutMeasurement?.height, s.h) };
+      syncView();
       pushViewport();
     },
     [pushViewport],
@@ -715,7 +751,9 @@ export function OfficeScreen(props: PluginScreenProps) {
   const onInnerScroll = useCallback(
     (event: { nativeEvent?: { contentOffset?: { x?: number }; layoutMeasurement?: { width?: number } } }) => {
       const e = event?.nativeEvent;
-      viewRef.current = { ...viewRef.current, x: numberOr(e?.contentOffset?.x, viewRef.current.x), w: numberOr(e?.layoutMeasurement?.width, viewRef.current.w) };
+      const s = shownRef.current;
+      shownRef.current = { ...s, x: numberOr(e?.contentOffset?.x, s.x), w: numberOr(e?.layoutMeasurement?.width, s.w) };
+      syncView();
       pushViewport();
     },
     [pushViewport],
@@ -723,7 +761,9 @@ export function OfficeScreen(props: PluginScreenProps) {
   const onLayout = useCallback(
     (event: { nativeEvent?: { layout?: { width?: number; height?: number } } }) => {
       const layout = event?.nativeEvent?.layout;
-      viewRef.current = { ...viewRef.current, w: numberOr(layout?.width, viewRef.current.w), h: numberOr(layout?.height, viewRef.current.h) };
+      const s = shownRef.current;
+      shownRef.current = { ...s, w: numberOr(layout?.width, s.w), h: numberOr(layout?.height, s.h) };
+      syncView();
       pushViewport();
     },
     [pushViewport],
@@ -866,7 +906,15 @@ export function OfficeScreen(props: PluginScreenProps) {
         {narrow ? null : <View style={{ width: SCENE_SIDEBAR_WIDTH_PX, borderRightWidth: 1, borderColor: colors.border }}>{roomsPanel(focusAgent)}</View>}
         <View testID="office-viewport" style={{ flex: 1 }} onLayout={onLayout}>
           <ScrollView ref={outer as never} onScroll={onOuterScroll} scrollEventThrottle={32}>
-            <ScrollView ref={inner as never} horizontal onScroll={onInnerScroll} scrollEventThrottle={32}>
+            <ScrollView
+              ref={inner as never}
+              horizontal
+              onScroll={onInnerScroll}
+              scrollEventThrottle={32}
+              {...(fit ? { snapToOffsets: columnSnaps(building.cols, zoom, factor, body.w), decelerationRate: "fast" as const, showsHorizontalScrollIndicator: false } : {})}
+            >
+              <View testID="office-fit" style={{ width: size.w * factor, height: size.h * factor, overflow: "hidden" }}>
+              <View style={factor === 1 ? null : { width: size.w, height: size.h, transform: [{ translateX: (-size.w * (1 - factor)) / 2 }, { translateY: (-size.h * (1 - factor)) / 2 }, { scale: factor }] }}>
               <Scene
                 size={size}
                 zoom={zoom}
@@ -881,6 +929,8 @@ export function OfficeScreen(props: PluginScreenProps) {
                 colors={colors}
                 onEffectDone={(id) => setEffects((queue) => finishEffect(queue, id))}
               />
+              </View>
+              </View>
             </ScrollView>
           </ScrollView>
           {stateText !== null ? (
@@ -893,23 +943,29 @@ export function OfficeScreen(props: PluginScreenProps) {
             <Pressable testID="office-next-request" accessibilityRole="button" accessibilityLabel={text("cameraNextRequest")} onPress={onNextRequest} style={{ height: SCENE_CONTROL_PX, paddingHorizontal: 8, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: colors.surface2 }}>
               <Text style={{ color: colors.foreground, fontSize: 12 }}>{text("cameraNextRequest")}</Text>
             </Pressable>
-            <Pressable testID="office-overview" accessibilityRole="button" accessibilityLabel={text("cameraOverview")} onPress={onOverview} style={{ height: SCENE_CONTROL_PX, paddingHorizontal: 8, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: colors.surface2 }}>
-              <Text style={{ color: colors.foreground, fontSize: 12 }}>{text("cameraOverview")}</Text>
-            </Pressable>
+            {narrow ? null : (
+              <Pressable testID="office-overview" accessibilityRole="button" accessibilityLabel={text("cameraOverview")} onPress={onOverview} style={{ height: SCENE_CONTROL_PX, paddingHorizontal: 8, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: colors.surface2 }}>
+                <Text style={{ color: colors.foreground, fontSize: 12 }}>{text("cameraOverview")}</Text>
+              </Pressable>
+            )}
             {narrow ? null : (
               <Pressable testID="office-feed-toggle" accessibilityRole="button" accessibilityLabel={text("feedToggle")} accessibilityState={{ selected: feedOpen }} onPress={() => setFeedOpen((open) => !open)} style={{ height: SCENE_CONTROL_PX, paddingHorizontal: 8, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: feedOpen ? colors.accent : colors.surface2 }}>
                 <Text style={{ color: feedOpen ? colors.surface1 : colors.foreground, fontSize: 12 }}>{text("feedToggle")}</Text>
               </Pressable>
             )}
-            <Pressable testID="office-zoom-out" accessibilityRole="button" accessibilityLabel={text("sceneZoomOut")} onPress={() => changeZoom(-1)} style={{ width: SCENE_CONTROL_PX, height: SCENE_CONTROL_PX, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: colors.surface2 }}>
-              <Text style={{ color: colors.foreground, fontSize: 14 }}>{text("sidebarGlyphOpen")}</Text>
-            </Pressable>
-            <Text testID="office-zoom-level" style={{ color: colors.foreground, fontSize: 12 }}>
-              {text("sceneZoomLevel", { zoom })}
-            </Text>
-            <Pressable testID="office-zoom-in" accessibilityRole="button" accessibilityLabel={text("sceneZoomIn")} onPress={() => changeZoom(1)} style={{ width: SCENE_CONTROL_PX, height: SCENE_CONTROL_PX, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: colors.surface2 }}>
-              <Text style={{ color: colors.foreground, fontSize: 14 }}>{text("sidebarGlyphClosed")}</Text>
-            </Pressable>
+            {narrow ? null : (
+              <>
+                <Pressable testID="office-zoom-out" accessibilityRole="button" accessibilityLabel={text("sceneZoomOut")} onPress={() => changeZoom(-1)} style={{ width: SCENE_CONTROL_PX, height: SCENE_CONTROL_PX, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: colors.surface2 }}>
+                  <Text style={{ color: colors.foreground, fontSize: 14 }}>{text("sidebarGlyphOpen")}</Text>
+                </Pressable>
+                <Text testID="office-zoom-level" style={{ color: colors.foreground, fontSize: 12 }}>
+                  {text("sceneZoomLevel", { zoom })}
+                </Text>
+                <Pressable testID="office-zoom-in" accessibilityRole="button" accessibilityLabel={text("sceneZoomIn")} onPress={() => changeZoom(1)} style={{ width: SCENE_CONTROL_PX, height: SCENE_CONTROL_PX, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: colors.surface2 }}>
+                  <Text style={{ color: colors.foreground, fontSize: 14 }}>{text("sidebarGlyphClosed")}</Text>
+                </Pressable>
+              </>
+            )}
           </View>
           {feedOpen && !narrow ? <FeedPanel rows={feedLines} colors={colors} onPick={focusAgent} /> : null}
           </View>
