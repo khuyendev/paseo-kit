@@ -1,6 +1,6 @@
 # Notice
 
-paseo-kit carries text from two third-party works. Everything else in this repository is written for the kit.
+paseo-kit carries text from three third-party works. Everything else in this repository is written for the kit.
 
 ## Harness v2 (Apache License 2.0)
 
@@ -26,10 +26,20 @@ also `LICENSES/gsd-core-MIT.txt`). The generated agents in `ship/.agents/agents/
 edit it. `ship/.agents/gsd/NOTICE.md` lists the departures from upstream with the requirement that enforces each
 (GSDC-49); `ph gsd upstream check` verifies the snapshot and the generated files.
 
+## habblaud (MIT)
+
+`plugins/office/server/art/`, `plugins/office/client/layout/` and `plugins/office/client/path/` are a modified TypeScript port of
+**habblaud** by marmottajr (https://github.com/marmottajr/habblaud) at commit
+`faa1a012b5fbf632c66dc6801c5383e53a542406`, licensed under the MIT License (`LICENSES/habblaud-MIT.txt`). The changes are
+erasable-syntax TypeScript, English comments, and canvas drawing replaced by PixelBuf drawing with PNG encoding on the plugin
+server. No bitmap asset, character editor, or social, terminal, Docker, Codex, World, dictation, delivery or timelapse module
+is carried. The first line of each ported file names its upstream path.
+
 ## Pins
 
 | work | pin | licence file |
 | --- | --- | --- |
 | revfactory/harness | 2.1.0, `92d9f1b29e7af81acebf51a9fcd1832e739a1414` (via paseo-harness-kit `ref-final`, `4441a88`) | `LICENSES/harness-Apache-2.0.txt` |
 | open-gsd/gsd-core | `next` @ `274f8cae13d03ad80e18959b135b0e51b33329e8` | `LICENSES/gsd-core-MIT.txt` |
+| marmottajr/habblaud | `faa1a012b5fbf632c66dc6801c5383e53a542406` | `LICENSES/habblaud-MIT.txt` |
 | @getpaseo/plugin (plugin dev dependency, not shipped) | 0.11.2 (`TESTED_PASEO_CLI`) | npm package licence |
