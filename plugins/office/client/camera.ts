@@ -1,4 +1,5 @@
 // No upstream: written for plan 07-11.
+// The layout and path modules it imports live in shared/ because the server bundle draws the room layers from them and Paseo's host bundler rejects client/ imports there (PANL-02).
 // Pure scene logic of the office (D-03, D-04, D-06): zoom, seat placement, camera, culling, sprite keys and the life director.
 // No React, no timer, no clock read and no random source: time is the beat number the caller passes in (OFFC-13).
 import { TILE, ZOOM_LEVELS, type Dir, type ZoomCandidate } from "../shared/art-types.ts";
