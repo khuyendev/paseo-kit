@@ -28,7 +28,7 @@ edit it. `ship/.agents/gsd/NOTICE.md` lists the departures from upstream with th
 
 ## habblaud (MIT)
 
-`plugins/office/server/art/`, `plugins/office/client/layout/` and `plugins/office/client/path/` are a modified TypeScript port of
+`plugins/office/server/art/`, `plugins/office/shared/layout/` and `plugins/office/shared/path/` are a modified TypeScript port of
 **habblaud** by marmottajr (https://github.com/marmottajr/habblaud) at commit
 `faa1a012b5fbf632c66dc6801c5383e53a542406`, licensed under the MIT License (`LICENSES/habblaud-MIT.txt`). The changes are
 erasable-syntax TypeScript, English comments, and canvas drawing replaced by PixelBuf drawing with PNG encoding on the plugin
