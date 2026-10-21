@@ -15,7 +15,7 @@ import {
 import { ROOM_ID_PREFIX, type BuildingLayout } from "../shared/layout/building.ts";
 import { mulberry32 } from "../shared/layout/rng.ts";
 import type { AreaLayout, SpotDef, TileRect } from "../shared/layout/types.ts";
-import { CLOCK_TICKS_PER_FRAME, CLOCK_TICK_MS, WANDER_STAY_MS_MAX, WANDER_STAY_MS_MIN } from "./limits-life.ts";
+import { ARCHIVE_FADE_MS, CLOCK_TICKS_PER_FRAME, CLOCK_TICK_MS, WANDER_STAY_MS_MAX, WANDER_STAY_MS_MIN } from "./limits-life.ts";
 import { ElevatorSchedule, arrivalJourney, departureJourney, elevatorFronts, handoffJourney, roundTripJourney, type Journey } from "./life/journey.ts";
 import { SHEET_POSE_GROUPS, groupOfPose } from "./life/frames.ts";
 import { createSpotLedger, indexSpots, type SpotIndex, type SpotLedger } from "./life/ledger.ts";
@@ -55,6 +55,10 @@ export const SCENE_DAY_REFRESH_BEATS = 75;
 export const SCENE_SLEEP_BEATS = 5;
 // Journeys at once (the walking count the spike measured).
 export const SCENE_MAX_WALKERS = 6;
+// Arrivals started in one beat at most; the rest wait for the next beats (waves of spawns).
+export const SCENE_ARRIVAL_WAVE = 3;
+// Beats a departing agent (a tombstone) may take to leave before the screen releases it anyway.
+export const SCENE_DEPART_MAX_BEATS = 20;
 // Beats before a failed excursion pick is tried again.
 export const SCENE_WANDER_RETRY_BEATS = 4;
 // Beats a resolved handoff waits for its move sheet and a free walker slot before it is dropped.
@@ -492,6 +496,8 @@ export interface WantedInput {
   status: AgentStatus;
   choice: PoseChoice;
   handoffPending: boolean;
+  // A spawned or departing agent walks through the elevator.
+  travels?: boolean;
 }
 
 // Sheet groups each agent needs: its resting pose, the move group for arrivals, departures, handoffs and the first idle candidates, social for those candidates.
@@ -506,7 +512,7 @@ export function wantedGroups(characters: readonly WantedInput[], maxCandidates: 
       const alt = groupOfPose(c.choice.alt);
       if (alt >= 0) groups.add(alt);
     }
-    if (c.status === "initializing" || c.status === "closed" || c.handoffPending) groups.add(MOVE_GROUP);
+    if (c.status === "initializing" || c.status === "closed" || c.handoffPending || c.travels === true) groups.add(MOVE_GROUP);
     if (c.status === "idle" && c.choice.wanders && candidates < maxCandidates) {
       candidates++;
       groups.add(MOVE_GROUP);
@@ -528,6 +534,12 @@ export interface LifeCharacter {
   choice: PoseChoice;
   // Sheet groups whose image is loaded.
   ready: ReadonlySet<number>;
+  // A fresh spawn: comes up by elevator when first seen, even when it is already running.
+  spawned?: boolean;
+  // On screen when the office opened: sits at its seat at once, even when it is still initializing (no elevator storm).
+  settled?: boolean;
+  // An archived agent (a tombstone): walks to an elevator at once, or fades in place for a bulk archive. It never comes back.
+  leave?: "walk" | "fade" | null;
 }
 
 export interface LifeStart {
@@ -550,8 +562,8 @@ export interface LifeDirector {
   // Swaps the layout (R11-02): every agent keeps its hidden, arrival and sleep state; the journeys of the old layout end and are returned as cancels.
   relayout(building: BuildingLayout): LifeChanges;
   // True while the character is not on screen: after its departure and before its arrival starts.
-  // An agent the director has not seen yet counts as gone only when its status is initializing.
-  isGone(agentId: string, status?: AgentStatus): boolean;
+  // An agent the director has not seen yet counts as gone only when its status is initializing or it is a fresh spawn.
+  isGone(agentId: string, status?: AgentStatus, spawned?: boolean): boolean;
   journeyOf(agentId: string): LifeKind | null;
   reset(): void;
 }
@@ -566,6 +578,8 @@ interface Entry {
   journey: LifeKind | null;
   nextOuting: number;
   round: number;
+  // Archived: leaves once and is never scheduled to arrive again.
+  leaving: boolean;
 }
 
 const emptyChanges = (): LifeChanges => ({ starts: [], cancels: [], gone: [] });
@@ -596,8 +610,8 @@ export function createLifeDirector(initial: BuildingLayout): LifeDirector {
   function entryOf(c: LifeCharacter, beat: number): Entry {
     let entry = entries.get(c.agentId);
     if (!entry) {
-      entry = { status: c.status, hidden: false, arrivalDue: null, arrivalFront: 0, sleepFrom: null, journey: null, nextOuting: beat + beatsOf(idleSitMs(seedFor(c.agentId, 0, 0))), round: 0 };
-      if (c.status === "initializing" && fronts.length > 0) {
+      entry = { status: c.status, hidden: false, arrivalDue: null, arrivalFront: 0, sleepFrom: null, journey: null, nextOuting: beat + beatsOf(idleSitMs(seedFor(c.agentId, 0, 0))), round: 0, leaving: false };
+      if ((c.status === "initializing" || c.spawned === true) && c.settled !== true && (c.leave ?? null) === null && fronts.length > 0) {
         entry.hidden = true;
         scheduleArrival(entry, beat);
       }
@@ -654,12 +668,46 @@ export function createLifeDirector(initial: BuildingLayout): LifeDirector {
         }
         if (c.status !== "idle") cancelOuting(c.agentId, entry, beat, changes);
       }
+      // Archived: an outing ends now; one that never arrived is gone at once.
+      if ((c.leave ?? null) !== null && !entry.leaving) {
+        entry.leaving = true;
+        cancelOuting(c.agentId, entry, beat, changes);
+        if (entry.hidden) {
+          entry.arrivalDue = null;
+          changes.gone.push(c.agentId);
+        }
+      }
     }
+    let arrivals = 0;
     for (const c of byId.values()) {
       const entry = entries.get(c.agentId) as Entry;
       const move = c.ready.has(MOVE_GROUP);
+      if (entry.leaving) {
+        if (entry.hidden || entry.journey !== null) continue;
+        if (c.leave === "fade") {
+          // A bulk archive fades in place: no walk, so no walker slot is needed.
+          const steps: Journey["steps"] = [{ kind: "vanish", ms: ARCHIVE_FADE_MS }];
+          const journey: Journey = { steps, startTile: { ...c.seat.tile }, startDir: c.seat.dir, endTile: { ...c.seat.tile }, endDir: c.seat.dir, totalMs: ARCHIVE_FADE_MS };
+          begin(entry, "departure");
+          changes.starts.push({ agentId: c.agentId, kind: "departure", journey, startBeat: beat });
+        } else if (move && fronts.length > 0 && active < SCENE_MAX_WALKERS) {
+          const journey = departureJourney(building, c.seat.tile, frontFor(c.agentId), { fromDir: c.seat.dir });
+          if (journey === null) {
+            entry.hidden = true;
+            changes.gone.push(c.agentId);
+          } else {
+            begin(entry, "departure");
+            changes.starts.push({ agentId: c.agentId, kind: "departure", journey, startBeat: beat });
+          }
+        } else if (fronts.length === 0) {
+          entry.hidden = true;
+          changes.gone.push(c.agentId);
+        }
+        continue;
+      }
       if (entry.hidden && entry.arrivalDue !== null) {
-        if (beat >= entry.arrivalDue && move && active < SCENE_MAX_WALKERS && c.status !== "closed") {
+        if (beat >= entry.arrivalDue && move && active < SCENE_MAX_WALKERS && arrivals < SCENE_ARRIVAL_WAVE && c.status !== "closed") {
+          arrivals++;
           const journey = arrivalJourney(building, fronts[Math.min(entry.arrivalFront, fronts.length - 1)] as TilePoint, c.seat.tile, { destDir: c.seat.dir });
           if (journey === null) {
             entry.hidden = false;
@@ -765,8 +813,8 @@ export function createLifeDirector(initial: BuildingLayout): LifeDirector {
     if (kind === "departure") {
       entry.hidden = true;
       changes.gone.push(agentId);
-      // The status left closed during the walk: the agent comes back by elevator (R11-01).
-      if (entry.status !== "closed" && entry.arrivalDue === null && fronts.length > 0) scheduleArrival(entry, beat);
+      // The status left closed during the walk: the agent comes back by elevator (R11-01); an archived agent never does.
+      if (!entry.leaving && entry.status !== "closed" && entry.arrivalDue === null && fronts.length > 0) scheduleArrival(entry, beat);
       return changes;
     }
     if (kind === "excursion" || kind === "hangout") {
@@ -807,9 +855,9 @@ export function createLifeDirector(initial: BuildingLayout): LifeDirector {
     handoff,
     finished,
     relayout,
-    isGone(agentId, status) {
+    isGone(agentId, status, spawned) {
       const entry = entries.get(agentId);
-      return entry ? entry.hidden : status === "initializing" && fronts.length > 0;
+      return entry ? entry.hidden : (status === "initializing" || spawned === true) && fronts.length > 0;
     },
     journeyOf: (agentId) => entries.get(agentId)?.journey ?? null,
     reset() {

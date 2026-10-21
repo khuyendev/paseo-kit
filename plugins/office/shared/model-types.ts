@@ -18,6 +18,17 @@ export type WorkspaceStatus = (typeof WORKSPACE_STATUSES)[number];
 export const WORKSPACE_KINDS = ["directory", "local_checkout", "checkout", "worktree"] as const;
 export type WorkspaceKind = (typeof WORKSPACE_KINDS)[number];
 
+export const SHELL_STATUSES = ["running", "completed", "failed", "canceled"] as const;
+export type ShellStatus = (typeof SHELL_STATUSES)[number];
+
+// The latest shell tool call of an agent from its timeline: status null when the timeline does not carry a readable one.
+export interface ShellView {
+  callId: string;
+  status: ShellStatus | null;
+  // Clipped, control characters removed; read by a heuristic only (never in a uri or style).
+  command: string | null;
+}
+
 export const TODO_STATUSES = ["pending", "in_progress", "completed"] as const;
 export type TodoStatus = (typeof TODO_STATUSES)[number];
 
@@ -47,6 +58,13 @@ export interface AgentView {
   // Value of the harness.run label.
   runId: string | null;
   updatedAt: string | null;
+  // ISO time the daemon created the agent (official snapshot field), clipped; null when absent.
+  createdAt: string | null;
+  // Cost of the last usage report when the provider gives one (lastUsage.totalCostUsd).
+  costUsd: number | null;
+  shell: ShellView | null;
+  // Distinct tool calls by kind over the loaded timeline window.
+  toolCounts: Readonly<Partial<Record<ToolKind, number>>>;
 }
 
 export interface ProjectView {
@@ -68,6 +86,8 @@ export interface OfficeSnapshot {
   projects: readonly ProjectView[];
   workspaces: readonly WorkspaceView[];
   agents: readonly AgentView[];
+  // Archived agents kept for a short walk out (tombstones); never counted as agents. Absent means none.
+  departing?: readonly AgentView[];
 }
 
 export interface DrawnAgent {

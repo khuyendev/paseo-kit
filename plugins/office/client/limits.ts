@@ -34,6 +34,14 @@ export const TIMELINE_TODO_PAGE_LIMIT = 100;
 export const TIMELINE_TODO_PAGES_MAX = 8;
 // Handoffs kept until the scene takes them; the oldest is dropped first.
 export const HANDOFF_QUEUE_MAX = 32;
+// Archived agents kept as tombstones until the scene releases them; the oldest is dropped first.
+export const DEPARTING_MAX = 32;
+// Longest ISO time text kept (updatedAt, createdAt).
+export const TIME_TEXT_MAX_CHARS = 40;
+// Longest shell command text kept per agent (latest shell call only; read by the test-run heuristic, never shown in a uri or style).
+export const SHELL_COMMAND_MAX_CHARS = 120;
+// Distinct tool calls remembered per agent for the counts by kind; the oldest leaves first.
+export const TOOL_CALLS_WINDOW_MAX = 100;
 
 // The three building caps below are limited per level; MAX_DRAWN_CHARACTERS is the global bound measured by the spike and the
 // product of the three caps is larger on purpose, so the global bound decides (D-04, D-12).

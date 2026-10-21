@@ -35,3 +35,24 @@ export const WANDER_STAY_MS_MAX = 12000;
 export const WANDER_NEAREST_CHOICES = 3;
 // Largest group any kept hangout kind takes.
 export const HANGOUT_MAX_MEMBERS = 4;
+
+// Spawn and archive effects (written for the office states, no upstream number).
+// An agent first seen while its createdAt is younger than this comes up by elevator even when it is already running.
+export const SPAWN_FRESH_MS = 30000;
+// Archives arriving in one store change above this count fade in place instead of walking out.
+export const ARCHIVE_BULK_MAX = 3;
+// Fade of an archived agent that leaves in place.
+export const ARCHIVE_FADE_MS = 700;
+
+// Agent moods (habblaud states), in milliseconds of scene time; the mood machine turns them into beats.
+// Waiting on shell: arms crossed and a spin now and then after 3 min, a cobweb after 10 min, a doze after 25 min.
+export const SHELL_BORED_MS = 180000;
+export const SHELL_COBWEB_MS = 600000;
+export const SHELL_DOZE_MS = 1500000;
+// An idle agent dozes off after 10 min idle, once it sits at its seat.
+export const IDLE_DOZE_MS = 600000;
+// Cheer (or sulk) after a waited-on shell call ends.
+export const CELEBRATE_MS = 4000;
+// While bored: a spin of SPIN_MS every SPIN_EVERY_MS.
+export const SPIN_EVERY_MS = 9600;
+export const SPIN_MS = 3200;

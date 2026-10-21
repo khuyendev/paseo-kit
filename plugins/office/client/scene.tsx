@@ -6,7 +6,10 @@ import type { Dir, Pose, ZoomCandidate } from "../shared/art-types.ts";
 import type { AttentionReason, WorkspaceKind } from "../shared/model-types.ts";
 import type { TintSource } from "./atmosphere.tsx";
 import { SCENE_Z_EFFECT, SCENE_Z_FRONT, SCENE_Z_SEATED_BASE, SCENE_Z_WALKER, type VisibleLayer } from "./camera.ts";
+import { MoodBubble, NameTag } from "./badges.tsx";
 import { CharacterSprite } from "./character.tsx";
+import type { ProviderChip } from "./names.ts";
+import type { StringKey } from "./strings.ts";
 import { EffectLayer, type EffectLayerProps } from "./effects.tsx";
 import type { EffectPlacement } from "./effects.ts";
 import type { CharacterSheet } from "./life/frames.ts";
@@ -14,7 +17,8 @@ import { footPx } from "./life/frames.ts";
 import type { Journey } from "./life/journey.ts";
 import type { LightState } from "./model.ts";
 import type { TilePoint } from "../shared/path/grid.ts";
-import { ClusterSign, LayerView, RoomLabel, SurplusBadge, type SceneColors } from "./room.tsx";
+import { ClusterSign, LayerView, RoomLabel, RoomShade, SurplusBadge, type SceneColors } from "./room.tsx";
+import type { TileRect } from "../shared/layout/types.ts";
 import { CHAR_H, CHAR_W } from "../shared/art-types.ts";
 
 export interface SceneLayerData {
@@ -35,6 +39,13 @@ export interface SceneCharacterData {
   attention: AttentionReason | null;
   onJourneyEnd: () => void;
   onPress: () => void;
+  // Mood overlay (step C); absent means none.
+  glyphs?: readonly StringKey[];
+  blink?: boolean;
+  soft?: boolean;
+  // The generated name and the provider chip under the feet.
+  tag?: string | null;
+  chip?: ProviderChip | null;
 }
 
 export interface SceneSignData {
@@ -56,6 +67,11 @@ export interface SceneSurplusData {
   count: number;
 }
 
+export interface SceneShadeData {
+  rect: TileRect;
+  dark: boolean;
+}
+
 export interface SceneProps {
   size: { w: number; h: number };
   zoom: ZoomCandidate;
@@ -66,6 +82,8 @@ export interface SceneProps {
   signs: readonly SceneSignData[];
   labels: readonly SceneLabelData[];
   surplus: readonly SceneSurplusData[];
+  // Room lights; absent means every room is lit.
+  shades?: readonly SceneShadeData[];
   effects: readonly EffectPlacement[];
   colors: SceneColors;
   onEffectDone: (id: string) => void;
@@ -80,6 +98,7 @@ const ATTENTION_COLOR: Readonly<Record<AttentionReason, keyof SceneColors>> = { 
 
 export function Scene(props: SceneProps) {
   const { size, zoom, position, layers, characters, signs, labels, surplus, effects, colors, onEffectDone, effectDurationMs } = props;
+  const shades = props.shades ?? [];
   return (
     <View testID="office-scene" style={{ position: "relative", width: size.w, height: size.h }}>
       {layers.map((entry, index) => (
@@ -106,11 +125,18 @@ export function Scene(props: SceneProps) {
           >
             {c.isChild ? <View testID={`office-char-badge-${index}`} style={{ position: "absolute", left: frameW - BADGE_PX, top: CHAR_H * c.sheetZoom - BADGE_PX, width: BADGE_PX, height: BADGE_PX, backgroundColor: colors.accent }} /> : null}
             {attentionColor !== null ? <View testID={`office-char-attention-${index}`} style={{ position: "absolute", left: 0, top: 0, width: DOT_PX, height: DOT_PX, borderRadius: DOT_PX / 2, backgroundColor: attentionColor }} /> : null}
+            {c.glyphs !== undefined && c.glyphs.length > 0 ? (
+              <MoodBubble testID={`office-bubble-${c.blink === true ? "alert" : c.soft === true ? "soft" : "mood"}-${index}`} glyphs={c.glyphs} blink={c.blink === true} soft={c.soft === true} frameW={frameW} colors={colors} />
+            ) : null}
+            {typeof c.tag === "string" && c.tag !== "" ? <NameTag testID={`office-tag-${index}`} shown={c.tag} chip={c.chip ?? null} frameW={frameW} frameH={CHAR_H * c.sheetZoom} colors={colors} /> : null}
           </CharacterSprite>
         );
       })}
       {layers.map((entry, index) => (
         <LayerView key={`front-${index}`} testID={`office-front-${index}`} layer={entry.layer} zoom={zoom} sources={entry.front} position={position} zIndex={SCENE_Z_FRONT} />
+      ))}
+      {shades.map((shade, index) => (
+        <RoomShade key={`shade-${index}`} testID={`office-room-${shade.dark ? "dark" : "lit"}-${index}`} rect={shade.rect} zoom={zoom} dark={shade.dark} zIndex={SCENE_Z_FRONT + 1} />
       ))}
       {signs.map((s, index) => (
         <ClusterSign key={`sign-${index}`} testID={`office-sign-${index}`} tile={s.tile} zoom={zoom} name={s.name} kind={s.kind} light={s.light} additions={s.additions} deletions={s.deletions} colors={colors} />

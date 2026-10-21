@@ -8,12 +8,41 @@ official Paseo API only. The art is ported from habblaud under the MIT licence (
 Desktop only; mobile not tested; one host.
 
 - One building. A room per Paseo project; in it a desk cluster per workspace with its sign and its status light.
-- A character per agent, with a pose that follows the agent's state; children walk to their parent.
+- A sidebar with one checkbox per project, "All" and "None": an unchecked project leaves the scene and the counters (the
+  filter runs where the building model is built). Pressing a project name moves the camera to its room. The choice lasts
+  as long as the plugin is loaded; it is not saved across an app restart or a plugin reload.
+- A search field (opened with the "Search" button) that filters the project list and finds agents by name or title;
+  choosing an agent selects it and moves the camera.
+- A character per agent with a generated name and a provider chip under it, and a pose and a bubble that follow its
+  state: the tool it uses while working, a blinking alert for a permission request, a soft "!" when it waits for you,
+  an hourglass while it waits on a shell command it started (it eats popcorn, crosses its arms and spins its chair after
+  3 min, gathers a cobweb after 10 min, dozes after 25 min, and cheers with confetti when the command ends), and a doze
+  after 10 min idle. Children walk to their parent when they finish.
+- Arrivals and departures: an agent created less than 30 s ago comes up by elevator, in waves of three; agents already
+  there when the office opens just sit. An archived agent walks to an elevator and leaves; more than three archived at
+  once fade in place. A room with nobody in it goes dark; the last one out turns the lights off.
 - Common areas, day and night, and seasons.
 - An effect on a wave or phase completion, drawn from the wave link described below.
-- The sidebar tree and the agent drawer, the counters, and the context taken from the last usage of each agent.
+- The agent drawer: state, tool, todos, child agents, last error, and stats (tokens used of the context with a bar,
+  model, provider, session name and kind, lines added and removed, tool calls by kind over the loaded timeline, cost
+  when the provider reports it, age). Follow keeps the camera on the agent (also a double press on a character).
+- Camera controls: zoom, Overview (the whole building at the smallest zoom) and Next request (the next agent that
+  needs you).
+- A toggleable activity feed of the visible projects (arrived, finished its turn, asks for permission, error, handed
+  its result back, shell command finished, left), newest first, at most 40 lines.
+- Counters for rooms, agents, sub-agents, states and shells running, and the context taken from the last usage of each
+  agent.
 - A "+N agents" group above the caps, so a large host stays readable.
 - An empty slot for provider usage. Nothing fills it.
+
+Two bounded heuristics on official data: a shell command text that names a common test runner shows the tests glyph
+(`client/activity.ts`, `isTestCommand`; anything else shows the terminal glyph), and an idle agent whose latest shell
+tool call in its timeline is still running counts as waiting on a shell (`client/moods.ts`; when the timeline carries no
+readable status the state never shows).
+
+Not shown: provider usage (5h and weekly), settings, a day summary, a timelapse, session history, sounds, notifications
+and keyboard shortcuts (the plugin client gets no key events). Sub-agents do not leave right after a handoff; they leave
+when they are closed or archived.
 
 The spike thresholds that decide the zoom levels and the tint levels were fixed in
 `.planning/phases/07-office/07-SPIKE.md` before anything was measured.

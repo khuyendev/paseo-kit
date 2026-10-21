@@ -5,6 +5,7 @@ import type { PaseoApi } from "@getpaseo/client";
 import {
   AGENT_STATUSES,
   ATTENTION_REASONS,
+  SHELL_STATUSES,
   TODO_STATUSES,
   TOOL_KINDS,
   WORKSPACE_KINDS,
@@ -14,6 +15,8 @@ import {
   type AttentionReason,
   type OfficeSnapshot,
   type ProjectView,
+  type ShellStatus,
+  type ShellView,
   type TodoStatus,
   type TodoView,
   type ToolKind,
@@ -22,6 +25,7 @@ import {
   type WorkspaceView,
 } from "../shared/model-types.ts";
 import {
+  DEPARTING_MAX,
   ERROR_MAX_CHARS,
   HANDOFF_QUEUE_MAX,
   ID_MAX_CHARS,
@@ -29,14 +33,17 @@ import {
   LIST_PAGE_LIMIT,
   NAME_MAX_CHARS,
   PENDING_PERMISSIONS_MAX,
+  SHELL_COMMAND_MAX_CHARS,
   STORE_ENTRIES_MAX,
   TIMELINE_SUBSCRIPTIONS_MAX,
   TIMELINE_TAIL_LIMIT,
   TIMELINE_TODO_PAGES_MAX,
   TIMELINE_TODO_PAGE_LIMIT,
+  TIME_TEXT_MAX_CHARS,
   TITLE_MAX_CHARS,
   TODOS_PER_AGENT_MAX,
   TODO_TEXT_MAX_CHARS,
+  TOOL_CALLS_WINDOW_MAX,
 } from "./limits.ts";
 
 // Defined here because the protocol package is not imported into the bundle.
@@ -54,7 +61,7 @@ export interface Handoff {
   parentId: string;
 }
 
-export type AgentBase = Omit<AgentView, "projectId" | "lastTool" | "activity" | "todos">;
+export type AgentBase = Omit<AgentView, "projectId" | "lastTool" | "activity" | "todos" | "shell" | "toolCounts">;
 
 export interface WorkspaceRecord extends WorkspaceView {
   projectDisplayName: string | null;
@@ -67,6 +74,10 @@ export interface TimelineDerived {
   // Store-internal: true once a todo item was applied (live, tail or older history).
   todoSeen: boolean;
   lastError: string | null;
+  // The latest shell call (it outlives the turn, so an idle agent can wait on it).
+  shell: ShellView | null;
+  // Distinct tool call ids seen, with their kind, in arrival order, bounded by TOOL_CALLS_WINDOW_MAX.
+  calls: ReadonlyMap<string, ToolKind>;
 }
 
 export interface StoreLimits {
@@ -101,6 +112,8 @@ export interface StoreState {
   derived: ReadonlyMap<string, TimelineDerived>;
   workspaces: ReadonlyMap<string, WorkspaceRecord>;
   projects: ReadonlyMap<string, ProjectView>;
+  // Archived or removed agents kept as tombstones until the scene has walked them out (released by "departed.release").
+  departing: ReadonlyMap<string, AgentBase>;
   // Agents seen running whose finished turn has not fired a handoff yet.
   armed: ReadonlySet<string>;
   handoffs: readonly Handoff[];
@@ -121,7 +134,8 @@ export type StoreAction =
   | { type: "timeline.older"; agentId: string; entries: unknown }
   | { type: "timeline.reset"; agentId: string }
   | { type: "select"; agentId: string | null }
-  | { type: "handoffs.take"; upToSeq: number };
+  | { type: "handoffs.take"; upToSeq: number }
+  | { type: "departed.release"; ids: unknown };
 
 // ---------- helpers ----------
 
@@ -193,6 +207,7 @@ export function normalizeAgent(payload: unknown): AgentBase | "archived" | null 
   const usage = isRecord(usageRaw) ? usageRaw : null;
   const used = usage ? finite(own(usage, "contextWindowUsedTokens")) : null;
   const max = usage ? finite(own(usage, "contextWindowMaxTokens")) : null;
+  const cost = usage ? finite(own(usage, "totalCostUsd")) : null;
   const permissions = own(payload, "pendingPermissions");
   return {
     id,
@@ -207,9 +222,11 @@ export function normalizeAgent(payload: unknown): AgentBase | "archived" | null 
     model: clean(own(payload, "model"), NAME_MAX_CHARS),
     contextUsedTokens: used !== null && used >= 0 ? used : null,
     contextMaxTokens: max !== null && max > 0 ? max : null,
+    costUsd: cost !== null && cost >= 0 ? cost : null,
     lastError: clean(own(payload, "lastError"), ERROR_MAX_CHARS),
     runId: labels ? clean(own(labels, RUN_LABEL), NAME_MAX_CHARS) : null,
-    updatedAt: clean(own(payload, "updatedAt"), 40),
+    updatedAt: clean(own(payload, "updatedAt"), TIME_TEXT_MAX_CHARS),
+    createdAt: clean(own(payload, "createdAt"), TIME_TEXT_MAX_CHARS),
   };
 }
 
@@ -243,7 +260,7 @@ export function normalizeProject(payload: unknown): ProjectView | null {
 
 // ---------- timeline derivation ----------
 
-export const EMPTY_DERIVED: TimelineDerived = { lastTool: null, activity: null, todos: [], todoSeen: false, lastError: null };
+export const EMPTY_DERIVED: TimelineDerived = { lastTool: null, activity: null, todos: [], todoSeen: false, lastError: null, shell: null, calls: new Map() };
 
 function todosOf(items: unknown): TodoView[] {
   const out: TodoView[] = [];
@@ -263,9 +280,33 @@ function sameTodos(a: readonly TodoView[], b: readonly TodoView[]): boolean {
   return a.length === b.length && a.every((t, i) => t.text === b[i]?.text && t.status === b[i]?.status);
 }
 
+const sameShell = (a: ShellView | null, b: ShellView | null): boolean => a === b || (a !== null && b !== null && a.callId === b.callId && a.status === b.status && a.command === b.command);
+
 function withDerived(prev: TimelineDerived, next: TimelineDerived): TimelineDerived {
-  const same = prev.lastTool === next.lastTool && prev.activity === next.activity && prev.todoSeen === next.todoSeen && prev.lastError === next.lastError && sameTodos(prev.todos, next.todos);
+  const same =
+    prev.lastTool === next.lastTool && prev.activity === next.activity && prev.todoSeen === next.todoSeen && prev.lastError === next.lastError && sameTodos(prev.todos, next.todos) && sameShell(prev.shell, next.shell) && prev.calls === next.calls;
   return same ? prev : next;
+}
+
+// The call window with one more distinct id; the same map when the id is known or absent.
+function withCall(calls: ReadonlyMap<string, ToolKind>, callId: string | null, kind: ToolKind): ReadonlyMap<string, ToolKind> {
+  if (callId === null || calls.has(callId)) return calls;
+  const next = new Map(calls);
+  next.set(callId, kind);
+  for (const id of next.keys()) {
+    if (next.size <= TOOL_CALLS_WINDOW_MAX) break;
+    next.delete(id);
+  }
+  return next;
+}
+
+// The latest shell call after one shell tool_call item: an update of the same call keeps its command when the update has none.
+function withShell(prev: ShellView | null, callId: string | null, detail: Record<string, unknown> | null, status: unknown): ShellView | null {
+  if (callId === null) return prev;
+  const command = detail ? clean(detail.command, SHELL_COMMAND_MAX_CHARS) : null;
+  const shellStatus = oneOf<ShellStatus>(SHELL_STATUSES, status);
+  if (prev !== null && prev.callId === callId) return { callId, status: shellStatus, command: command ?? prev.command };
+  return { callId, status: shellStatus, command };
 }
 
 // Tool kind comes from the typed detail only; anything else is unknown. No tool-name table (OFFC-05, D-03).
@@ -278,7 +319,9 @@ export function deriveTimeline(prev: TimelineDerived, event: unknown): TimelineD
     case "tool_call": {
       const detail = isRecord(item.detail) ? item.detail : null;
       const kind = detail ? oneOf<ToolKind>(TOOL_KINDS, detail.type) : null;
-      return withDerived(prev, { ...prev, lastTool: kind ?? "unknown", activity: "tool" });
+      const callId = idOf(item.callId);
+      const shell = kind === "shell" ? withShell(prev.shell, callId, detail, item.status) : prev.shell;
+      return withDerived(prev, { ...prev, lastTool: kind ?? "unknown", activity: "tool", shell, calls: withCall(prev.calls, callId, kind ?? "unknown") });
     }
     case "reasoning":
       return withDerived(prev, { ...prev, activity: "reasoning" });
@@ -304,6 +347,7 @@ export function emptyState(): StoreState {
     derived: new Map(),
     workspaces: new Map(),
     projects: new Map(),
+    departing: new Map(),
     armed: new Set(),
     handoffs: [],
     nextSeq: 1,
@@ -328,15 +372,29 @@ function numericSeq(entry: unknown): number {
   return isRecord(entry) && typeof entry.seqStart === "number" && Number.isFinite(entry.seqStart) ? entry.seqStart : 0;
 }
 
+// A tombstone set with the agent as the newest entry, the oldest dropped beyond DEPARTING_MAX.
+function withDeparting(departing: ReadonlyMap<string, AgentBase>, base: AgentBase): Map<string, AgentBase> {
+  const next = new Map(departing);
+  next.delete(base.id);
+  next.set(base.id, base);
+  for (const id of next.keys()) {
+    if (next.size <= DEPARTING_MAX) break;
+    next.delete(id);
+  }
+  return next;
+}
+
 function withoutAgent(state: StoreState, id: string): StoreState {
-  if (!state.agents.has(id)) return state;
+  const base = state.agents.get(id);
+  if (base === undefined) return state;
   const agents = new Map(state.agents);
   agents.delete(id);
+  const departing = withDeparting(state.departing, base);
   const derived = new Map(state.derived);
   derived.delete(id);
   const armed = new Set(state.armed);
   armed.delete(id);
-  return bump(state, { agents, derived, armed });
+  return bump(state, { agents, derived, armed, departing });
 }
 
 function seedAgents(state: StoreState, raw: unknown, limits: StoreLimits): StoreState {
@@ -350,7 +408,10 @@ function seedAgents(state: StoreState, raw: unknown, limits: StoreLimits): Store
   for (const [id, value] of state.derived) if (agents.has(id)) derived.set(id, value);
   const armed = new Set<string>();
   for (const [id, base] of agents) if (base.status === "running") armed.add(id);
-  return bump(state, { agents, derived, armed });
+  // A tombstone whose agent is listed again is live again.
+  let departing = state.departing;
+  if ([...departing.keys()].some((id) => agents.has(id))) departing = new Map([...departing].filter(([id]) => !agents.has(id)));
+  return bump(state, { agents, derived, armed, departing });
 }
 
 function upsertAgent(state: StoreState, raw: unknown, options: ReduceOptions | undefined, limits: StoreLimits): StoreState {
@@ -375,6 +436,11 @@ function upsertAgent(state: StoreState, raw: unknown, options: ReduceOptions | u
   const agents = new Map(state.agents);
   agents.set(base.id, base);
   const patch: Partial<StoreState> = { agents };
+  if (state.departing.has(base.id)) {
+    const departing = new Map(state.departing);
+    departing.delete(base.id);
+    patch.departing = departing;
+  }
   if (armedNow !== wasArmed) {
     const armed = new Set(state.armed);
     if (armedNow) armed.add(base.id);
@@ -505,6 +571,13 @@ export function reduce(state: StoreState, action: StoreAction, options?: ReduceO
       const rest = state.handoffs.filter((h) => h.seq > action.upToSeq);
       return rest.length === state.handoffs.length ? state : bump(state, { handoffs: rest });
     }
+    case "departed.release": {
+      const ids = entriesOf(action.ids).filter((id): id is string => typeof id === "string" && state.departing.has(id));
+      if (ids.length === 0) return state;
+      const departing = new Map(state.departing);
+      for (const id of ids) departing.delete(id);
+      return bump(state, { departing });
+    }
     default:
       return state;
   }
@@ -512,26 +585,38 @@ export function reduce(state: StoreState, action: StoreAction, options?: ReduceO
 
 // ---------- snapshot join ----------
 
-const snapshotCache = new WeakMap<object, { derived: object; workspaces: object; projects: object; snapshot: OfficeSnapshot }>();
+const snapshotCache = new WeakMap<object, { derived: object; workspaces: object; projects: object; departing: object; snapshot: OfficeSnapshot }>();
 
-// Same reference until agents, derived data, workspaces or projects change (works with useSyncExternalStore).
+function countsOf(calls: ReadonlyMap<string, ToolKind> | undefined): Partial<Record<ToolKind, number>> {
+  const out: Partial<Record<ToolKind, number>> = {};
+  if (calls) for (const kind of calls.values()) out[kind] = (out[kind] ?? 0) + 1;
+  return out;
+}
+
+function viewOf(state: StoreState, base: AgentBase): AgentView {
+  const derived = state.derived.get(base.id);
+  const workspace = base.workspaceId === null ? undefined : state.workspaces.get(base.workspaceId);
+  return {
+    ...base,
+    projectId: workspace ? workspace.projectId : null,
+    lastError: derived?.lastError ?? base.lastError,
+    lastTool: derived?.lastTool ?? null,
+    activity: derived?.activity ?? null,
+    todos: derived?.todos ?? [],
+    shell: derived?.shell ?? null,
+    toolCounts: countsOf(derived?.calls),
+  };
+}
+
+// Same reference until agents, derived data, workspaces, projects or tombstones change (works with useSyncExternalStore).
 export function snapshotOf(state: StoreState): OfficeSnapshot {
   const hit = snapshotCache.get(state.agents);
-  if (hit && hit.derived === state.derived && hit.workspaces === state.workspaces && hit.projects === state.projects) return hit.snapshot;
+  if (hit && hit.derived === state.derived && hit.workspaces === state.workspaces && hit.projects === state.projects && hit.departing === state.departing) return hit.snapshot;
   const agents: AgentView[] = [];
-  for (const base of state.agents.values()) {
-    const derived = state.derived.get(base.id);
-    const workspace = base.workspaceId === null ? undefined : state.workspaces.get(base.workspaceId);
-    agents.push({
-      ...base,
-      projectId: workspace ? workspace.projectId : null,
-      lastError: derived?.lastError ?? base.lastError,
-      lastTool: derived?.lastTool ?? null,
-      activity: derived?.activity ?? null,
-      todos: derived?.todos ?? [],
-    });
-  }
+  for (const base of state.agents.values()) agents.push(viewOf(state, base));
   agents.sort((a, b) => less(a.title ?? "", a.id, b.title ?? "", b.id));
+  const departing: AgentView[] = [];
+  for (const base of state.departing.values()) departing.push(viewOf(state, base));
   const workspaces: WorkspaceView[] = [];
   const projects = new Map<string, ProjectView>(state.projects);
   for (const record of state.workspaces.values()) {
@@ -542,8 +627,8 @@ export function snapshotOf(state: StoreState): OfficeSnapshot {
   }
   workspaces.sort((a, b) => less(a.name, a.id, b.name, b.id));
   const projectList = [...projects.values()].sort((a, b) => less(a.name, a.id, b.name, b.id));
-  const snapshot: OfficeSnapshot = { projects: projectList, workspaces, agents };
-  snapshotCache.set(state.agents, { derived: state.derived, workspaces: state.workspaces, projects: state.projects, snapshot });
+  const snapshot: OfficeSnapshot = { projects: projectList, workspaces, agents, departing };
+  snapshotCache.set(state.agents, { derived: state.derived, workspaces: state.workspaces, projects: state.projects, departing: state.departing, snapshot });
   return snapshot;
 }
 
@@ -606,6 +691,8 @@ export interface OfficeStore {
   subscribe(listener: () => void): () => void;
   select(agentId: string | null): void;
   takeHandoffs(upToSeq?: number): Handoff[];
+  // Drops the tombstones of departed agents once the scene has walked them out.
+  release(ids: readonly string[]): void;
   getStatus(): StoreStatus;
   stats(): StoreStats;
   dispose(): void;
@@ -876,6 +963,10 @@ export function createStore(paseo: StorePaseo, options: StoreOptions = {}): Offi
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
     });
     for (const agent of running) out.push(agent.id);
+    // An idle agent whose latest shell call still runs keeps its timeline, so the end of the command is seen (waiting on shell).
+    for (const agent of state.agents.values()) {
+      if (agent.status === "idle" && agent.id !== state.selectedAgentId && state.derived.get(agent.id)?.shell?.status === "running") out.push(agent.id);
+    }
     return out.slice(0, limits.timelineSubscriptionsMax);
   }
 
@@ -1044,6 +1135,7 @@ export function createStore(paseo: StorePaseo, options: StoreOptions = {}): Offi
     },
     select,
     takeHandoffs,
+    release: (ids) => dispatch({ type: "departed.release", ids }),
     getStatus: () => status,
     stats: () => ({ ...counters }),
     dispose,

@@ -3,8 +3,8 @@
 
 // Rows the sidebar shows at most; the rest is counted into an exact hidden count.
 export const SIDEBAR_MAX_ROWS = 400;
-// Left padding per tree depth, in px.
-export const SIDEBAR_INDENT_PX = 14;
+// Edge of a project checkbox, in px.
+export const SIDEBAR_CHECK_PX = 16;
 // Characters of a title, project name or workspace name shown on a row or header.
 export const LABEL_MAX_CHARS = 80;
 // Characters of the last error text in the drawer.
@@ -18,3 +18,15 @@ export const CHILDREN_MAX_ITEMS = 50;
 export const CONTEXT_WARN_PERCENT = 60;
 // Minimum width of the empty provider usage slot in the top bar, in px (D-07).
 export const USAGE_SLOT_MIN_WIDTH_PX = 120;
+// Feed lines kept (newest first) and beats between two refreshes of their relative times while the feed is open.
+export const FEED_MAX = 40;
+export const FEED_REFRESH_BEATS = 10;
+export const FEED_PANEL_WIDTH_PX = 260;
+export const FEED_PANEL_MAX_HEIGHT_PX = 360;
+// Agents the search lists at most, and characters of the query kept.
+export const SEARCH_RESULTS_MAX = 8;
+export const SEARCH_QUERY_MAX_CHARS = 60;
+// Two presses on one character within this many beats follow it.
+export const DOUBLE_PRESS_BEATS = 1;
+// Width of the token bar in the drawer, in px.
+export const TOKEN_BAR_WIDTH_PX = 120;

@@ -77,7 +77,53 @@ function checkCaps(caps: BuildCaps): void {
   }
 }
 
-export function buildModel(snapshot: OfficeSnapshot, partial: Partial<BuildCaps> = {}): BuildingModel {
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+const listOf = (v: unknown): readonly unknown[] => (Array.isArray(v) ? v : []);
+
+// The project of an agent: its joined projectId, else the project of its workspace, else null.
+export function projectOfAgent(agent: unknown, workspaceProject: ReadonlyMap<string, string>): string | null {
+  if (!isRecord(agent)) return null;
+  if (typeof agent.projectId === "string") return agent.projectId;
+  return typeof agent.workspaceId === "string" ? (workspaceProject.get(agent.workspaceId) ?? null) : null;
+}
+
+export function workspaceProjects(snapshot: unknown): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const w of listOf(isRecord(snapshot) ? snapshot.workspaces : null)) {
+    if (isRecord(w) && typeof w.id === "string" && typeof w.projectId === "string" && !out.has(w.id)) out.set(w.id, w.projectId);
+  }
+  return out;
+}
+
+// The snapshot without the hidden projects, their workspaces and their agents; agents of no project stay. The same object comes back
+// when no hidden id names a project of the snapshot, so a stale hidden id costs nothing (sidebar checkboxes, D-04).
+export function visibleSnapshot(snapshot: OfficeSnapshot, hidden: ReadonlySet<string> | null | undefined): OfficeSnapshot {
+  if (!isRecord(snapshot)) return { projects: [], workspaces: [], agents: [] };
+  const projects = listOf(snapshot.projects) as OfficeSnapshot["projects"];
+  const workspaces = listOf(snapshot.workspaces) as OfficeSnapshot["workspaces"];
+  const agents = listOf(snapshot.agents) as OfficeSnapshot["agents"];
+  const departing = listOf(snapshot.departing) as OfficeSnapshot["agents"];
+  if (!(hidden instanceof Set) || hidden.size === 0) return snapshot;
+  const byWorkspace = workspaceProjects(snapshot);
+  const named = new Set<string>();
+  for (const p of projects) if (isRecord(p) && typeof p.id === "string") named.add(p.id);
+  for (const project of byWorkspace.values()) named.add(project);
+  if (![...hidden].some((id) => named.has(id))) return snapshot;
+  const keep = (a: unknown): boolean => {
+    const project = projectOfAgent(a, byWorkspace);
+    return project === null || !hidden.has(project);
+  };
+  return {
+    projects: projects.filter((p) => !(isRecord(p) && typeof p.id === "string" && hidden.has(p.id))),
+    workspaces: workspaces.filter((w) => !(isRecord(w) && typeof w.projectId === "string" && hidden.has(w.projectId))),
+    agents: agents.filter(keep),
+    departing: departing.filter(keep),
+  };
+}
+
+// Hidden projects are filtered here, before any cap, so layout, caps, "+N" groups and the life director see visible projects only.
+export function buildModel(input: OfficeSnapshot, partial: Partial<BuildCaps> = {}, hidden: ReadonlySet<string> | null = null): BuildingModel {
+  const snapshot = visibleSnapshot(input, hidden);
   const caps: BuildCaps = {
     agentsPerCluster: partial.agentsPerCluster ?? AGENTS_PER_CLUSTER_MAX,
     clustersPerRoom: partial.clustersPerRoom ?? CLUSTERS_PER_ROOM_MAX,
@@ -91,8 +137,10 @@ export function buildModel(snapshot: OfficeSnapshot, partial: Partial<BuildCaps>
   for (const p of snapshot.projects) if (!projects.has(p.id)) projects.set(p.id, p);
   const workspaces = new Map<string, WorkspaceView>();
   for (const w of snapshot.workspaces) if (!workspaces.has(w.id)) workspaces.set(w.id, w);
+  // Departing agents (tombstones) keep their seat until the scene releases them; a live agent of the same id wins.
   const agents = new Map<string, AgentView>();
   for (const a of snapshot.agents) if (!agents.has(a.id)) agents.set(a.id, a);
+  for (const a of listOf(snapshot.departing) as readonly AgentView[]) if (isRecord(a) && typeof a.id === "string" && !agents.has(a.id)) agents.set(a.id, a);
 
   // 2. Placed agents are those whose workspace is listed; the others stay out of the model and out of totalAgents.
   const byWorkspace = new Map<string, AgentView[]>();

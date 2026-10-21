@@ -90,9 +90,11 @@ test("OFFC-21 signals: normalizeAgent reads the chosen set and nothing else", ()
     model: "m1",
     contextUsedTokens: 50,
     contextMaxTokens: 200,
+    costUsd: null,
     lastError: "boom",
     runId: "run-7",
     updatedAt: iso(0),
+    createdAt: iso(0),
   });
   assert.doesNotMatch(JSON.stringify(normalizeAgent(full)), /secret/);
   assert.deepEqual(normalizeAgent({ id: "x", status: "idle" }), {
@@ -108,9 +110,11 @@ test("OFFC-21 signals: normalizeAgent reads the chosen set and nothing else", ()
     model: null,
     contextUsedTokens: null,
     contextMaxTokens: null,
+    costUsd: null,
     lastError: null,
     runId: null,
     updatedAt: null,
+    createdAt: null,
   });
 });
 
@@ -263,7 +267,7 @@ test("OFFC-05 snapshot: the join gives projectId, derived data, error precedence
   assert.equal(snapshotOf(s), snap);
   const fallback = snapshotOf(reduce(reduce(s, { type: "timeline.reset", agentId: "b" }), seedAgents(agentPayload("b", { lastError: "base", workspaceId: "w1" }))));
   assert.equal(fallback.agents[0].lastError, "base");
-  assert.deepEqual(snapshotOf(emptyState()), { projects: [], workspaces: [], agents: [] });
+  assert.deepEqual(snapshotOf(emptyState()), { projects: [], workspaces: [], agents: [], departing: [] });
   const named = reduce(s, { type: "projects.seed", projects: [{ projectId: "p1", projectDisplayName: "Listed" }] });
   assert.equal(snapshotOf(named).projects[0].name, "Listed");
 });
@@ -435,7 +439,7 @@ test("OFFC-05 store: a failing list leaves status failed with the error text and
   await store.start();
   await settleAll();
   assert.deepEqual(store.getStatus(), { state: "failed", error: "daemon offline" });
-  assert.deepEqual(store.getSnapshot(), { projects: [], workspaces: [], agents: [] });
+  assert.deepEqual(store.getSnapshot(), { projects: [], workspaces: [], agents: [], departing: [] });
   assert.ok(store.stats().listErrors >= 1);
   store.dispose();
   assert.equal(fake.liveSubscriptions(), 0);
@@ -735,7 +739,7 @@ test("OFFC-05 store: dispose leaves no live subscription, also while the lists a
   await settleAll();
   assert.equal(held.liveSubscriptions(), 0);
   assert.equal(notified, 0);
-  assert.deepEqual(late.getSnapshot(), { projects: [], workspaces: [], agents: [] });
+  assert.deepEqual(late.getSnapshot(), { projects: [], workspaces: [], agents: [], departing: [] });
 });
 
 test("OFFC-05 store: 100 synchronous upserts notify once, a no-change upsert is silent, handoffs are taken once", async () => {
@@ -1007,6 +1011,27 @@ test("OFFC-12 resolve: a handoff resolves only to a drawn child with its drawn p
   for (const h of [{ childId: "kid", parentId: "other" }, { childId: "nobody", parentId: "par" }, { childId: "lone", parentId: "par" }, { childId: "o", parentId: "ghost" }]) assert.equal(resolveHandoff(m, h), null);
   const cut = buildModel({ projects: [pv("p1")], workspaces: [wv("w1")], agents: [av("par"), av("kid", { parentAgentId: "par" })] }, { maxDrawn: 1 });
   assert.equal(resolveHandoff(cut, { childId: "kid", parentId: "par" }), null);
+});
+
+test("OFFC-06 hidden projects: the filter runs where the model is built, so caps, surplus and parents see visible projects only", () => {
+  const snap = {
+    projects: [pv("p1", "one"), pv("p2", "two"), pv("p3", "three")],
+    workspaces: [wv("w1", { projectId: "p1" }), wv("w2", { projectId: "p2" }), wv("w3", { projectId: "p3" })],
+    agents: [...many(5, "w1", "a", { status: "running" }), ...many(2, "w2", "b"), ...many(3, "w3", "c"), av("kid", { workspaceId: "w2", parentAgentId: "a00" })],
+  };
+  const all = buildModel(snap);
+  assert.deepEqual([all.rooms.length, all.totalAgents], [3, 11]);
+  const hidden = buildModel(snap, {}, new Set(["p1"]));
+  assert.deepEqual(hidden.rooms.map((r) => r.projectId), ["p3", "p2"]);
+  assert.deepEqual([hidden.totalAgents, hidden.drawnAgents, total(hidden)], [6, 6, 6]);
+  assert.ok(!drawnIds(hidden).some((id) => id.startsWith("a")));
+  assert.equal(hidden.rooms.find((r) => r.projectId === "p2").clusters[0].drawn.find((d) => d.agentId === "kid").parentId, null, "a parent in a hidden room is not drawn");
+  // The room cap cuts among the visible rooms: with p1 hidden, one room is kept and the other one's agents are the surplus.
+  const capped = buildModel(snap, { roomsPerBuilding: 1 }, new Set(["p1"]));
+  assert.deepEqual([capped.rooms.map((r) => r.projectId), capped.surplusAgents, total(capped)], [["p3"], 3, 6]);
+  assert.deepEqual(buildModel(snap, {}, new Set(["gone"])), all, "a stale hidden id changes nothing");
+  assert.deepEqual(buildModel(snap, {}, new Set(["p1", "p2", "p3"])), { rooms: [], surplusAgents: 0, totalAgents: 0, drawnAgents: 0 });
+  assert.doesNotThrow(() => buildModel(snap, {}, null));
 });
 
 test("OFFC-06 edge: empty, unknown project, duplicates, bad caps and zero bound", () => {

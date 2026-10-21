@@ -6,7 +6,8 @@ import { after, test } from "node:test";
 import { buildBuilding } from "../../plugins/office/shared/layout/building.ts";
 import { drawerModel } from "../../plugins/office/client/drawer-model.ts";
 import { CHILDREN_MAX_ITEMS, CONTEXT_WARN_PERCENT, ERROR_MAX_CHARS, LABEL_MAX_CHARS, SIDEBAR_MAX_ROWS, TODO_MAX_ITEMS, TODO_TEXT_MAX_CHARS, USAGE_SLOT_MIN_WIDTH_PX } from "../../plugins/office/client/limits-panels.ts";
-import { initialExpanded, sidebarRows, sidebarTree } from "../../plugins/office/client/sidebar-model.ts";
+import { hideAllProjects, projectList, showAllProjects, toggleProject } from "../../plugins/office/client/sidebar-model.ts";
+import { visibleSnapshot } from "../../plugins/office/client/model.ts";
 import { AGENT_STATUS_KEY, ATTENTION_KEY, STRINGS, TODO_STATUS_KEY, TOOL_KEY, WORKSPACE_KIND_KEY, WORKSPACE_STATUS_KEY, clipText, text } from "../../plugins/office/client/strings.ts";
 import { TOPBAR_COUNTERS, topbarModel } from "../../plugins/office/client/topbar-model.ts";
 import { AGENT_STATUSES, ATTENTION_REASONS, TODO_STATUSES, TOOL_KINDS, WORKSPACE_KINDS, WORKSPACE_STATUSES } from "../../plugins/office/shared/model-types.ts";
@@ -60,36 +61,7 @@ const fixtureSnapshot = () => ({
     agent("a8", { workspaceId: null }),
   ],
 });
-const modelFor = (snap, drawnIds) => ({
-  rooms: snap.projects.map((p) => ({
-    projectId: p.id,
-    name: p.name,
-    surplusAgents: 0,
-    clusters: snap.workspaces
-      .filter((w) => w.projectId === p.id)
-      .map((w) => ({
-        workspaceId: w.id,
-        name: w.name,
-        status: w.status,
-        kind: w.kind,
-        diffAdditions: null,
-        diffDeletions: null,
-        surplusAgents: 0,
-        drawn: snap.agents.filter((a) => a.workspaceId === w.id && drawnIds.has(a.id)).map((a) => ({ agentId: a.id, parentId: null, isChild: false })),
-      })),
-  })),
-  surplusAgents: 0,
-  totalAgents: snap.agents.length,
-  drawnAgents: drawnIds.size,
-});
-const allIds = (snap) => new Set(snap.agents.map((a) => a.id));
 const buildingFor = (snap, roomCount) => buildBuilding(snap.projects.slice(0, roomCount).map((p, i) => ({ id: p.id, slot: i, seed: i + 1 })));
-const treeOf = (snap, roomCount = 3, drawn = allIds(snap)) => {
-  const building = buildingFor(snap, roomCount);
-  return { building, tree: sidebarTree(snap, modelFor(snap, drawn), building) };
-};
-const flat = (nodes) => nodes.flatMap((n) => [n, ...flat(n.children)]);
-const byId = (tree, id) => flat(tree.nodes).find((n) => n.id === id);
 const inside = (r, outer) => r.x >= outer.x && r.y >= outer.y && r.x + r.w <= outer.x + outer.w && r.y + r.h <= outer.y + outer.h;
 const roomRect = (building, projectId) => building.areas.find((a) => a.id === `room:${projectId}`).rect;
 
@@ -133,110 +105,88 @@ test("OFFC-19 key maps: every union member maps to a key of STRINGS", () => {
   }
 });
 
-test("OFFC-14 tree: project > workspace > agent in snapshot order with an unplaced group", () => {
+test("OFFC-14 project list: one row per project with counters, the attention dot and a camera target", () => {
   const snap = fixtureSnapshot();
-  const { tree } = treeOf(snap);
-  assert.deepEqual(tree.nodes.map((n) => n.id), ["project:p1", "project:p2", "project:p3", "unplaced"]);
-  assert.deepEqual(byId(tree, "project:p1").children.map((n) => n.id), ["workspace:w1", "workspace:w2"]);
-  assert.deepEqual(byId(tree, "workspace:w1").children.map((n) => n.id), ["agent:a1", "agent:a2"]);
-  assert.equal(byId(tree, "agent:a2").isChild, true);
-  assert.equal(byId(tree, "agent:a1").isChild, false);
-  assert.deepEqual(byId(tree, "unplaced").children.map((n) => n.id), ["agent:a8"]);
-  assert.equal(byId(tree, "agent:a5").attention, true);
-  assert.equal(byId(tree, "agent:a5").statusKey, "statusError");
-  assert.equal(byId(tree, "workspace:w1").statusKey, "workspaceRunning");
-  snap.workspaces.push(workspace("w9", "zz"));
-  const withOrphan = treeOf(snap).tree;
-  assert.ok(byId(withOrphan, "unplaced").children.some((n) => n.id === "workspace:w9"));
-  const empty = sidebarTree({ projects: [], workspaces: [], agents: [] }, modelFor({ projects: [], workspaces: [], agents: [] }, new Set()), buildingFor({ projects: [] }, 0));
-  assert.deepEqual(empty.nodes, []);
+  const building = buildingFor(snap, 2);
+  const list = projectList(snap, new Set(), building, SIDEBAR_MAX_ROWS);
+  assert.deepEqual(list.rows.map((r) => r.projectId), ["p1", "p2", "p3"]);
+  assert.deepEqual(list.rows.map((r) => [r.agents, r.working, r.attention, r.shown]), [[4, 1, false, true], [2, 0, true, true], [1, 0, false, true]]);
+  assert.deepEqual([list.more, list.shownCount, list.total], [0, 3, 3]);
+  assert.equal(list.rows[0].label, "Project p1");
+  assert.deepEqual([list.rows[0].target.scope, list.rows[0].target.roomId], ["room", "p1"]);
+  assert.deepEqual(list.rows[0].target.rect, roomRect(building, "p1"));
+  // p3 has no room in a two-room building: the camera falls back to the building.
+  assert.deepEqual([list.rows[2].target.scope, list.rows[2].target.rect], ["building", building.rect]);
+  for (const row of list.rows) assert.ok(inside(row.target.rect, building.rect), row.projectId);
+  const empty = projectList({ projects: [], workspaces: [], agents: [] }, new Set(), buildingFor({ projects: [] }, 0), SIDEBAR_MAX_ROWS);
+  assert.deepEqual([empty.rows, empty.more, empty.total], [[], 0, 0]);
 });
 
-test("OFFC-14 camera targets: every node has a target inside the building; rooms get their room rect", () => {
+test("OFFC-14 hidden set: toggling, All and None; a new project is shown by default and a stale hidden id is ignored", () => {
   const snap = fixtureSnapshot();
-  const { building, tree } = treeOf(snap, 2);
-  assert.equal(tree.root.scope, "building");
-  for (const node of flat(tree.nodes)) assert.ok(inside(node.target.rect, building.rect), node.id);
-  const p1 = byId(tree, "project:p1");
-  assert.equal(p1.target.scope, "room");
-  assert.deepEqual(p1.target.rect, roomRect(building, "p1"));
-  const w1 = byId(tree, "workspace:w1");
-  assert.deepEqual([w1.target.scope, w1.target.workspaceId, w1.target.roomId], ["cluster", "w1", "p1"]);
-  assert.deepEqual(w1.target.rect, roomRect(building, "p1"));
-  const a1 = byId(tree, "agent:a1");
-  assert.deepEqual([a1.target.scope, a1.target.agentId, a1.target.workspaceId], ["agent", "a1", "w1"]);
-  for (const id of ["project:p3", "workspace:w4", "agent:a7", "unplaced", "agent:a8"]) {
-    const t = byId(tree, id).target;
-    assert.equal(t.scope, "building", id);
-    assert.deepEqual(t.rect, building.rect, id);
-  }
+  const building = buildingFor(snap, 3);
+  const none = new Set();
+  const h1 = toggleProject(none, "p1");
+  assert.deepEqual([...h1], ["p1"]);
+  assert.deepEqual([...none], [], "the input set is not mutated");
+  assert.deepEqual([...toggleProject(h1, "p1")], []);
+  const list = projectList(snap, h1, building, SIDEBAR_MAX_ROWS);
+  assert.deepEqual(list.rows.map((r) => r.shown), [false, true, true]);
+  assert.equal(list.shownCount, 2);
+  assert.equal(list.rows.length, 3, "a hidden project stays in the list");
+  const all = hideAllProjects(snap);
+  assert.deepEqual([...all].sort(), ["p1", "p2", "p3"]);
+  assert.equal(projectList(snap, all, building, SIDEBAR_MAX_ROWS).shownCount, 0);
+  assert.equal(showAllProjects().size, 0);
+  // A project that appears later is shown: the state is the hidden set.
+  snap.projects.push(project("p4"));
+  assert.equal(projectList(snap, all, building, SIDEBAR_MAX_ROWS).rows.find((r) => r.projectId === "p4").shown, true);
+  // A stale hidden id changes nothing and never throws.
+  const stale = new Set(["gone", "p2"]);
+  const withStale = projectList(snap, stale, building, SIDEBAR_MAX_ROWS);
+  assert.deepEqual([withStale.rows.length, withStale.shownCount], [4, 3]);
+  assert.deepEqual(visibleSnapshot(snap, new Set(["gone"])), snap);
 });
 
-test("OFFC-14 drawn flag: drawn only when some cluster draws the agent", () => {
+test("OFFC-14 visible snapshot: hidden projects lose their workspaces and agents; agents of no project stay", () => {
   const snap = fixtureSnapshot();
-  const drawn = allIds(snap);
-  drawn.delete("a6");
-  const { tree } = treeOf(snap, 3, drawn);
-  assert.equal(byId(tree, "agent:a6").drawn, false);
-  assert.equal(byId(tree, "agent:a6").target.scope, "agent");
-  assert.equal(byId(tree, "agent:a5").drawn, true);
-  assert.equal(byId(tree, "project:p1").drawn, true);
+  for (const a of snap.agents) a.projectId = snap.workspaces.find((w) => w.id === a.workspaceId)?.projectId ?? null;
+  const v = visibleSnapshot(snap, new Set(["p1"]));
+  assert.deepEqual(v.projects.map((p) => p.id), ["p2", "p3"]);
+  assert.deepEqual(v.workspaces.map((w) => w.id), ["w3", "w4"]);
+  assert.deepEqual(v.agents.map((a) => a.id), ["a5", "a6", "a7", "a8"]);
+  assert.equal(visibleSnapshot(snap, new Set()), snap, "nothing hidden: the same object");
+  assert.equal(topbarModel(v, null).counters.total, 4, "the top bar counts the visible projects only");
 });
 
-test("OFFC-14 rows: depth-first, collapsible, capped with an exact hidden count", () => {
+test("OFFC-14 rows: capped with an exact count of the rows left out", () => {
   const snap = fixtureSnapshot();
-  const { tree } = treeOf(snap);
-  const expanded = initialExpanded(tree);
-  const full = sidebarRows(tree, expanded, SIDEBAR_MAX_ROWS);
-  assert.equal(full.hidden, 0);
-  assert.equal(full.rows.length, 16);
-  assert.deepEqual(full.rows.slice(0, 4).map((r) => [r.node.id, r.depth]), [["project:p1", 0], ["workspace:w1", 1], ["agent:a1", 2], ["agent:a2", 2]]);
-  expanded.delete("workspace:w1");
-  expanded.add("not-in-the-tree");
-  const collapsed = sidebarRows(tree, expanded, SIDEBAR_MAX_ROWS);
-  const w1 = collapsed.rows.find((r) => r.node.id === "workspace:w1");
-  assert.deepEqual([w1.hasChildren, w1.expanded], [true, false]);
-  assert.ok(!collapsed.rows.some((r) => r.node.id === "agent:a1"));
-  const capped = sidebarRows(tree, initialExpanded(tree), 5);
-  assert.equal(capped.rows.length, 5);
-  assert.equal(capped.hidden, 11);
-  assert.deepEqual(capped.rows.map((r) => r.node.id), full.rows.slice(0, 5).map((r) => r.node.id));
+  const capped = projectList(snap, new Set(), buildingFor(snap, 3), 2);
+  assert.deepEqual([capped.rows.length, capped.more, capped.total], [2, 1, 3]);
 });
 
-test("OFFC-14 edge: hostile ids, cycles, long titles and null fields never throw", () => {
+test("OFFC-14 edge: hostile ids, long names and null fields never throw", () => {
   const snap = fixtureSnapshot();
-  snap.agents.push(
-    agent("__proto__", { workspaceId: "w1" }),
-    agent("constructor", { workspaceId: "w1" }),
-    agent("toString", { workspaceId: "w1" }),
-    agent("dup", { workspaceId: "w1", title: "first" }),
-    agent("dup", { workspaceId: "w1", title: "second" }),
-    agent("self", { workspaceId: "w1", parentAgentId: "self" }),
-    agent("long", { workspaceId: "w1", title: `${"x\n".repeat(5000)}` }),
-    agent("untitled", { workspaceId: "w1", title: null }),
-    { id: 5, title: {}, workspaceId: [] },
-  );
-  snap.workspaces.push({ id: "wnull", projectId: "p1", name: null, kind: null, status: "bogus" });
-  snap.projects.push({ id: "pbad", name: 7 });
-  let first;
+  snap.projects.push({ id: "__proto__", name: "x\n".repeat(5000) }, { id: "constructor", name: null }, { id: "dup", name: "first" }, { id: "dup", name: "second" }, { id: 5, name: {} });
+  snap.agents.push(agent("toString", { projectId: "__proto__" }), { id: 5, projectId: [] }, null);
+  let list;
   assert.doesNotThrow(() => {
-    first = treeOf(snap).tree;
+    list = projectList(snap, new Set(["__proto__"]), buildingFor(snap, 3), SIDEBAR_MAX_ROWS);
   });
-  const ids = flat(first.nodes).map((n) => n.id);
-  assert.equal(ids.filter((id) => id === "agent:dup").length, 2);
-  for (const id of ["agent:__proto__", "agent:constructor", "agent:toString"]) assert.ok(ids.includes(id), id);
-  assert.equal(byId(first, "agent:self").isChild, false);
-  const long = byId(first, "agent:long");
-  assert.ok(long.label.length <= LABEL_MAX_CHARS && !long.label.includes("\n"));
-  assert.equal(byId(first, "agent:untitled").label, null);
-  assert.equal(byId(first, "workspace:wnull").label, null);
-  assert.equal(byId(first, "workspace:wnull").statusKey, null);
-  const second = treeOf(snap).tree;
-  assert.notEqual(first.nodes[0], second.nodes[0]);
-  assert.notEqual(first.nodes[0].target, second.nodes[0].target);
-  assert.notEqual(first.nodes[0].target.rect, second.nodes[0].target.rect);
-  assert.doesNotThrow(() => sidebarTree({ projects: "x", workspaces: null, agents: 5 }, { rooms: "x" }, buildingFor({ projects: [] }, 0)));
-  assert.doesNotThrow(() => sidebarTree({ projects: [null], workspaces: [null, 3], agents: [null, "s"] }, { rooms: [null, { clusters: [null] }] }, buildingFor({ projects: [] }, 0)));
+  const ids = list.rows.map((r) => r.projectId);
+  assert.deepEqual(ids.filter((id) => id === "dup").length, 1, "a second occurrence of an id is ignored");
+  assert.ok(ids.includes("__proto__") && ids.includes("constructor"));
+  const proto = list.rows.find((r) => r.projectId === "__proto__");
+  assert.ok(proto.label.length <= LABEL_MAX_CHARS && !proto.label.includes("\n"));
+  assert.equal(proto.shown, false);
+  assert.equal(proto.agents, 1);
+  assert.equal(list.rows.find((r) => r.projectId === "constructor").label, null);
+  for (const bad of [{ projects: "x", workspaces: null, agents: 5 }, { projects: [null], workspaces: [null, 3], agents: [null, "s"] }, null]) {
+    assert.doesNotThrow(() => projectList(bad, new Set(), buildingFor({ projects: [] }, 0), SIDEBAR_MAX_ROWS));
+    assert.doesNotThrow(() => hideAllProjects(bad));
+    assert.doesNotThrow(() => visibleSnapshot(bad, new Set(["p1"])));
+  }
+  assert.doesNotThrow(() => projectList(snap, null, buildingFor(snap, 3), SIDEBAR_MAX_ROWS));
 });
 
 // ---- Task 2: drawer and top bar view-models
@@ -323,10 +273,11 @@ test("OFFC-16 counters: by state, attention and total", () => {
     agent("c1", { status: "closed" }),
     agent("c2", { status: "closed" }),
   );
-  assert.deepEqual(topbarModel(snap, null).counters, { running: 3, attention: 2, error: 1, idle: 2, initializing: 1, closed: 2, total: 9 });
-  assert.deepEqual(topbarModel(snapWith(), null).counters, { running: 0, attention: 0, error: 0, idle: 0, initializing: 0, closed: 0, total: 0 });
-  assert.deepEqual(topbarModel(snapWith(agent("u", { status: "weird" })), null).counters, { running: 0, attention: 0, error: 0, idle: 0, initializing: 0, closed: 0, total: 1 });
-  assert.deepEqual(TOPBAR_COUNTERS.map((c) => c.id), ["running", "attention", "error", "idle", "initializing", "closed", "total"]);
+  const zero = { rooms: 0, subAgents: 0, shells: 0 };
+  assert.deepEqual(topbarModel(snap, null).counters, { ...zero, running: 3, attention: 2, error: 1, idle: 2, initializing: 1, closed: 2, total: 9 });
+  assert.deepEqual(topbarModel(snapWith(), null).counters, { ...zero, running: 0, attention: 0, error: 0, idle: 0, initializing: 0, closed: 0, total: 0 });
+  assert.deepEqual(topbarModel(snapWith(agent("u", { status: "weird" })), null).counters, { ...zero, running: 0, attention: 0, error: 0, idle: 0, initializing: 0, closed: 0, total: 1 });
+  assert.deepEqual(TOPBAR_COUNTERS.map((c) => c.id), ["rooms", "total", "subAgents", "running", "attention", "shells", "error", "idle", "initializing", "closed"]);
   for (const c of TOPBAR_COUNTERS) assert.ok(Object.hasOwn(STRINGS, c.labelKey), c.labelKey);
 });
 
@@ -367,41 +318,45 @@ const textsOf = (handle) => handle.find("Text").map(textOf);
 const withTestId = (handle, type, testID) => handle.find(type).filter((n) => n.props.testID === testID);
 
 function sidebarProps(snap = fixtureSnapshot(), over = {}) {
-  const { tree } = treeOf(snap);
-  const { rows, hidden } = sidebarRows(tree, initialExpanded(tree), SIDEBAR_MAX_ROWS);
-  return { rows, hidden, selectedId: null, colors, onSelect() {}, onToggle() {}, ...over };
+  const list = projectList(snap, over.hiddenSet ?? new Set(), buildingFor(snap, 3), SIDEBAR_MAX_ROWS);
+  return { list, colors, onToggle() {}, onShowAll() {}, onHideAll() {}, onFocus() {}, ...over };
 }
 
-test("OFFC-14 sidebar render: rows select, toggles toggle, fallbacks and the hidden count come from the table", () => {
-  const selects = [];
+test("OFFC-14 sidebar render: checkboxes toggle, names move the camera, All and None, fallbacks from the table", () => {
   const toggles = [];
-  const props = sidebarProps(fixtureSnapshot(), { onSelect: (n) => selects.push(n), onToggle: (id) => toggles.push(id) });
+  const focus = [];
+  const bulk = [];
+  const props = sidebarProps(fixtureSnapshot(), { hiddenSet: new Set(["p2"]), onToggle: (id) => toggles.push(id), onFocus: (row) => focus.push(row), onShowAll: () => bulk.push("all"), onHideAll: () => bulk.push("none") });
   const h = host.mountModule("client/sidebar.tsx", "Sidebar", props);
-  const rows = withTestId(h, "Pressable", "office-sidebar-row");
-  assert.equal(rows.length, props.rows.length);
-  rows[2].props.onPress();
-  assert.deepEqual([selects.length, selects[0], toggles.length], [1, props.rows[2].node, 0]);
-  const toggleButtons = withTestId(h, "Pressable", "office-sidebar-toggle");
-  assert.equal(toggleButtons.length, props.rows.filter((r) => r.hasChildren).length);
-  toggleButtons[0].props.onPress();
-  assert.deepEqual([toggles, selects.length], [[props.rows.find((r) => r.hasChildren).node.id], 1]);
-
-  const sel = host.mountModule("client/sidebar.tsx", "Sidebar", { ...props, selectedId: props.rows[1].node.id });
-  const styles = withTestId(sel, "Pressable", "office-sidebar-row").map((n) => n.props.style.backgroundColor);
-  assert.notEqual(styles[1], styles[0]);
+  const boxes = withTestId(h, "Pressable", "office-sidebar-check");
+  assert.equal(boxes.length, 3);
+  assert.deepEqual(boxes.map((b) => [b.props.accessibilityRole, b.props.accessibilityState.checked]), [["checkbox", true], ["checkbox", false], ["checkbox", true]]);
+  for (const b of boxes) assert.equal(typeof b.props.accessibilityLabel, "string");
+  boxes[1].props.onPress();
+  assert.deepEqual([toggles, focus.length], [["p2"], 0]);
+  const names = withTestId(h, "Pressable", "office-sidebar-row");
+  assert.equal(names.length, 3);
+  names[0].props.onPress();
+  assert.deepEqual([focus.length, focus[0].projectId, toggles.length], [1, "p1", 1]);
+  withTestId(h, "Pressable", "office-sidebar-all")[0].props.onPress();
+  withTestId(h, "Pressable", "office-sidebar-none")[0].props.onPress();
+  assert.deepEqual(bulk, ["all", "none"]);
+  const texts = textsOf(h);
+  for (const key of ["sidebarProjects", "sidebarAll", "sidebarNone"]) assert.ok(texts.includes(text(key)), key);
+  assert.ok(texts.includes(text("sidebarCounts", { agents: 4, working: 1 })));
+  assert.equal(withTestId(h, "View", "office-sidebar-attention").length, 1, "p2 has an agent that needs attention");
+  assert.ok(!texts.some((t) => t.includes("ws w1") || t.includes("Agent a1")), "no workspace or agent rows");
 
   const blank = fixtureSnapshot();
   blank.projects[0].name = "";
-  blank.workspaces[0].name = "";
-  blank.agents[0].title = null;
-  const fallbackTexts = textsOf(host.mountModule("client/sidebar.tsx", "Sidebar", sidebarProps(blank)));
-  for (const key of ["sidebarUnnamedProject", "sidebarUnnamedWorkspace", "sidebarUntitledAgent"]) assert.ok(fallbackTexts.includes(text(key)), key);
-
-  assert.ok(textsOf(host.mountModule("client/sidebar.tsx", "Sidebar", { ...props, hidden: 7 })).includes(text("sidebarMoreRows", { count: 7 })));
-  assert.ok(textsOf(host.mountModule("client/sidebar.tsx", "Sidebar", { ...props, rows: [], hidden: 0 })).includes(text("sidebarEmpty")));
+  assert.ok(textsOf(host.mountModule("client/sidebar.tsx", "Sidebar", sidebarProps(blank))).includes(text("sidebarUnnamedProject")));
+  const capped = projectList(fixtureSnapshot(), new Set(), buildingFor(fixtureSnapshot(), 3), 1);
+  assert.ok(textsOf(host.mountModule("client/sidebar.tsx", "Sidebar", { ...props, list: capped })).includes(text("sidebarMoreRows", { count: 2 })));
+  const empty = projectList({ projects: [], workspaces: [], agents: [] }, new Set(), buildingFor({ projects: [] }, 0), SIDEBAR_MAX_ROWS);
+  assert.ok(textsOf(host.mountModule("client/sidebar.tsx", "Sidebar", { ...props, list: empty })).includes(text("sidebarEmpty")));
 
   const hostile = fixtureSnapshot();
-  hostile.agents[0].title = "y".repeat(10_000);
+  hostile.projects[0].name = "y".repeat(10_000);
   assert.ok(textsOf(host.mountModule("client/sidebar.tsx", "Sidebar", sidebarProps(hostile))).every((t) => t.length <= LABEL_MAX_CHARS));
 });
 

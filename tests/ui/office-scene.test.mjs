@@ -217,7 +217,7 @@ test("OFFC-10 retirement: the spike is gone and one office screen is registered"
 
 const CAM = await import("../../plugins/office/client/camera.ts");
 const { WAVE_CALLS_IN_FLIGHT_MAX, WAVE_MIN_INTERVAL_MS, WAVE_RUNS_MAX, waveTrigger } = await import("../../plugins/office/client/wave-trigger.ts");
-const { sidebarTree } = await import("../../plugins/office/client/sidebar-model.ts");
+const { projectList } = await import("../../plugins/office/client/sidebar-model.ts");
 const { poseFor } = await import("../../plugins/office/client/poses.ts");
 const { elevatorFronts } = await import("../../plugins/office/client/life/journey.ts");
 const { indexSpots } = await import("../../plugins/office/client/life/ledger.ts");
@@ -275,13 +275,11 @@ test("OFFC-14 camera: every target lands inside the scene as integer offsets", (
     workspaces: ["w1", "w2", "w3", "w4"].map((id, i) => ({ id, projectId: i < 2 ? "p1" : i === 2 ? "p2" : "p3", name: id, kind: null, status: "running", diffAdditions: null, diffDeletions: null })),
     agents: [agentView("a", { workspaceId: "w1" }), agentView("c", { workspaceId: "w1", parentAgentId: "a" }), agentView("f", { workspaceId: "w3" }), agentView("loose")],
   };
-  const tree = sidebarTree(snapshot, model, building);
-  const targets = [tree.root];
-  const walk = (node) => {
-    targets.push(node.target);
-    node.children.forEach(walk);
-  };
-  tree.nodes.forEach(walk);
+  const p1Rect = building.areas.find((a) => a.id === "room:p1").rect;
+  const clusterTarget = { scope: "cluster", rect: p1Rect, roomId: "p1", workspaceId: "w1", agentId: null };
+  const agentTarget = { scope: "agent", rect: p1Rect, roomId: "p1", workspaceId: "w1", agentId: "a" };
+  const targets = [{ scope: "building", rect: building.rect, roomId: null, workspaceId: null, agentId: null }, clusterTarget, agentTarget];
+  for (const row of projectList(snapshot, new Set(), building, 100).rows) targets.push(row.target);
   targets.push({ scope: "cluster", rect: building.rect, roomId: "ghost", workspaceId: "nope", agentId: null });
   targets.push({ scope: "agent", rect: { x: -50, y: -50, w: 3, h: 3 }, roomId: null, workspaceId: null, agentId: "nope" });
   for (const zoom of ZOOM_LEVELS) {
@@ -299,11 +297,8 @@ test("OFFC-14 camera: every target lands inside the scene as integer offsets", (
       }
     }
   }
-  const clusterNode = tree.nodes[0].children[0];
-  assert.equal(clusterNode.target.scope, "cluster");
   const anchor = placement.clusters.find((c) => c.workspaceId === "w1");
-  assert.deepEqual(CAM.cameraFor(clusterNode.target, building, { w: 400, h: 300 }, 2, placement).focus, anchor.rect);
-  const agentTarget = clusterNode.children[0].target;
+  assert.deepEqual(CAM.cameraFor(clusterTarget, building, { w: 400, h: 300 }, 2, placement).focus, anchor.rect);
   const seat = placement.seats.find((s) => s.agentId === "a");
   const agentFocus = CAM.cameraFor(agentTarget, building, { w: 400, h: 300 }, 2, placement).focus;
   assert.ok(seat.tile.x >= agentFocus.x && seat.tile.x < agentFocus.x + agentFocus.w && seat.tile.y >= agentFocus.y && seat.tile.y < agentFocus.y + agentFocus.h);
@@ -810,7 +805,7 @@ test("OFFC-05 pure sources: camera.ts and wave-trigger.ts hold no timer, clock, 
 
 import { createRequire } from "node:module";
 import { mock } from "node:test";
-import { agentPayload, agentUpsert, fakePaseo, projectPayload, workspacePayload } from "./fake-paseo.mjs";
+import { agentPayload, agentUpsert, fakePaseo, iso, projectPayload, workspacePayload } from "./fake-paseo.mjs";
 import { makeTempDir } from "../helpers/temp.mjs";
 import { ATTENTION_KEY, WORKSPACE_KIND_KEY, STRINGS, text as str } from "../../plugins/office/client/strings.ts";
 import { LABEL_MAX_CHARS } from "../../plugins/office/client/limits-panels.ts";
@@ -1062,7 +1057,7 @@ test("OFFC-05 screen: the store starts, the panels and the characters appear, un
       await settle(handle, 14);
       assert.ok(fake.calls.includes("agents.list") && fake.calls.includes("workspaces.list") && fake.calls.includes("projects.list"));
       assert.ok(fake.liveSubscriptions() > 0);
-      assert.ok(byTestId(handle, "Pressable", "office-sidebar-row").length >= 5, "sidebar rows");
+      assert.equal(byTestId(handle, "Pressable", "office-sidebar-row").length, 2, "one sidebar row per project");
       assert.equal(byTestId(handle, "View", "office-usage-slot").length, 1, "top bar");
       assert.equal(characterNodes(handle).length, 8, "one character per drawn agent");
       assert.ok(byTestId(handle, "View", /^office-base-\d+$/).length >= 5);
@@ -1141,9 +1136,9 @@ test("OFFC-14 screen camera: rows move the camera, zoom offers exactly the level
     const second = await moveTo("project p2");
     for (const v of [first.x, first.y, second.x, second.y]) assert.ok(Number.isInteger(v) && v >= 0);
     assert.ok(second.y > first.y, `south room scrolls further down: ${first.y} then ${second.y}`);
-    const agent = await moveTo("parent");
-    assert.ok(Number.isInteger(agent.x) && Number.isInteger(agent.y));
-    assert.equal(byTestId(handle, "Pressable", "office-drawer-close").length, 1, "an agent row opens the drawer");
+    characterNodes(handle)[0].children.find((c) => c && c.type === "Pressable").props.onPress();
+    await settle(handle, 3);
+    assert.equal(byTestId(handle, "Pressable", "office-drawer-close").length, 1, "a character opens the drawer");
     // zoom
     const levels = [byTestId(handle, "Text", "office-zoom-level")[0].children.join("")];
     const before = spriteKeys(host).length;
@@ -1160,6 +1155,34 @@ test("OFFC-14 screen camera: rows move the camera, zoom offers exactly the level
     byTestId(handle, "Pressable", "office-zoom-out")[0].props.onPress();
     await settle(handle, 6);
     assert.equal(byTestId(handle, "Text", "office-zoom-level")[0].children.join(""), str("sceneZoomLevel", { zoom: ZOOM_LEVELS.at(-2) ?? ZOOM_LEVELS[0] }));
+  });
+});
+
+test("OFFC-14 screen checkboxes: an unchecked project leaves the scene and the counters, None and All, kept across a remount", async () => {
+  await withScreen(officeFixture(), async ({ host, handle }) => {
+    const boxes = () => byTestId(handle, "Pressable", "office-sidebar-check");
+    const labels = () => byTestId(handle, "View", /^office-label-\d+$/).length;
+    const total = () => {
+      const texts = textsOf(handle);
+      return Number(texts[texts.indexOf(str("counterTotal")) + 1]);
+    };
+    assert.equal(boxes().length, 2);
+    assert.deepEqual([characterNodes(handle).length, labels(), total()], [8, 2, 8]);
+    boxes()[0].props.onPress();
+    await settle(handle, 6);
+    assert.deepEqual(boxes().map((b) => b.props.accessibilityState.checked), [false, true]);
+    assert.equal(byTestId(handle, "Pressable", "office-sidebar-row").length, 2, "the hidden project stays in the list");
+    assert.deepEqual([characterNodes(handle).length, labels(), total()], [2, 1, 2], "p1 (six agents) leaves the scene and the counters");
+    byTestId(handle, "Pressable", "office-sidebar-none")[0].props.onPress();
+    await settle(handle, 6);
+    assert.deepEqual([characterNodes(handle).length, labels(), total()], [0, 0, 0]);
+    const again = host.mount("office");
+    await settle(again, 8);
+    assert.deepEqual(byTestId(again, "Pressable", "office-sidebar-check").map((b) => b.props.accessibilityState.checked), [false, false], "the hidden set outlives a remount");
+    again.unmount();
+    byTestId(handle, "Pressable", "office-sidebar-all")[0].props.onPress();
+    await settle(handle, 8);
+    assert.deepEqual([characterNodes(handle).length, labels(), total()], [8, 2, 8]);
   });
 });
 
@@ -1723,4 +1746,233 @@ test("OFFC-13 screen relayout: a new project room keeps a departed agent hidden"
   };
   // The departed agent is gone; a new project, workspace and agent change the building: the new agent appears, the departed one does not.
   assert.equal(await departureRun(async () => undefined, addProject), 2);
+});
+
+// ---------------------------------------------------------------- step B: spawn and archive effects on the screen
+
+const isXY = (v) => v !== null && typeof v === "object" && "x" in v && "y" in v;
+const charOpacity = (node) => node.props.style.opacity?.current;
+const roomShades = (handle) => byTestId(handle, "Animated.View", /^office-room-(dark|lit)-\d+$/).map((n) => n.props.testID.split("-")[2]);
+
+test("B screen archive: the archived agent walks out to an elevator, then its tombstone is released and an empty room goes dark", async () => {
+  const fake = fakePaseo({
+    agents: [agentPayload("run", { workspaceId: "w1", status: "running" }), agentPayload("solo", { workspaceId: "w2", status: "idle" })],
+    workspaceEntries: [workspacePayload("w1", { projectId: "p1" }), workspacePayload("w2", { projectId: "p2" })],
+    projectEntries: [projectPayload("p1"), projectPayload("p2")],
+  });
+  await withLifeScreen(fake, {}, async ({ host, handle }) => {
+    assert.equal(characterNodes(handle).length, 2);
+    assert.deepEqual(roomShades(handle), ["lit", "lit"]);
+    const walks = holdWalks();
+    try {
+      const before = host.animations.length;
+      fake.emitAgent(agentUpsert(agentPayload("solo", { workspaceId: "w2", status: "idle", archivedAt: iso(9) })));
+      await settle(handle, 6);
+      assert.equal(characterNodes(handle).length, 2, "the tombstone is still drawn while it walks");
+      assert.ok(host.animations.slice(before).some((a) => isXY(a.value)), "a walk is running");
+      const texts = textsOf(handle);
+      assert.equal(Number(texts[texts.indexOf(str("counterTotal")) + 1]), 1, "the tombstone is not counted");
+      walks.finish();
+      await settle(handle, 6);
+    } finally {
+      walks.restore();
+    }
+    assert.equal(characterNodes(handle).length, 1);
+    assert.deepEqual(roomShades(handle), ["lit", "dark"], "the last one out turns the lights off");
+  });
+});
+
+test("B screen bulk archive: more than ARCHIVE_BULK_MAX agents archived at once fade in place, nobody walks", async () => {
+  const { ARCHIVE_BULK_MAX } = await import("../../plugins/office/client/presence.ts");
+  const ids = Array.from({ length: ARCHIVE_BULK_MAX + 1 }, (_, i) => `z${i}`);
+  const fake = fakePaseo({
+    agents: [agentPayload("keep", { workspaceId: "w1", status: "running" }), ...ids.map((id) => agentPayload(id, { workspaceId: "w1", status: "idle" }))],
+    workspaceEntries: [workspacePayload("w1", { projectId: "p1" })],
+    projectEntries: [projectPayload("p1")],
+  });
+  await withLifeScreen(fake, {}, async ({ host, handle }) => {
+    assert.equal(characterNodes(handle).length, ids.length + 1);
+    const walks = holdWalks();
+    try {
+      const before = host.animations.length;
+      for (const id of ids) fake.emitAgent(agentUpsert(agentPayload(id, { workspaceId: "w1", status: "idle", archivedAt: iso(9) })));
+      await settle(handle, 6);
+      const started = host.animations.slice(before);
+      assert.ok(started.some((a) => !isXY(a.value) && a.config?.toValue === 0), "the tombstones fade");
+      assert.ok(!started.some((a) => isXY(a.value)), "no walk");
+      walks.finish();
+      await settle(handle, 6);
+    } finally {
+      walks.restore();
+    }
+    assert.equal(characterNodes(handle).length, 1);
+  });
+});
+
+test("B screen spawn: a fresh agent that is already running comes up by elevator; an old one and the agents present at open just sit", async () => {
+  await withLifeScreen(officeFixture(), {}, async ({ handle, fake }) => {
+    const shown = characterNodes(handle);
+    assert.equal(shown.length, 8);
+    assert.equal(shown.filter((n) => charOpacity(n) === 0).length, 0, "nobody arrives at open");
+    const walks = holdWalks();
+    try {
+      fake.emitAgent(agentUpsert(agentPayload("fresh", { workspaceId: "w3", status: "running", createdAt: new Date().toISOString() })));
+      fake.emitAgent(agentUpsert(agentPayload("stale", { workspaceId: "w3", status: "running", createdAt: iso(0) })));
+      await settle(handle, 6);
+      const nodes = characterNodes(handle);
+      assert.equal(nodes.length, 10);
+      const zeros = nodes.filter((n) => charOpacity(n) === 0);
+      assert.equal(zeros.length, 1, "exactly one character is fading in at an elevator door");
+      walks.finish();
+      await settle(handle, 6);
+    } finally {
+      walks.restore();
+    }
+    assert.equal(characterNodes(handle).filter((n) => charOpacity(n) === 0).length, 0);
+  });
+});
+
+// ---------------------------------------------------------------- step C: agent states on the screen
+
+const { agentName } = await import("../../plugins/office/client/names.ts");
+const shellCall = (callId, status, command) => ({ type: "tool_call", callId, name: "Bash", status, error: null, detail: { type: "shell", command } });
+
+test("C screen: a permission raises a blinking alert, a working agent shows its tool, every character carries its generated name", async () => {
+  const fake = fakePaseo({
+    agents: [
+      agentPayload("perm", { workspaceId: "w1", status: "running", pendingPermissions: [{ id: "x" }] }),
+      agentPayload("work", { workspaceId: "w1", status: "running" }),
+      agentPayload("done", { workspaceId: "w1", status: "idle", requiresAttention: true, attentionReason: "finished" }),
+    ],
+    workspaceEntries: [workspacePayload("w1", { projectId: "p1" })],
+    projectEntries: [projectPayload("p1")],
+    timelines: { work: [{ item: { type: "tool_call", callId: "r1", name: "Read", status: "completed", error: null, detail: { type: "read", filePath: "/x" } }, seqStart: 1 }] },
+  });
+  await withLifeScreen(fake, {}, async ({ host, handle }) => {
+    beats(1);
+    await settle(handle, 4);
+    const texts = textsOf(handle);
+    for (const id of ["perm", "work", "done"]) assert.ok(texts.includes(agentName(id)), id);
+    assert.ok(texts.includes(str("glyphRead")), "the working agent shows its tool");
+    assert.equal(byTestId(handle, "Animated.View", /^office-bubble-alert-\d+$/).length, 1, "one blinking alert");
+    assert.equal(byTestId(handle, "Animated.View", /^office-bubble-soft-\d+$/).length, 1, "one soft notice");
+    assert.ok(host.animations.some((a) => a.value && a.config && a.config.toValue !== undefined), "the alert blinks on Animated");
+    assert.ok(texts.includes(str("glyphAlert")));
+  });
+});
+
+test("C screen: an idle agent waiting on a running shell shows the hourglass at its desk, then cheers with confetti when the command ends", async () => {
+  const fake = fakePaseo({
+    agents: [agentPayload("sh", { workspaceId: "w1", status: "running" }), agentPayload("other", { workspaceId: "w1", status: "running" })],
+    workspaceEntries: [workspacePayload("w1", { projectId: "p1" })],
+    projectEntries: [projectPayload("p1")],
+    timelines: { sh: [{ item: shellCall("c1", "running", "npm test"), seqStart: 1 }] },
+  });
+  await withLifeScreen(fake, {}, async ({ handle }) => {
+    beats(1);
+    await settle(handle, 4);
+    assert.ok(textsOf(handle).includes(str("glyphTests")), "the running test command shows the tests glyph");
+    fake.emitAgent(agentUpsert(agentPayload("sh", { workspaceId: "w1", status: "idle", requiresAttention: true, attentionReason: "finished" })));
+    await settle(handle, 4);
+    beats(1);
+    await settle(handle, 4);
+    assert.ok(textsOf(handle).includes(str("glyphHourglass")), "waiting on shell");
+    assert.equal(byTestId(handle, "View", /^office-fx-burst-\d+$/).length, 0);
+    fake.emitTimeline("sh", { agentId: "sh", event: { type: "timeline", item: shellCall("c1", "completed", "npm test") } });
+    await settle(handle, 4);
+    beats(1);
+    await settle(handle, 4);
+    assert.ok(textsOf(handle).includes(str("glyphParty")), "it celebrates");
+    assert.ok(!textsOf(handle).includes(str("glyphHourglass")));
+    assert.equal(byTestId(handle, "View", /^office-fx-burst-\d+$/).length, 1, "confetti");
+  });
+});
+
+// ---------------------------------------------------------------- step D: HUD on the screen
+
+const counterOf = (handle, key) => {
+  const texts = textsOf(handle);
+  return Number(texts[texts.indexOf(str(key)) + 1]);
+};
+const pressCharacter = (handle, index = 0) => characterNodes(handle)[index].children.find((c) => c && c.type === "Pressable").props.onPress();
+
+test("D screen: top bar counters, the feed panel with a permission request, and Next request opening the agent that waits", async () => {
+  await withScreen(officeFixture(), async ({ handle, fake }) => {
+    assert.deepEqual([counterOf(handle, "counterRooms"), counterOf(handle, "counterSubAgents"), counterOf(handle, "counterShells")], [2, 1, 0]);
+    assert.equal(byTestId(handle, "View", "office-feed").length, 0);
+    byTestId(handle, "Pressable", "office-feed-toggle")[0].props.onPress();
+    await settle(handle, 3);
+    assert.equal(byTestId(handle, "View", "office-feed").length, 1);
+    assert.ok(textsOf(handle).includes(str("feedEmpty")));
+    fake.emitAgent(agentUpsert(agentPayload("r1", { workspaceId: "w3", status: "running", pendingPermissions: [{ id: "q" }] })));
+    await settle(handle, 4);
+    const rows = byTestId(handle, "Pressable", "office-feed-row");
+    assert.equal(rows.length, 1);
+    const texts = textsOf(handle);
+    assert.ok(texts.includes(str("feedPermission")) && texts.includes(agentName("r1")) && texts.includes(str("timeNow")));
+    byTestId(handle, "Pressable", "office-next-request")[0].props.onPress();
+    await settle(handle, 3);
+    assert.ok(textsOf(handle).includes(agentName("i3")), "the first agent that needs the owner, in snapshot order");
+    byTestId(handle, "Pressable", "office-next-request")[0].props.onPress();
+    await settle(handle, 3);
+    assert.ok(textsOf(handle).includes(agentName("r1")));
+    assert.equal(byTestId(handle, "Pressable", "office-drawer-close").length, 1);
+  });
+});
+
+test("D screen: search filters the project list and a found agent opens the drawer and moves the camera", async () => {
+  await withScreen(officeFixture(), async ({ handle }) => {
+    const moves = [];
+    for (const node of handle.find("ScrollView").filter((n) => n.props.onScroll)) node.props.ref.current = { scrollTo: (o) => moves.push(o) };
+    assert.equal(byTestId(handle, "TextInput", "office-search").length, 0, "the field opens on demand");
+    byTestId(handle, "Pressable", "office-search-open")[0].props.onPress();
+    await settle(handle, 2);
+    const input = byTestId(handle, "TextInput", "office-search")[0];
+    assert.equal(typeof input.props.placeholder, "string");
+    input.props.onChangeText("p2");
+    await settle(handle, 3);
+    assert.equal(byTestId(handle, "Pressable", "office-sidebar-row").length, 1, "the project list is filtered");
+    byTestId(handle, "TextInput", "office-search")[0].props.onChangeText("parent");
+    await settle(handle, 3);
+    const results = byTestId(handle, "Pressable", "office-search-result");
+    assert.equal(results.length, 1);
+    results[0].props.onPress();
+    await settle(handle, 3);
+    assert.equal(byTestId(handle, "Pressable", "office-drawer-close").length, 1);
+    assert.ok(textsOf(handle).includes("parent"));
+    assert.ok(moves.length > 0, "the camera moved");
+    byTestId(handle, "Pressable", "office-search-close")[0].props.onPress();
+    await settle(handle, 2);
+    assert.deepEqual([byTestId(handle, "TextInput", "office-search").length, byTestId(handle, "Pressable", "office-sidebar-row").length], [0, 2], "closing clears the query");
+  });
+});
+
+test("D screen: Overview fits the building at the smallest zoom; Follow from the drawer button and from a double press", async () => {
+  await withLifeScreen(officeFixture(), {}, async ({ handle }) => {
+    const moves = [];
+    for (const node of handle.find("ScrollView").filter((n) => n.props.onScroll)) node.props.ref.current = { scrollTo: (o) => moves.push(o) };
+    byTestId(handle, "Pressable", "office-zoom-in")[0].props.onPress();
+    await settle(handle, 4);
+    byTestId(handle, "Pressable", "office-overview")[0].props.onPress();
+    await settle(handle, 4);
+    assert.equal(byTestId(handle, "Text", "office-zoom-level")[0].children.join(""), str("sceneZoomLevel", { zoom: ZOOM_LEVELS[0] }));
+    pressCharacter(handle);
+    await settle(handle, 3);
+    const follow = () => byTestId(handle, "Pressable", "office-drawer-follow")[0];
+    assert.equal(follow().props.accessibilityState.selected, false);
+    follow().props.onPress();
+    await settle(handle, 3);
+    assert.equal(follow().props.accessibilityState.selected, true);
+    moves.length = 0;
+    beats(1);
+    await settle(handle, 3);
+    assert.ok(moves.length > 0, "the camera follows on the beat");
+    follow().props.onPress();
+    await settle(handle, 3);
+    assert.equal(follow().props.accessibilityState.selected, false);
+    pressCharacter(handle, 1);
+    pressCharacter(handle, 1);
+    await settle(handle, 3);
+    assert.equal(follow().props.accessibilityState.selected, true, "a double press follows the character");
+  });
 });

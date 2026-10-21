@@ -32,3 +32,18 @@ export const EFFECT_FADE_FROM = 0.7;
 export const EFFECT_RING_START_SCALE = 0.2;
 // Zoom used when the caller passes one that is not a finite number above 0.
 export const EFFECT_ZOOM_FALLBACK = 1;
+
+// Room lights: the shade over a room with nobody present, its opacity when dark and the fade between lit and dark.
+export const ROOM_SHADE_COLOR = "#05070d";
+export const ROOM_DARK_OPACITY = 0.55;
+export const ROOM_LIGHT_FADE_MS = 900;
+
+// Character overlays: the glyph bubble above the head, the name tag under the feet and the blink of an alert.
+export const BUBBLE_FONT_PX = 10;
+export const BUBBLE_PAD_PX = 2;
+export const BUBBLE_RISE_PX = 16;
+export const BUBBLE_BLINK_MS = 450;
+export const BUBBLE_BLINK_MIN = 0.25;
+export const NAME_FONT_PX = 9;
+export const NAME_WIDTH_PX = 72;
+export const CHIP_PX = 10;

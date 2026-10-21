@@ -6,6 +6,10 @@ import type { StringKey } from "./strings.ts";
 import type { OfficeSnapshot } from "../shared/model-types.ts";
 
 export interface TopBarCounters {
+  rooms: number;
+  subAgents: number;
+  // Idle agents whose latest shell call still runs (waiting on shell).
+  shells: number;
   running: number;
   attention: number;
   error: number;
@@ -31,13 +35,16 @@ export interface TopBarModel {
 }
 
 export const TOPBAR_COUNTERS: readonly { id: keyof TopBarCounters; labelKey: StringKey }[] = [
+  { id: "rooms", labelKey: "counterRooms" },
+  { id: "total", labelKey: "counterTotal" },
+  { id: "subAgents", labelKey: "counterSubAgents" },
   { id: "running", labelKey: "counterRunning" },
   { id: "attention", labelKey: "counterAttention" },
+  { id: "shells", labelKey: "counterShells" },
   { id: "error", labelKey: "counterError" },
   { id: "idle", labelKey: "counterIdle" },
   { id: "initializing", labelKey: "counterInitializing" },
   { id: "closed", labelKey: "counterClosed" },
-  { id: "total", labelKey: "counterTotal" },
 ];
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
@@ -51,8 +58,9 @@ function readContext(agent: Record<string, unknown>): { used: number; max: numbe
   return { used, max, percent };
 }
 
-export function topbarModel(snapshot: OfficeSnapshot, selectedAgentId: string | null): TopBarModel {
-  const counters: TopBarCounters = { running: 0, attention: 0, error: 0, idle: 0, initializing: 0, closed: 0, total: 0 };
+// rooms is the count of rooms the building model draws (the caller passes it; the snapshot does not know the caps).
+export function topbarModel(snapshot: OfficeSnapshot, selectedAgentId: string | null, rooms: number = 0): TopBarModel {
+  const counters: TopBarCounters = { rooms: Number.isInteger(rooms) && rooms > 0 ? rooms : 0, subAgents: 0, shells: 0, running: 0, attention: 0, error: 0, idle: 0, initializing: 0, closed: 0, total: 0 };
   const agents = Array.isArray(snapshot?.agents) ? (snapshot.agents as readonly unknown[]).filter(isRecord) : [];
   let selected: Record<string, unknown> | null = null;
   let busiest: { agent: Record<string, unknown>; used: number; max: number; percent: number } | null = null;
@@ -78,6 +86,8 @@ export function topbarModel(snapshot: OfficeSnapshot, selectedAgentId: string | 
         break;
     }
     if (a.requiresAttention === true) counters.attention++;
+    if (typeof a.parentAgentId === "string" && a.parentAgentId !== a.id) counters.subAgents++;
+    if (a.status === "idle" && isRecord(a.shell) && a.shell.status === "running") counters.shells++;
     if (selected === null && typeof selectedAgentId === "string" && a.id === selectedAgentId) selected = a;
     if (a.status !== "closed") {
       const ctx = readContext(a);

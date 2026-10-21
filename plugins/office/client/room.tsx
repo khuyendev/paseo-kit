@@ -2,7 +2,8 @@
 // Room pieces of the scene (OFFC-06, OFFC-17, OFFC-21, D-04): a layer image slot with its tint cross-fade, the cluster sign, the room label and the exact surplus badge.
 // Agent-provided text reaches the screen only as clipped Text children; positions and sizes come from tile numbers (OFFC-14).
 import type { PluginTheme } from "@getpaseo/plugin";
-import { Text, View } from "react-native";
+import { useEffect, useRef } from "react";
+import { Animated, Easing, Platform, Text, View } from "react-native";
 import { TILE } from "../shared/art-types.ts";
 import type { WorkspaceKind } from "../shared/model-types.ts";
 import { TintFade, type TintSource } from "./atmosphere.tsx";
@@ -10,6 +11,8 @@ import { SCENE_LABEL_FONT_PX, SCENE_SIGN_WIDTH_PX, SCENE_Z_LABEL, type VisibleLa
 import type { TilePoint } from "../shared/path/grid.ts";
 import type { LightState } from "./model.ts";
 import { LABEL_MAX_CHARS } from "./limits-panels.ts";
+import { ROOM_DARK_OPACITY, ROOM_LIGHT_FADE_MS, ROOM_SHADE_COLOR } from "./limits-atmosphere.ts";
+import type { TileRect } from "../shared/layout/types.ts";
 import { WORKSPACE_KIND_KEY, clipText, text } from "./strings.ts";
 
 export type SceneColors = Pick<PluginTheme["colors"], "surface1" | "surface2" | "border" | "foreground" | "foregroundMuted" | "accent" | "statusSuccess" | "statusWarning" | "statusDanger">;
@@ -141,5 +144,38 @@ export function SurplusBadge({ tile, zoom, count, colors, testID }: SurplusBadge
     >
       <Text style={{ color: colors.foreground, fontSize: SCENE_LABEL_FONT_PX }}>{text("sceneSurplus", { count })}</Text>
     </View>
+  );
+}
+
+const NATIVE_DRIVER = Platform.OS !== "web";
+
+export interface RoomShadeProps {
+  rect: TileRect;
+  zoom: number;
+  dark: boolean;
+  testID: string;
+  zIndex: number;
+}
+
+// The lights of a room: a non-interactive shade over its tile rect that fades in when the room is empty and out when someone is present.
+export function RoomShade({ rect, zoom, dark, testID, zIndex }: RoomShadeProps) {
+  const value = useRef<Animated.Value | null>(null);
+  if (value.current === null) value.current = new Animated.Value(dark ? ROOM_DARK_OPACITY : 0);
+  const opacity = value.current;
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return undefined;
+    }
+    const animation = Animated.timing(opacity, { toValue: dark ? ROOM_DARK_OPACITY : 0, duration: ROOM_LIGHT_FADE_MS, easing: Easing.linear, useNativeDriver: NATIVE_DRIVER });
+    animation.start();
+    return () => animation.stop();
+  }, [dark]);
+  return (
+    <Animated.View
+      testID={testID}
+      style={{ position: "absolute", left: rect.x * TILE * zoom, top: rect.y * TILE * zoom, width: rect.w * TILE * zoom, height: rect.h * TILE * zoom, backgroundColor: ROOM_SHADE_COLOR, opacity, zIndex, pointerEvents: "none" } as never}
+    />
   );
 }
