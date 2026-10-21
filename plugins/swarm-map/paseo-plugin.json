@@ -1,7 +1,0 @@
-{
-  "id": "swarm-map",
-  "description": "Read-only live map of Paseo agents spawned by ph: brains, swarms, activity, file holds and wave progress.",
-  "requirements": {
-    "paseo": "0.11.2"
-  }
-}

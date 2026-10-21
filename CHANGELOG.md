@@ -6,6 +6,21 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Owner-approved Office plugin, 2026-10-21: `office` is a native port of habblaud's drawing code (MIT,
+  `LICENSES/habblaud-MIT.txt`, commit in `NOTICE.md`) into a new read-only plugin, id `office`, that replaces
+  swarm-map. Data comes only from the official Paseo API; the usage slot stays empty until the owner supplies the API;
+  strings are English, in a strings table. swarm-map is removed and the machine plugin list is now planning-panel and
+  office (`kit/machine/plugins.mjs`). The Paseo app compiles plugin client code with Hermes, which rejects class
+  syntax: the office client is class-free and the OFFC-25 gate (`tests/ui/office-hermes.test.mjs`) fails on any class.
+  The plugin is pinned to SDK `@getpaseo/plugin` 0.12.0 (manifest requirement paseo 0.12.0). Desktop only; mobile not
+  tested. The D-12 spike measurement was waived by the owner on 2026-10-21 and is still owed (`07-SPIKE.md`
+  SPIKE_WAIVER: provisional ZOOM_LEVELS [2, 3], TINT_LEVELS 2); this entry claims no measurement, no visual check in
+  the app and no spike pass. Measured check: `tsc --noEmit -p plugins/office` exit 0; `node --test
+  "tests/ui/*.test.mjs" "tests/machine/*.test.mjs"` 432 tests, 423 pass, 0 fail, 9 skipped (the retired OFFC-10 spike
+  tests), exit 0. Operator: run `paseo plugin ls`; if it lists swarm-map, run `paseo plugin remove swarm-map`.
+  Supersession ledger: `.planning/requirements/office.md` (OFFC-23, OFFC-25, HARN-15, D-10). The owner delegated the
+  approval and the wording of this entry to the main session on 2026-10-21 ("Tự chốt").
+
 - Owner-approved evolve metrics, 2026-10-21 (owner request after reviewing the eval/hillclimbing article: measured
   data for `harness-evolve`): workflow journals record each call's `agentType`, `role`, `roleHash` and `effort`;
   every ended run appends one line to `_workspace/harness-metrics.jsonl` (kept by `ph runs --prune`); new

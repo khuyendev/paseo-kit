@@ -12,9 +12,12 @@ const PH = ".agents/harness/ph.mjs";
 const FLOW = ".agents/workflows/lib/gsd-flow.mjs";
 const PHASE_DIR_RE = /^\.planning\/phases\/\d+(\.\d+)?-[a-z0-9-]+$/;
 const lastJson = (text) => { try { return JSON.parse(String(text).trim().split(/\r?\n/).pop()); } catch { return null; } };
+// A verb prints its JSON on one last line; shell() keeps only the last 20000 characters by default, which cut the line of
+// `outline parse` for a 12-plan phase (23 KB) and made the outline look incomplete. Keep the whole output.
+const VERB_TAIL_CHARS = 4000000;
 // GSDF-03: the one verb helper; JSON goes on stdin, only validated values reach the argv.
 async function run(argv, input) {
-  const r = await shell(["node", ...argv], input === undefined ? {} : { input: typeof input === "string" ? input : JSON.stringify(input) });
+  const r = await shell(["node", ...argv], { tailChars: VERB_TAIL_CHARS, ...(input === undefined ? {} : { input: typeof input === "string" ? input : JSON.stringify(input) }) });
   return { code: r.code, json: lastJson(r.stdout), stderr: r.stderr };
 }
 async function loadCfg() {

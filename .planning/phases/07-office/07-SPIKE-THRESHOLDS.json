@@ -1,0 +1,29 @@
+{
+  "id": "SPIKE_THRESHOLDS_JSON",
+  "version": 1,
+  "writtenAt": "2026-10-21T06:19:51Z",
+  "scene": "hallway, one project room, lobby, kitchen and lounge layers, with 32 animated characters of which 6 walk",
+  "zoomCandidates": [
+    2,
+    3,
+    4
+  ],
+  "maxDrawnCharacters": 32,
+  "walkingCharacters": 6,
+  "cadence": {
+    "windowSeconds": 30,
+    "medianMsMax": 125,
+    "p95MsMax": 250
+  },
+  "firstLoadBytesMax": 2000000,
+  "steadyState": {
+    "windowSeconds": 60,
+    "bytesMax": 50000
+  },
+  "crispness": "No intermediate colour on the edges of the one-pixel ruler and of one character at each of ZOOM_CANDIDATES = 2, 3, 4 on the owner's display scale.",
+  "rules": {
+    "zoomLevels": "ZOOM_LEVELS is the subset of ZOOM_CANDIDATES that passed threshold 5.",
+    "tintLevels": "TINT_LEVELS is the largest N in 2..5 whose measured first-load bytes, with N tint variants of every measured room layer, stay within threshold 3.",
+    "verdict": "The verdict is pass only when thresholds 1 to 4 hold, ZOOM_LEVELS is not empty and TINT_LEVELS is at least 2, otherwise fail."
+  }
+}
