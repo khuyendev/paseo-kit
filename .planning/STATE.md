@@ -1,13 +1,16 @@
 ---
-gsd_state_version: '1.0'
-milestone: v1.0
-status: planning
+gsd_state_version: 1
+status: "Ready to plan"
+milestone: "v1.1"
+active_phase: "7"
 progress:
-  total_phases: 6
+  total_phases: 7
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
   percent: 0
+last_updated: "2026-10-21T03:27:21Z"
+state_head: "3724f2ed2f655e211cf5f663ee12a957a2440023"
 ---
 
 # Project State
@@ -17,17 +20,26 @@ progress:
 See: .planning/PROJECT.md (updated 2026-10-20)
 
 **Core value:** A fresh project goes from `kit-init` to a verified GSD phase through `ph`, with every agent's claim read back from disk and every loop bounded, without any project-specific content in the kit.
-**Current focus:** Phase 1: Foundation and tracer
+**Current focus:** Phase 7: Office (milestone v1.1)
 
 ## Current Position
 
-Milestone: v1.0
-Phase: 1 of 6 (Foundation and tracer)
+Phase: 7 of 7 (Office)
 Plan: 0 of TBD in current phase
-Status: Not started (ready to plan)
-Last activity: 2026-10-20 — roadmap restructured into 6 phases (owner decision; 453 v1 requirements placed)
+Status: Ready to plan
+Last activity: 2026-10-21 — v1.0 treated as delivered (kit 0.0.1); milestone v1.1 opened with Phase 7 Office (owner decisions: port habblaud art natively, plugin id office replaces swarm-map, official Paseo API only, Sonnet 5.5 for all tiers)
 
-Progress: [░░░░░░░░░░] 0%
+## Decisions
+
+## Models
+
+## Owner rules
+
+## Overrides
+
+## Wave log
+
+## Current state
 
 ## Performance Metrics
 

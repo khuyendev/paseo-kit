@@ -6,6 +6,8 @@ paseo-kit v1.0 is built bottom-up along the dependency direction of `.planning/i
 
 > Owner 2026-10-20: 6 phases, coarse granularity.
 
+> Owner 2026-10-21: v1.0 is treated as delivered. It shipped as kit 0.0.1 (CHANGELOG `[0.0.1]`), built outside the per-phase flow, so phases 1-6 carry no PLAN, SUMMARY or VERIFICATION files and `ph gsd roadmap analyze` still reports them NOT_STARTED; always pass the phase number explicitly. Offline suite on 2026-10-21: 905 of 908 tests passed, 2 skipped, 1 failed (FTOL-15, flaky under full-suite load, passes alone 17/17 on main and in the worktree). v1.1 adds Phase 7 below.
+
 ## Phases
 
 **Phase Numbering:**
@@ -14,12 +16,16 @@ paseo-kit v1.0 is built bottom-up along the dependency direction of `.planning/i
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Foundation and tracer** - repo skeleton, test harness, config, minimal install, paseo-client, `ph spawn`/`watch`/`result`, the tracer slice end to end
-- [ ] **Phase 2: Full runtime** - every `ph` command, the workflow engine, watchdog, worktrees, run tools
-- [ ] **Phase 3: Agent tools and machine** - full install/update/status/pull, machine check/apply/export, hooks, file tools
-- [ ] **Phase 4: GSD core and project start** - `.planning/` data layer and `ph gsd` verbs, upstream vendoring and generation, map-codebase, adapter generator, new-project
-- [ ] **Phase 5: GSD lifecycle** - discuss, research, plan, execute, verify, forensics, plain debugger, harness-evolve
-- [ ] **Phase 6: Paseo UI panels** - read-only `.planning` panel and trimmed swarm map
+- [x] **Phase 1: Foundation and tracer** - repo skeleton, test harness, config, minimal install, paseo-client, `ph spawn`/`watch`/`result`, the tracer slice end to end
+- [x] **Phase 2: Full runtime** - every `ph` command, the workflow engine, watchdog, worktrees, run tools
+- [x] **Phase 3: Agent tools and machine** - full install/update/status/pull, machine check/apply/export, hooks, file tools
+- [x] **Phase 4: GSD core and project start** - `.planning/` data layer and `ph gsd` verbs, upstream vendoring and generation, map-codebase, adapter generator, new-project
+- [x] **Phase 5: GSD lifecycle** - discuss, research, plan, execute, verify, forensics, plain debugger, harness-evolve
+- [x] **Phase 6: Paseo UI panels** - read-only `.planning` panel and trimmed swarm map
+
+**Milestone v1.1: Office**
+
+- [ ] **Phase 7: Office** - the swarm-map plugin is replaced by `office`, a pixel-art office of Paseo projects, sessions and agents, ported from habblaud (MIT) and fed only by the official Paseo API
 
 ## Phase Details
 
@@ -119,19 +125,27 @@ Note: ADPT-17 (gate-evidence contract) is placed here rather than with the rest 
   6. The unit tests of the pure modules pass offline, and the plugins are absent from Paseo unless `--enable-paseo-plugins` was passed.
 **Plans**: TBD
 
+### Phase 7: Office
+**Goal**: The `swarm-map` plugin is replaced by a new read-only Paseo plugin `office` (`plugins/office/`). It draws one building: a room per Paseo project along a hallway, a desk cluster per session (Paseo calls a session a workspace), a character per agent (a brain is the main character, agents with `parentAgentId` are small characters with a badge that walk to their parent to hand in a result). Pixel art is ported from habblaud (github.com/marmottajr/habblaud, MIT): its pure `PixelBuf` art code runs in the plugin server, is encoded to PNG there and shown by the client as images, because the plugin host offers only React Native primitives (no iframe, webview, canvas or SVG). Data comes only from the official Paseo API (`PaseoApi`: projects, workspaces, agents, timelines, `observeEvents`), pushed rather than polled; no file reads or heuristics to recover data the API does not give. Agent drawer (activity, todos from timeline `todo` items, child agents), counters, context from `lastUsage`, day/night and seasonal themes and effects on wave or phase completion linked to `.planning` through the `harness.run` label. A slot for provider usage windows (5h, weekly) stays empty until the owner supplies the API. Out of scope: answering permissions, sending messages, a terminal, sound, any write (PANL-05 holds).
+**Depends on**: Phase 6
+**Requirements**: TBD (group `OFFC` in `.planning/requirements/office.md`, written in discuss; it supersedes PANL-45..54 and PANL-55, PANL-34, PANL-36 where they rest on file reads or heuristics)
+**Success Criteria** (what must be TRUE): TBD in discuss
+**Plans**: TBD
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6. Phase 6 depends on Phases 2, 3 and 4 only and may run alongside Phase 5.
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7. Phase 6 depends on Phases 2, 3 and 4 only and may run alongside Phase 5.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation and tracer | 0/TBD | Not started | - |
-| 2. Full runtime | 0/TBD | Not started | - |
-| 3. Agent tools and machine | 0/TBD | Not started | - |
-| 4. GSD core and project start | 0/TBD | Not started | - |
-| 5. GSD lifecycle | 0/TBD | Not started | - |
-| 6. Paseo UI panels | 0/TBD | Not started | - |
+| 1. Foundation and tracer | - | Shipped in 0.0.1 outside the phase flow | 2026-10-20 |
+| 2. Full runtime | - | Shipped in 0.0.1 outside the phase flow | 2026-10-20 |
+| 3. Agent tools and machine | - | Shipped in 0.0.1 outside the phase flow | 2026-10-20 |
+| 4. GSD core and project start | - | Shipped in 0.0.1 outside the phase flow | 2026-10-20 |
+| 5. GSD lifecycle | - | Shipped in 0.0.1 outside the phase flow | 2026-10-20 |
+| 6. Paseo UI panels | - | Shipped in 0.0.1 outside the phase flow | 2026-10-20 |
+| 7. Office | 0/TBD | Not started | - |
 
 ## Coverage
 

@@ -3,3 +3,8 @@ node_modules/
 /.claude/worktrees/
 *.log
 .DS_Store
+
+# >>> paseo-harness-kit: generated paths (edit outside this block)
+/_workspace/
+/.claude/worktrees/
+# <<< paseo-harness-kit
