@@ -8,7 +8,9 @@ import { TESTED_PASEO_CLI } from "../../ship/.agents/harness/paseo-client/index.
 import { KIT_DIR } from "../helpers/temp.mjs";
 
 const PLUGINS = path.join(KIT_DIR, "plugins");
-const IDS = ["planning-panel", "swarm-map"];
+const IDS = ["planning-panel", "swarm-map", "office"];
+// kit/machine/plugins.mjs is changed only by 07-12 (swarm-map stays registered until the recorded spike pass); 07-12 changes this to planning-panel and office.
+const MACHINE_IDS = ["planning-panel", "swarm-map"];
 const SOURCE_DIRS = ["client", "server", "shared"];
 
 function sources(id, dirs = SOURCE_DIRS) {
@@ -109,6 +111,10 @@ test("PANL-57 the suite covers every named pure module", () => {
     withAlpha: "planning-panel/client/color.ts",
     formatRelative: "planning-panel/client/format.ts",
     shortModel: "swarm-map/client/format.ts",
+    encodePng: "office/server/png.ts",
+    renderSpriteKey: "office/server/sprites.ts",
+    spriteKey: "office/shared/sprites-rpc.ts",
+    PixelBuf: "office/server/art/core/pixbuf.ts",
   };
   for (const [name, file] of Object.entries(named)) {
     assert.ok(tests.includes(`plugins/${file}`), `${file} not imported by a test`);
@@ -119,8 +125,8 @@ test("PANL-57 the suite covers every named pure module", () => {
 test("PANL-09 the machine opt-in registers exactly these plugin folders, each ready for npm ci", async () => {
   const machine = path.join(KIT_DIR, "kit", "machine", "plugins.mjs");
   const { KIT_PLUGIN_FOLDERS } = await import(pathToFileURL(machine).href);
-  assert.deepEqual([...KIT_PLUGIN_FOLDERS].sort(), IDS);
-  for (const id of IDS) assert.ok(fs.existsSync(path.join(PLUGINS, id, "package-lock.json")));
+  assert.deepEqual([...KIT_PLUGIN_FOLDERS].sort(), MACHINE_IDS);
+  for (const id of MACHINE_IDS) assert.ok(fs.existsSync(path.join(PLUGINS, id, "package-lock.json")));
   assert.ok(!fs.existsSync(path.join(PLUGINS, "backlog-plugin")), "no Backlog plugin ships");
 });
 
@@ -162,7 +168,13 @@ test("PANL-02 both plugins compile and load through the Paseo host bundler and r
     assert.ok(bundles.clientBundle, `${id}: client bundle`);
     const server = fakeServer();
     const dispose = host.evaluateBundle(bundles.serverBundle)(server);
-    assert.deepEqual([...server.handlers.keys()].sort(), want[id], id);
+    const names = [...server.handlers.keys()].sort();
+    if (want[id]) assert.deepEqual(names, want[id], id);
+    else {
+      // 07-12 tightens office to the final handler set once 07-07 has added its handler.
+      assert.ok(names.includes("office.sprites"), id);
+      for (const name of names) assert.match(name, /^office\.[a-z][a-z0-9._-]*$/, name);
+    }
     dispose();
   }
 });
@@ -170,4 +182,67 @@ test("PANL-02 both plugins compile and load through the Paseo host bundler and r
 test("PANL-14 the swarm map's frontmatter parser is the planning panel's, byte for byte", () => {
   const read = (id) => fs.readFileSync(path.join(PLUGINS, id, "server", "frontmatter.ts"), "utf8").replace(/\r\n/g, "\n");
   assert.equal(read("swarm-map"), read("planning-panel"), "copy plugins/planning-panel/server/frontmatter.ts to plugins/swarm-map/server/");
+});
+
+const normalise = (text) => text.replace(/\r\n/g, "\n");
+const officeFiles = (dir) => sources("office", [dir]).filter(([f]) => f.includes(`${path.sep}${dir}${path.sep}`));
+const importSpecs = (text) => [...normalise(text).matchAll(/(?:from|import)\s+["']([^"']+)["']/g)].map((m) => m[1]);
+
+// A client file may only use host primitives: no DOM-like element, no document or window access, a short list of react-native values.
+const RN_ALLOWED = ["View", "Text", "Image", "Pressable", "Animated", "ScrollView", "Easing", "Platform"];
+function primitiveViolations(text) {
+  const code = normalise(text).replace(/^\s*\/\/.*$/gm, "");
+  const found = [];
+  if (/<\s*(canvas|iframe|webview|svg)\b/i.test(code)) found.push("element");
+  if (importSpecs(code).some((s) => /react-native-svg|webview|canvas|iframe/i.test(s))) found.push("import");
+  if (/\b(document|window)\.[A-Za-z_]/.test(code)) found.push("global");
+  if (/import\s+(?!type\b)[A-Za-z_*][^{;]*from\s*["']react-native["']/.test(code)) found.push("default import");
+  for (const m of code.matchAll(/import\s*\{([^}]*)\}\s*from\s*["']react-native["']/g)) {
+    for (const part of m[1].split(",").map((p) => p.trim()).filter(Boolean)) {
+      if (part.startsWith("type ")) continue;
+      const name = part.split(/\s+as\s+/)[0];
+      if (!RN_ALLOWED.includes(name)) found.push(`react-native value ${name}`);
+    }
+  }
+  return found;
+}
+
+test("OFFC-04 office client uses host primitives only", () => {
+  const forbidden = [
+    "const a = <canvas />;",
+    'const a = <iframe src="x" />;',
+    "const a = <WebView />;",
+    "const a = <svg></svg>;",
+    'import Svg from "react-native-svg";',
+    "const t = document.title;",
+    "const w = window.innerWidth;",
+    'import { View, Dimensions } from "react-native";',
+    'import RN from "react-native";',
+  ];
+  for (const fixture of forbidden) assert.ok(primitiveViolations(fixture).length > 0, fixture);
+  assert.deepEqual(primitiveViolations('import { View, Text, Animated, type ViewProps } from "react-native";\nimport type { ViewStyle } from "react-native";\nconst a = <View />;'), []);
+  const files = [["index.client.tsx", fs.readFileSync(path.join(PLUGINS, "office", "index.client.tsx"), "utf8")], ...officeFiles("client")];
+  assert.ok(files.length >= 3);
+  for (const [file, text] of files) assert.deepEqual(primitiveViolations(text), [], file);
+});
+
+test("OFFC-03 office RPC names and purity", () => {
+  const shared = officeFiles("shared");
+  const names = shared.flatMap(([, text]) => [...normalise(text).matchAll(/defineRpc\(\s*\{[^}]*?name:\s*["']([^"']+)["']/gs)].map((m) => m[1]));
+  assert.ok(names.length > 0);
+  for (const name of names) assert.match(name, /^office\.[a-z][a-z0-9._-]*$/, name);
+  for (const [file, text] of shared) {
+    for (const spec of importSpecs(text)) assert.doesNotMatch(spec, /^node:|^react($|-native)|(^|\/)server(\/|$)/, `${file}: ${spec}`);
+  }
+  const clients = [["index.client.tsx", fs.readFileSync(path.join(PLUGINS, "office", "index.client.tsx"), "utf8")], ...officeFiles("client")];
+  for (const [file, text] of clients) {
+    for (const spec of importSpecs(text).filter((s) => s.startsWith("."))) assert.doesNotMatch(spec, /(^|\/)server(\/|$)/, `${file}: ${spec}`);
+  }
+});
+
+test("OFFC-01 office registers with the current host calls", () => {
+  const text = normalise(fs.readFileSync(path.join(PLUGINS, "office", "client", "register.ts"), "utf8"));
+  assert.match(text, /\baddScreen\(/);
+  assert.match(text, /\baddSidebarHeaderItem\(/);
+  assert.doesNotMatch(text, /\baddSurface\b|\baddSidebarItem\b/);
 });
