@@ -2,8 +2,8 @@
 // Pure data: it only orders and filters values the snapshot and the building model already carry (D-03). Ids are opaque keys held in Map and Set, never in a plain object or a uri.
 import { LABEL_MAX_CHARS } from "./limits-panels.ts";
 import { AGENT_STATUS_KEY, WORKSPACE_STATUS_KEY, clipText, type StringKey } from "./strings.ts";
-import { ROOM_ID_PREFIX, type BuildingLayout } from "./layout/building.ts";
-import type { TileRect } from "./layout/types.ts";
+import { ROOM_ID_PREFIX, type BuildingLayout } from "../shared/layout/building.ts";
+import type { TileRect } from "../shared/layout/types.ts";
 import type { BuildingModel, OfficeSnapshot } from "../shared/model-types.ts";
 
 export interface CameraTarget {

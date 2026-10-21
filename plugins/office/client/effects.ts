@@ -132,7 +132,7 @@ function fnv1a(text: string): number {
   return hash >>> 0;
 }
 
-// Mulberry32, same algorithm as client/layout/rng.ts (copied, not imported).
+// Mulberry32, same algorithm as shared/layout/rng.ts (copied, not imported).
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {

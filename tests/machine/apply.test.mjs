@@ -232,13 +232,13 @@ test("MACH-12 --no-reload makes no Paseo call; a patch failure exits 1 with noth
 });
 
 test("MACH-15 without the flag pluginsEnabled and plugins stay; with it the kit entries are added, the user entry kept", async () => {
-  const plugins = { "planning-panel": "planning-panel", "swarm-map": "swarm-map" };
+  const plugins = { "planning-panel": "planning-panel", office: "office" };
   const base = await completeMachine();
   const live = base.readConfig();
   live.pluginsEnabled = false;
   live.plugins = { "user-plugin": { source: "directory", path: "/owner/plugin", enabled: true } };
   const m = makeMachine({ live, plugins });
-  fs.mkdirSync(path.join(m.kitDir, "plugins", "swarm-map", "node_modules"), { recursive: true });
+  fs.mkdirSync(path.join(m.kitDir, "plugins", "office", "node_modules"), { recursive: true });
   const r = await m.run(["apply", "--no-reload"]);
   assert.equal(r.code, 0, r.stdout);
   assert.deepEqual([m.readConfig().pluginsEnabled, m.readConfig().plugins], [false, live.plugins]);
@@ -249,22 +249,32 @@ test("MACH-15 without the flag pluginsEnabled and plugins stay; with it the kit 
   assert.equal(after.pluginsEnabled, true);
   assert.deepEqual(after.plugins["user-plugin"], live.plugins["user-plugin"]);
   assert.deepEqual(after.plugins["planning-panel"], { source: "directory", path: path.join(m.kitDir, "plugins", "planning-panel"), enabled: true });
-  assert.deepEqual(after.plugins["swarm-map"], { source: "directory", path: path.join(m.kitDir, "plugins", "swarm-map"), enabled: true });
+  assert.deepEqual(after.plugins.office, { source: "directory", path: path.join(m.kitDir, "plugins", "office"), enabled: true });
+  assert.deepEqual(Object.keys(after.plugins).sort(), ["office", "planning-panel", "user-plugin"]);
   assert.deepEqual(m.logOf("npm").map((c) => [c.args, c.cwd]), [[["ci"], path.join(m.kitDir, "plugins", "planning-panel")]]);
   assert.ok(r2.out.includes("paseo: to load it now: paseo plugin reload planning-panel"));
-  assert.ok(r2.out.includes("ok Paseo plugin swarm-map runs from the kit"), r2.stdout);
+  assert.ok(r2.out.includes("ok Paseo plugin office runs from the kit"), r2.stdout);
+});
+
+test("OFFC-02 machine: the kit plugin folders are planning-panel and office", async () => {
+  const { KIT_PLUGIN_FOLDERS } = await import("../../kit/machine/plugins.mjs");
+  assert.deepEqual(KIT_PLUGIN_FOLDERS, ["planning-panel", "office"]);
+  for (const folder of KIT_PLUGIN_FOLDERS) {
+    const manifest = JSON.parse(fs.readFileSync(path.join(KIT_DIR, "plugins", folder, "paseo-plugin.json"), "utf8"));
+    assert.equal(manifest.id, folder);
+  }
 });
 
 test("MACH-15 a user entry with the kit plugin id pointing elsewhere is kept and reported as a conflict", async () => {
   const base = await completeMachine();
   const live = base.readConfig();
-  live.plugins = { "swarm-map": { source: "directory", path: "/owner/swarm", enabled: true } };
-  const m = makeMachine({ live, plugins: { "planning-panel": "planning-panel", "swarm-map": "swarm-map" } });
+  live.plugins = { office: { source: "directory", path: "/owner/office", enabled: true } };
+  const m = makeMachine({ live, plugins: { "planning-panel": "planning-panel", office: "office" } });
   const r = await m.run(["apply", "--no-reload", "--enable-paseo-plugins"]);
   assert.equal(r.code, 2, r.stdout);
-  assert.ok(r.out.includes("conflict Paseo plugin swarm-map: user entry kept"));
-  assert.deepEqual(m.readConfig().plugins["swarm-map"], live.plugins["swarm-map"]);
-  assert.ok(r.out.some((l) => /^problem Paseo plugin swarm-map runs from \/owner\/swarm \(user entry\), not from the kit$/.test(l)), r.stdout);
+  assert.ok(r.out.includes("conflict Paseo plugin office: user entry kept"));
+  assert.deepEqual(m.readConfig().plugins.office, live.plugins.office);
+  assert.ok(r.out.some((l) => /^problem Paseo plugin office runs from \/owner\/office \(user entry\), not from the kit$/.test(l)), r.stdout);
   assert.equal(fs.existsSync(path.join(KIT_DIR, "plugins", "backlog-plugin")), false);
 });
 

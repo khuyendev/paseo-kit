@@ -5,7 +5,7 @@ import { z } from "zod";
 import { POSE_NAMES, ZOOM_CANDIDATES, type Pose, type ZoomCandidate } from "./art-types.ts";
 
 // Later plans only add entries here and to SPRITE_REGISTRY, never change the shape.
-export const SPRITE_KINDS = ["ruler", "spike-char", "spike-room"] as const;
+export const SPRITE_KINDS = ["ruler", "character-sheet", "room-layer", "room-front"] as const;
 export type SpriteKind = (typeof SPRITE_KINDS)[number];
 
 // Pose part of a key that carries no poses.
@@ -79,6 +79,85 @@ export function parseSpriteKey(key: string): SpriteSpec | null {
   if (!isZoom(scale) || tint > SPRITE_TINT_INDEX_MAX) return null;
   const spec: SpriteSpec = { kind, seed, poses, scale, tint };
   return spriteKey(spec) === key ? spec : null;
+}
+
+// ---------------------------------------------------------------- room seed grammar (OFFC-07, OFFC-17)
+// A room-layer or room-front key carries the area it draws inside its seed field; the grammar is closed and numeric.
+export const ROOM_LAYER_AREAS = ["room", "reception", "restroom", "cafe", "lounge", "corridor"] as const;
+export type RoomLayerArea = (typeof ROOM_LAYER_AREAS)[number];
+
+// Season of a layer: the code stands in the seed, the name is the theme the server draws.
+export const SEASON_CODES = { none: "n", christmas: "c", halloween: "h" } as const;
+export type SeasonName = keyof typeof SEASON_CODES;
+export const SEASON_NAMES = Object.keys(SEASON_CODES) as readonly SeasonName[];
+
+export const ROOM_SLOT_MAX = 31;
+export const ROOM_COLS_MAX = 18;
+export const ROOM_VARIANT_MAX = 4294967295;
+// Width in tiles of one corridor segment image.
+export const CORRIDOR_SEGMENT_TILES = 16;
+
+export interface RoomSeedSpec {
+  area: RoomLayerArea;
+  // Set for a room only.
+  slot: number | null;
+  variant: number | null;
+  // Set for a corridor segment only.
+  cols: number | null;
+  segment: number | null;
+  season: SeasonName;
+}
+
+function boundedInt(value: unknown, max: number, min: number, name: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) throw new RangeError(name);
+  return value;
+}
+
+// Canonical seed text; throws RangeError naming the bad field.
+export function roomSeed(spec: RoomSeedSpec): string {
+  if (!(ROOM_LAYER_AREAS as readonly string[]).includes(spec.area)) throw new RangeError("area");
+  if (!Object.hasOwn(SEASON_CODES, spec.season)) throw new RangeError("season");
+  const code = SEASON_CODES[spec.season];
+  if (spec.area === "room") {
+    const slot = boundedInt(spec.slot, ROOM_SLOT_MAX, 0, "slot");
+    const variant = boundedInt(spec.variant, ROOM_VARIANT_MAX, 0, "variant");
+    return `room-s${slot}-q${variant}-${code}`;
+  }
+  if (spec.area === "corridor") {
+    const cols = boundedInt(spec.cols, ROOM_COLS_MAX, 1, "cols");
+    const segment = boundedInt(spec.segment, cols - 1, 0, "segment");
+    return `corridor-c${cols}-g${segment}-${code}`;
+  }
+  return `${spec.area}-${code}`;
+}
+
+const NUM = "(0|[1-9][0-9]{0,9})";
+const ROOM_SEED_RE = new RegExp(`^room-s${NUM}-q${NUM}-([nch])$`);
+const CORRIDOR_SEED_RE = new RegExp(`^corridor-c${NUM}-g${NUM}-([nch])$`);
+const CORE_SEED_RE = /^(reception|restroom|cafe|lounge)-([nch])$/;
+
+function seasonOfCode(code: string): SeasonName {
+  return SEASON_NAMES.find((name) => SEASON_CODES[name] === code) as SeasonName;
+}
+
+// Never throws: the spec, or null when the text is not exactly a canonical room seed.
+export function parseRoomSeed(seed: string): RoomSeedSpec | null {
+  if (typeof seed !== "string" || seed.length > SPRITE_SEED_MAX_CHARS) return null;
+  let spec: RoomSeedSpec | null = null;
+  let m = ROOM_SEED_RE.exec(seed);
+  if (m) {
+    spec = { area: "room", slot: Number(m[1]), variant: Number(m[2]), cols: null, segment: null, season: seasonOfCode(m[3] as string) };
+  } else if ((m = CORRIDOR_SEED_RE.exec(seed))) {
+    spec = { area: "corridor", slot: null, variant: null, cols: Number(m[1]), segment: Number(m[2]), season: seasonOfCode(m[3] as string) };
+  } else if ((m = CORE_SEED_RE.exec(seed))) {
+    spec = { area: m[1] as RoomLayerArea, slot: null, variant: null, cols: null, segment: null, season: seasonOfCode(m[2] as string) };
+  }
+  if (!spec) return null;
+  try {
+    return roomSeed(spec) === seed ? spec : null;
+  } catch {
+    return null;
+  }
 }
 
 const frameSchema = z.object({ w: z.number(), h: z.number(), cols: z.number(), rows: z.number() });

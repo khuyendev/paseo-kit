@@ -2,8 +2,8 @@
 // Ported: the weights of the idle activities that have a spot in the lobby, kitchen, lounge or hallway, the weighted pick, the sit time; the per-activity stay comes from sim/sim.ts planOuting. Character-profile parts, restroom, mirror and stretch stay out.
 // Pure decisions (OFFC-13, D-06): the caller owns rng, ledger and reservations; nothing here reserves a spot.
 import type { Dir, Pose } from "../../shared/art-types.ts";
-import type { AreaKind, SpotDef, SpotKind } from "../layout/types.ts";
-import type { TilePoint } from "../path/grid.ts";
+import type { AreaKind, SpotDef, SpotKind } from "../../shared/layout/types.ts";
+import type { TilePoint } from "../../shared/path/grid.ts";
 import { WANDER_NEAREST_CHOICES, WANDER_SIT_MS_MAX, WANDER_SIT_MS_MIN, WANDER_STAY_MS_MAX, WANDER_STAY_MS_MIN } from "../limits-life.ts";
 import type { SpotIndex, SpotLedger } from "./ledger.ts";
 

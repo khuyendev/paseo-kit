@@ -11,7 +11,7 @@ import type { CharacterSheet } from "./life/frames.ts";
 import type { Journey } from "./life/journey.ts";
 import { runJourney } from "./life/runner.ts";
 import type { JourneyEnv } from "./life/runner.ts";
-import type { TilePoint } from "./path/grid.ts";
+import type { TilePoint } from "../shared/path/grid.ts";
 
 const NATIVE_DRIVER = Platform.OS !== "web";
 

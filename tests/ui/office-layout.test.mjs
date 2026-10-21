@@ -3,18 +3,18 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import { createPathFinder, findPath } from "../../plugins/office/client/path/astar.ts";
-import { BLOCKED, FREE, MAX_GRID_CELLS, SEAT, createWalkGrid, gridFromRows, gridOf } from "../../plugins/office/client/path/grid.ts";
-import { SEATED_SORT_BIAS, SEAT_FOOT_DY, createAreaBuilder, furnitureBlocks, furnitureIsSeat } from "../../plugins/office/client/layout/builder.ts";
-import * as C from "../../plugins/office/client/layout/constants.ts";
-import { CAFE_ID, ELEVATOR_CX, LOUNGE_ID, RECEPTION_ID, RESTROOM_ID, layoutCafe, layoutLounge, layoutReception, layoutRestroom } from "../../plugins/office/client/layout/core.ts";
-import { CORRIDOR_ID, layoutCorridor } from "../../plugins/office/client/layout/corridor.ts";
-import { FURNITURE } from "../../plugins/office/client/layout/defs.ts";
-import { buildingRect, columnsFor, corridorRect, inRect, rectPx, slotAt, slotColumn, slotRect, slotSide } from "../../plugins/office/client/layout/geometry.ts";
-import { mulberry32 } from "../../plugins/office/client/layout/rng.ts";
-import { layoutProjectRoom, roomVariant } from "../../plugins/office/client/layout/room.ts";
-import { THEME_COUNT, roomThemeFor } from "../../plugins/office/client/layout/theme.ts";
-import { ROOM_ID_PREFIX, assembleBuilding, buildBuilding, coreAreas } from "../../plugins/office/client/layout/building.ts";
+import { createPathFinder, findPath } from "../../plugins/office/shared/path/astar.ts";
+import { BLOCKED, FREE, MAX_GRID_CELLS, SEAT, createWalkGrid, gridFromRows, gridOf } from "../../plugins/office/shared/path/grid.ts";
+import { SEATED_SORT_BIAS, SEAT_FOOT_DY, createAreaBuilder, furnitureBlocks, furnitureIsSeat } from "../../plugins/office/shared/layout/builder.ts";
+import * as C from "../../plugins/office/shared/layout/constants.ts";
+import { CAFE_ID, ELEVATOR_CX, LOUNGE_ID, RECEPTION_ID, RESTROOM_ID, layoutCafe, layoutLounge, layoutReception, layoutRestroom } from "../../plugins/office/shared/layout/core.ts";
+import { CORRIDOR_ID, layoutCorridor } from "../../plugins/office/shared/layout/corridor.ts";
+import { FURNITURE } from "../../plugins/office/shared/layout/defs.ts";
+import { buildingRect, columnsFor, corridorRect, inRect, rectPx, slotAt, slotColumn, slotRect, slotSide } from "../../plugins/office/shared/layout/geometry.ts";
+import { mulberry32 } from "../../plugins/office/shared/layout/rng.ts";
+import { layoutProjectRoom, roomVariant } from "../../plugins/office/shared/layout/room.ts";
+import { THEME_COUNT, roomThemeFor } from "../../plugins/office/shared/layout/theme.ts";
+import { ROOM_ID_PREFIX, assembleBuilding, buildBuilding, coreAreas } from "../../plugins/office/shared/layout/building.ts";
 import { KIT_DIR } from "../helpers/temp.mjs";
 
 const COMMIT = "faa1a012b5fbf632c66dc6801c5383e53a542406";
@@ -532,7 +532,8 @@ test("OFFC-10 determinism: the pinned fixture keeps its layout digest", () => {
 });
 
 test("OFFC-10 source rules: layout and path are pure, header-marked, .ts-only and import-closed", () => {
-  const dirs = { layout: path.join(OFFICE_CLIENT, "layout"), path: path.join(OFFICE_CLIENT, "path") };
+  const OFFICE_SHARED = path.join(path.dirname(OFFICE_CLIENT), "shared");
+  const dirs = { layout: path.join(OFFICE_SHARED, "layout"), path: path.join(OFFICE_SHARED, "path") };
   const files = [];
   for (const [name, dir] of Object.entries(dirs)) {
     for (const f of fs.readdirSync(dir)) {

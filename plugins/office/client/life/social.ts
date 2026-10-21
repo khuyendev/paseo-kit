@@ -2,8 +2,8 @@
 // Also ports client/src/world/social/social.ts (spot groups and base poses). Ported: min, max and trait-free base weight of the kept kinds, whole-group rule, base pose; labels, emoji, money, rps gestures and chat lines stay out.
 // Pure decisions (OFFC-13, D-06): which idle agents meet at which spot group; the caller owns rng and ledger and reserves through reserveHangout.
 import type { Dir, Pose } from "../../shared/art-types.ts";
-import type { AreaKind, SpotDef, SpotKind } from "../layout/types.ts";
-import type { TilePoint } from "../path/grid.ts";
+import type { AreaKind, SpotDef, SpotKind } from "../../shared/layout/types.ts";
+import type { TilePoint } from "../../shared/path/grid.ts";
 import type { SpotIndex, SpotLedger } from "./ledger.ts";
 
 export type HangoutKind = "pingpong" | "kitchen" | "talk" | "rps";

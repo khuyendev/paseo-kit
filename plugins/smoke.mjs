@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// Manual smoke check of the Paseo SDK surface the two plugins use (PANL-10). Run it against a live daemon after
-// installing or upgrading Paseo:  node plugins/smoke.mjs [--app-dir "<Paseo install dir>"]
-// It is read-only: it lists agents and workspaces, reads one timeline tail and refreshes one agent and one
-// workspace; it never sends, spawns, archives or writes. Not part of the offline test suite.
+// Manual smoke check of the Paseo SDK surface the two plugins, planning-panel and office, use (PANL-10, OFFC-23). Run it
+// against a live daemon after installing or upgrading Paseo:  node plugins/smoke.mjs [--app-dir "<Paseo install dir>"]
+// It is read-only: it lists agents and workspaces, reads one timeline tail, refreshes one agent and one workspace and
+// checks that the office subscription surfaces exist without calling them; it never sends, spawns, archives or writes.
+// Not part of the offline test suite.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -27,10 +28,12 @@ const hasFields = (obj, fields, what) => {
 
 function iconNames() {
   const names = new Set();
-  for (const plugin of ["planning-panel", "swarm-map"]) {
+  for (const plugin of ["planning-panel", "office"]) {
     const dir = path.join(HERE, plugin, "client");
-    for (const f of fs.readdirSync(dir)) {
-      const text = fs.readFileSync(path.join(dir, f), "utf8");
+    for (const f of fs.readdirSync(dir, { recursive: true })) {
+      const file = path.join(dir, String(f));
+      if (!/\.tsx?$/.test(file) || !fs.statSync(file).isFile()) continue;
+      const text = fs.readFileSync(file, "utf8");
       for (const m of text.matchAll(/(?:name|icon)[=:]\s*\{?"([A-Z][A-Za-z0-9]+)"/g)) names.add(m[1]);
       for (const m of text.matchAll(/:\s*"([A-Z][A-Za-z0-9]+)",?\s*$/gm)) names.add(m[1]);
     }
@@ -71,7 +74,11 @@ async function main() {
       }
       const refreshed = await paseo.agents.ref(agent.id).refresh();
       check(refreshed?.agent?.id === agent.id, "agents.ref().refresh returns the agent");
+      check(typeof paseo.agents.ref(agent.id).timeline.subscribe === "function", "office SDK: agents.ref().timeline.subscribe is a function");
     } else check(false, "no live agent to read (start one with ph spawn and rerun)");
+    for (const [name, fn] of [["agents.subscribe", paseo.agents.subscribe], ["workspaces.subscribe", paseo.workspaces.subscribe], ["projects.subscribe", paseo.projects.subscribe], ["observeEvents", paseo.observeEvents]]) {
+      check(typeof fn === "function", `office SDK: ${name} is a function`);
+    }
     const ws = await paseo.workspaces.list();
     check(Array.isArray(ws.entries), "workspaces.list returns entries");
     const first = ws.entries[0];
@@ -81,7 +88,7 @@ async function main() {
       const cur = ref.current() ?? (await ref.refresh());
       check(typeof (cur?.workspaceDirectory ?? ref.directory) === "string", "workspaces.ref().current/refresh/directory give a directory");
     }
-    const lifecycle = fs.readFileSync(path.join(HERE, "swarm-map", "node_modules", "@getpaseo", "plugin", "dist", "server", "lifecycle.d.ts"), "utf8");
+    const lifecycle = fs.readFileSync(path.join(HERE, "office", "node_modules", "@getpaseo", "plugin", "dist", "server", "lifecycle.d.ts"), "utf8");
     for (const name of LIFECYCLE) check(lifecycle.includes(`"${name}"`), `lifecycle event ${name}`);
     checkIcons(appDir);
   } finally {

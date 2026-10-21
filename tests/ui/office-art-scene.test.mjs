@@ -166,8 +166,8 @@ function seasonalFixture(kind = "room") {
 }
 
 // The 07-02 client copies, when present (parity and real-layout tests note a skip otherwise).
-const CLIENT_LAYOUT = path.join(KIT_DIR, "plugins", "office", "client", "layout");
-const clientImport = async (file) => (fs.existsSync(path.join(CLIENT_LAYOUT, file)) ? import(new URL(`../../plugins/office/client/layout/${file}`, import.meta.url).href) : null);
+const CLIENT_LAYOUT = path.join(KIT_DIR, "plugins", "office", "shared", "layout");
+const clientImport = async (file) => (fs.existsSync(path.join(CLIENT_LAYOUT, file)) ? import(new URL(`../../plugins/office/shared/layout/${file}`, import.meta.url).href) : null);
 const clientDefs = await clientImport("defs.ts");
 const clientTheme = await clientImport("theme.ts");
 const clientBuilding = await clientImport("building.ts");
@@ -422,14 +422,14 @@ test("OFFC-07 furniture table details and client parity", (t) => {
   assert.deepEqual(FURNITURE.beanbag.variants, ["red", "blue", "yellow", "green"]);
   assert.equal(FURNITURE.toilet_stall.states, 2);
   assert.equal(FURNITURE.coffee_machine.states, 2);
-  if (!clientDefs) return t.diagnostic("skipped client parity: plugins/office/client/layout/defs.ts is absent");
+  if (!clientDefs) return t.diagnostic("skipped client parity: plugins/office/shared/layout/defs.ts is absent");
   assert.deepEqual(Object.keys(clientDefs.FURNITURE).sort(), [...FURNITURE_KINDS].sort());
   const shape = (d) => ({ mount: d.mount, footprint: { w: d.footprint.w, h: d.footprint.h }, blocks: d.blocks, seat: !!d.seat });
   for (const k of FURNITURE_KINDS) assert.deepEqual(shape(FURNITURE[k]), shape(clientDefs.FURNITURE[k]), k);
 });
 
 test("OFFC-07 theme client parity", (t) => {
-  if (!clientTheme) return t.diagnostic("skipped: plugins/office/client/layout/theme.ts is absent");
+  if (!clientTheme) return t.diagnostic("skipped: plugins/office/shared/layout/theme.ts is absent");
   assert.equal(clientTheme.THEME_COUNT, THEME_COUNT);
   for (let s = 0; s < THEME_COUNT; s++) assert.deepEqual(themeFor(s), clientTheme.roomThemeFor(s), `seed ${s}`);
 });
@@ -893,7 +893,7 @@ test("OFFC-07 room layer limits and crop", () => {
 });
 
 test("OFFC-07 real layout", (t) => {
-  if (!clientBuilding) return t.diagnostic("skipped: plugins/office/client/layout/building.ts is absent");
+  if (!clientBuilding) return t.diagnostic("skipped: plugins/office/shared/layout/building.ts is absent");
   const zoom = Math.max(...ZOOM_LEVELS);
   const png = (b) => {
     assert.ok(b.w * zoom <= PNG_MAX_DIMENSION && b.h * zoom <= PNG_MAX_DIMENSION, `${b.w}x${b.h} at zoom ${zoom}`);

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { after, test } from "node:test";
-import { buildBuilding } from "../../plugins/office/client/layout/building.ts";
+import { buildBuilding } from "../../plugins/office/shared/layout/building.ts";
 import { drawerModel } from "../../plugins/office/client/drawer-model.ts";
 import { CHILDREN_MAX_ITEMS, CONTEXT_WARN_PERCENT, ERROR_MAX_CHARS, LABEL_MAX_CHARS, SIDEBAR_MAX_ROWS, TODO_MAX_ITEMS, TODO_TEXT_MAX_CHARS, USAGE_SLOT_MIN_WIDTH_PX } from "../../plugins/office/client/limits-panels.ts";
 import { initialExpanded, sidebarRows, sidebarTree } from "../../plugins/office/client/sidebar-model.ts";

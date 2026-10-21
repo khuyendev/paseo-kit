@@ -3,7 +3,7 @@
 // under `<project>/_workspace/_runs/<runId>` and `<project>/.planning/phases`, and nothing is ever changed on disk.
 // Every path is checked after resolving links: a junction or symlink leading out of the project is never read.
 // A SUMMARY that cannot be read or parsed withholds the counts; files are reparsed only when their mtime changes.
-// Carried from plugins/swarm-map/server/wave-link.ts; frontmatter.ts is a byte copy of the planning panel's parser.
+// Carried from the retired swarm plugin's wave link; frontmatter.ts is a byte copy of the planning panel's parser.
 import { promises as fs } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";

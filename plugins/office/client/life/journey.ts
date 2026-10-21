@@ -2,8 +2,8 @@
 // Also ports client/src/world/sim/elevator.ts (arrival stagger). Ported: the step vocabulary go, act, elevOut, elevIn as appear, walk, wait, vanish; stall, switch, gather and the closures stay out.
 // Journeys (D-04, D-06, OFFC-12, OFFC-13): handoff walk to the parent and back, elevator arrival and departure, outings. Every builder returns fresh objects.
 import type { Dir, Pose } from "../../shared/art-types.ts";
-import type { AreaLayout } from "../layout/types.ts";
-import type { TilePoint, WalkGrid } from "../path/grid.ts";
+import type { AreaLayout } from "../../shared/layout/types.ts";
+import type { TilePoint, WalkGrid } from "../../shared/path/grid.ts";
 import { ELEVATOR_DOOR_MS, ELEVATOR_STAGGER_MS, HANDOFF_PAUSE_MS } from "../limits-life.ts";
 import { walkPath } from "./walk.ts";
 import type { WalkPlan } from "./walk.ts";

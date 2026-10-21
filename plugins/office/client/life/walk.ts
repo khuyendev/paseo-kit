@@ -1,10 +1,10 @@
 // No upstream: written for plan 07-08.
 // Walk planner (D-04, OFFC-12): turns the tile steps of findPath into straight timed runs between foot pixels. Reads the grid only (D-09).
 import type { Dir } from "../../shared/art-types.ts";
-import { RUN_SPEED, TILE, WALK_SPEED } from "../layout/constants.ts";
-import { findPath } from "../path/astar.ts";
-import { gridOf } from "../path/grid.ts";
-import type { TilePoint, WalkGrid } from "../path/grid.ts";
+import { RUN_SPEED, TILE, WALK_SPEED } from "../../shared/layout/constants.ts";
+import { findPath } from "../../shared/path/astar.ts";
+import { gridOf } from "../../shared/path/grid.ts";
+import type { TilePoint, WalkGrid } from "../../shared/path/grid.ts";
 import { WALK_PLAN_MAX_SEGMENTS } from "../limits-life.ts";
 import { footPx } from "./frames.ts";
 

@@ -4,7 +4,7 @@ import path from "node:path";
 import { readJson } from "../../ship/.agents/harness/lib/io.mjs";
 import { samePath } from "../../ship/.agents/harness/lib/paths.mjs";
 
-export const KIT_PLUGIN_FOLDERS = ["planning-panel", "swarm-map"];
+export const KIT_PLUGIN_FOLDERS = ["planning-panel", "office"];
 
 // [{folder, dir, id, error}] for the kit's plugin folders.
 export function kitPlugins(pluginsDir) {

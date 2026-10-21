@@ -148,9 +148,12 @@ Registered from `ship/templates/settings.hooks.json`; hooks never block a tool c
 ## UI
 
 Two read-only Paseo plugins in `plugins/` (installed by `machine apply --enable-paseo-plugins`, never into
-projects): `swarm-map` (live map of the agents `ph` spawns, grouped by brain and swarm, with context rings and run
-wave progress) and `planning-panel` (a workspace's `.planning/` on the GSD status ladder). Their tests need
-`npm install --ignore-scripts` once in each plugin folder.
+projects): `office` (a pixel-art building of the Paseo projects, workspaces and agents of this host, drawn from the
+official Paseo API only, art ported from habblaud under MIT per `NOTICE.md`, desktop app only) and `planning-panel`
+(a workspace's `.planning/` on the GSD status ladder). Their tests need `npm install --ignore-scripts` once in each
+plugin folder.
+
+If `paseo plugin ls` still lists the retired plugin swarm-map, registered by an earlier `machine apply --enable-paseo-plugins`, remove it with `paseo plugin remove swarm-map`; the kit no longer ships or registers it.
 
 ## Development
 
@@ -161,6 +164,6 @@ commits (HARN-15). Third-party text: see `NOTICE.md`.
 
 Offline regression success is not blanket live release qualification. Bounded Windows/Node 24 live checks now
 cover two-stack adapter generation and fresh triggers, mod activation/read/edit/write/permission denials, Paseo
-runtime/schema/resume, selected hook callbacks, and actual planning/swarm UI. See
+runtime/schema/resume, selected hook callbacks, and actual planning UI and the since-retired swarm map UI. See
 `.planning/integration/live-acceptance.md` and `.planning/integration/requalify-adapters.md`. Full GSD lifecycle, all permission/hook modes,
 scale/reconnect, POSIX, and qualification on the candidate minimum Node remain unverified.

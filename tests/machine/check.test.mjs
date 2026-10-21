@@ -86,7 +86,7 @@ test("MACH-03 check prints the lines in order and no backlog, mcp or machine.loc
     /^ok main provider circle: Agent, Workflow disallowed \(orchestration goes through Paseo\)$/,
     /^note Paseo plugins off \(pluginsEnabled\)$/,
     /^note kit Paseo plugin folder planning-panel: no paseo-plugin\.json$/,
-    /^note kit Paseo plugin folder swarm-map: no paseo-plugin\.json$/,
+    /^note kit Paseo plugin folder office: no paseo-plugin\.json$/,
     /^note .*\.claude-circle[\\/]skills[\\/]kit-init: kit-init link missing \(kit\.mjs machine apply --link-user-skills\)$/,
   ];
   assert.equal(r.out.length, want.length, r.stdout);

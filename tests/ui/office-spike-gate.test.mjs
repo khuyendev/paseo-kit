@@ -395,7 +395,7 @@ guardDraw("OFFC-10 spike draw: sheets and layers render at every zoom without a 
   const { ZOOM_CANDIDATES, sheetSize } = await load("shared", "art-types.ts");
   const { NO_POSES, spriteKey } = await load("shared", "sprites-rpc.ts");
   const { SPIKE_LAYERS } = await load("server", "art", "spike", "rooms.ts");
-  const { buildBuilding } = await load("client", "layout", "building.ts");
+  const { buildBuilding } = await load("shared", "layout", "building.ts");
   const fresh = () => ({ cache: new ByteLru(50_000_000) });
   const key = (kind, seed, poses, scale, tint = 0) => spriteKey({ kind, seed, poses, scale, tint });
   for (const z of ZOOM_CANDIDATES) {

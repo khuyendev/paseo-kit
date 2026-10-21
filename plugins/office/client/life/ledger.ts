@@ -1,7 +1,7 @@
 // Port of habblaud client/src/world/sim/spots.ts @ faa1a012b5fbf632c66dc6801c5383e53a542406 (MIT; notice in LICENSES/habblaud-MIT.txt, added by plan 07-05).
 // Ported: one holder per spot, all-or-nothing reservation of several spots, and the by-kind and by-group indexes; setSpots, get and the findFree searches live in wander.ts and social.ts.
 // Spot ids and owner ids are agent- or room-derived strings, so every table here is a Map and never an object keyed by an id (T-07-81).
-import type { AreaKind, AreaLayout, SpotDef, SpotKind } from "../layout/types.ts";
+import type { AreaKind, AreaLayout, SpotDef, SpotKind } from "../../shared/layout/types.ts";
 
 export interface SpotLedger {
   readonly size: number;

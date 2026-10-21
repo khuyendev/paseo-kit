@@ -4,8 +4,8 @@
 import { CHAR_AX, CHAR_AY, CHAR_W, CHAR_H, POSE_FRAMES, POSE_NAMES, ZOOM_CANDIDATES, canonicalPoses, sheetCell, sheetSize } from "../../shared/art-types.ts";
 import type { Dir, Pose } from "../../shared/art-types.ts";
 import type { SpriteKey } from "../../shared/sprites-rpc.ts";
-import { FOOT_DX, FOOT_DY, TILE } from "../layout/constants.ts";
-import type { TilePoint } from "../path/grid.ts";
+import { FOOT_DX, FOOT_DY, TILE } from "../../shared/layout/constants.ts";
+import type { TilePoint } from "../../shared/path/grid.ts";
 import { CLOCK_CYCLE, CLOCK_TICKS_PER_FRAME, CLOCK_TICK_MS } from "../limits-life.ts";
 
 // Source object of a loaded sheet image; the caller owns it and the component shows that very object.

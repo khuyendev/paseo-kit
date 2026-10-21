@@ -1,9 +1,10 @@
 // Client registrations (OFFC-01), separate from the components so Node tests can import them without a host.
 import type { PluginClientContext, PluginScreenProps, PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import type { ComponentType } from "react";
+import { STRINGS } from "./strings.ts";
 
 export const SCREEN_ID = "office";
-export const SCREEN_TITLE = "Office";
+export const SCREEN_TITLE = STRINGS.sidebarTitle;
 
 export function register(
   client: Pick<PluginClientContext, "addScreen" | "addSidebarHeaderItem">,
