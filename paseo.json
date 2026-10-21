@@ -1,0 +1,7 @@
+{
+  "worktree": {
+    "setup": [
+      "node -e \"const fs=require('fs'),p=require('path');const s=p.join(process.env.PASEO_SOURCE_CHECKOUT_PATH||'','plugins','office','node_modules');const d=p.join('plugins','office','node_modules');if(fs.existsSync(s)&&!fs.existsSync(d)&&fs.existsSync(p.join('plugins','office')))fs.cpSync(s,d,{recursive:true})\""
+    ]
+  }
+}
