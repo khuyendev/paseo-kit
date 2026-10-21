@@ -179,9 +179,11 @@ test("PANL-16 detail panes: failure, unreachable with no data, stale body after 
 });
 
 test("PANL-17 open details poll and Refresh rereads them (CR-PNL-08)", () => {
-  const data = fs.readFileSync(path.join(PANEL, "client", "data.ts"), "utf8");
+  // The patterns below match LF; a Windows checkout with core.autocrlf stores CRLF.
+  const source = (...parts) => fs.readFileSync(path.join(PANEL, ...parts), "utf8").replace(/\r\n/g, "\n");
+  const data = source("client", "data.ts");
   for (const hook of ["usePlan", "useFile"]) assert.match(data, new RegExp(`export function ${hook}\\([^)]*\\) \\{\\n[^\\n]*\\n[^\\n]*refetchInterval: LIST_POLL_MS`), hook);
-  const panel = fs.readFileSync(path.join(PANEL, "client", "panel.tsx"), "utf8");
+  const panel = source("client", "panel.tsx");
   assert.match(panel, /\["planning-plan", "planning-file"\]\.map\(\(k\) => queryClient\.refetchQueries/);
 });
 

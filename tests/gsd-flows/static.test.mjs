@@ -8,7 +8,8 @@ import { loadScript } from "./host.mjs";
 
 const SKILLS = path.join(SHIP_DIR, ".claude", "skills");
 const WF = path.join(SHIP_DIR, ".agents", "workflows");
-const read = (p) => fs.readFileSync(p, "utf8");
+// Line endings depend on the checkout (core.autocrlf on Windows); these checks compare text, not bytes.
+const read = (p) => fs.readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 const skill = (name) => read(path.join(SKILLS, name, "SKILL.md"));
 const SKILL_NAMES = ["gsd-map-codebase", "gsd-new-project", "gsd-discuss", "gsd-research", "gsd-plan", "gsd-execute", "gsd-verify", "gsd-quick", "gsd-progress", "gsd-pause", "gsd-undo", "gsd-forensics", "gsd-debug"];
 const SCRIPTS = fs.readdirSync(WF).filter((f) => /^gsd-.*\.js$/.test(f));
