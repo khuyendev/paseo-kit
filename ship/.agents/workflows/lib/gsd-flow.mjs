@@ -42,6 +42,7 @@ const COMMANDS = {
   "spot-check": (root, [summary]) => execute.spotCheck(root, summary),
   "review-scope": (root, [phaseDir], input) => review.reviewScope(root, phaseDir, JSON.parse(input)),
   "review-record": (root, [phaseDir], input) => review.writeRecord(root, phaseDir, JSON.parse(input)),
+  "changed-lines": (root, [phaseDir], input) => review.changedLines(root, phaseDir, JSON.parse(input)),
   "quick-dir": (root, [slugSource]) => project.quickDir(root, slugSource),
   "quick-verification": (root, [dir, action]) => project.quickVerification(root, dir, action),
   "forensics-path": (root, [slugSource]) => project.forensicsPath(root, slugSource),

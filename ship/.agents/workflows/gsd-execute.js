@@ -67,7 +67,8 @@ const EXEC_SCHEMA = {
   },
   required: ["taskResults"],
 };
-const FINDINGS_SCHEMA = { type: "object", properties: { findings: { type: "array", items: { type: "object", properties: { id: { type: "string" }, severity: { type: "string", enum: SEVERITIES }, trigger: { type: "string" }, likelihood: { type: "string" }, confidence: { type: "number" }, impact: { type: "string" }, file: { type: "string" }, line: { type: "number" }, description: { type: "string" } }, required: ["severity", "description"] } } }, required: ["findings"] };
+const INSTANCE_SCHEMA = { type: "object", properties: { file: { type: "string" }, line: { type: "number" } }, required: ["file"] };
+const FINDINGS_SCHEMA = { type: "object", properties: { findings: { type: "array", items: { type: "object", properties: { id: { type: "string" }, severity: { type: "string", enum: SEVERITIES }, trigger: { type: "string" }, likelihood: { type: "string" }, confidence: { type: "number" }, impact: { type: "string" }, file: { type: "string" }, line: { type: "number" }, description: { type: "string" }, introduced: { type: "boolean" }, class: { type: "string" }, instances: { type: "array", items: INSTANCE_SCHEMA } }, required: ["severity", "description"] } } }, required: ["findings"] };
 const VERDICT_SCHEMA = { type: "object", properties: { verdicts: { type: "array", items: { type: "object", properties: { id: { type: "string" }, verdict: { type: "string", enum: ["confirmed", "refuted", "uncertain"] }, evidence: { type: "string" } }, required: ["id", "verdict"] } } }, required: ["verdicts"] };
 const RESOLUTION_SCHEMA = { type: "object", properties: { resolution: { type: "array", items: { type: "object", properties: { id: { type: "string" }, resolved: { type: "boolean" }, evidence: { type: "string" } }, required: ["id", "resolved"] } } }, required: ["resolution"] };
 const FIXER_SCHEMA = { type: "object", properties: { resolvedRequests: { type: "array", items: { type: "string" } }, status: { type: "string", enum: ["fixed", "unresolved"] }, attempts: { type: "number" }, remaining_failures: { type: "number" }, evidence: { type: "string" } }, required: ["status"] };
@@ -349,7 +350,7 @@ const failureText = (list) => list.map((f) => `- ${f.step}${f.plan ? ` (plan ${f
 const fixerBlock = () => (g.fixer_verifies_itself
   ? `After your changes run the build (${JSON.stringify(cmds.build)}) and the tests (${JSON.stringify(testArgv)}) yourself, at most ${g.fixer.max_build_attempts} times and within ${g.fixer.minutes} minutes; stop early when two consecutive attempts do not reduce the failure count. Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence}.`
   : "Do not run the build or the tests: the orchestrator's gate verifies your changes. Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence}.");
-const fixerText = (owns, findings, failures) => [`<kit_fixer_runtime>\nYou own: ${JSON.stringify(owns)}. Fix the confirmed review findings and gate failures below, nothing else. Never commit.\n${fixerBlock()}\n</kit_fixer_runtime>`, findings.length ? `Confirmed findings (JSON): ${JSON.stringify(findings.map(({ id, file, line, trigger, description }) => ({ id, file, line, trigger, description })))}` : "", failures.length ? `Gate failures:\n${failureText(failures)}` : ""].filter(Boolean).join("\n\n");
+const fixerText = (owns, findings, failures) => [`<kit_fixer_runtime>\nYou own: ${JSON.stringify(owns)}. Fix the confirmed review findings and gate failures below, nothing else; a finding with instances is fixed at every instance. Never commit.\n${fixerBlock()}\n</kit_fixer_runtime>`, findings.length ? `Confirmed findings (JSON): ${JSON.stringify(findings.map(findingBrief))}` : "", failures.length ? `Gate failures:\n${failureText(failures)}` : ""].filter(Boolean).join("\n\n");
 const fixerOpts = (label, extra = {}) => ({ label, agentType: agentFor("fixer", "gsd-code-fixer"), role: "fixer", schema: FIXER_SCHEMA, ...extra });
 // CR-GSF-16: every fix result is inspected before the gate reruns; a failed or unresolved repair stops the round.
 async function fixRounds(waveId, tasks, first, label, tail) {
@@ -410,23 +411,45 @@ function lensesFor(scope) {
   const list = (cfg.adapter.review_lenses ?? []).filter((l) => (l.stage ?? "code") === "code" && (!l.applies_to?.length || scope.some((f) => l.applies_to.some((gl) => globRe(gl).test(f)))));
   return list.length ? list.map((l) => ({ name: l.name, text: l.text })) : [{ name: "correctness", text: "Follow the lens text in .agents/workflows/lenses/correctness.md." }];
 }
+// A finding as the verifier, the fixer and the resolution check see it: one defect, every place it occurs.
+const findingBrief = ({ id, file, line, trigger, description, class: kind, instances }) => ({ id, file, line, trigger, description, ...(kind ? { class: kind } : {}), ...(instances?.length ? { instances } : {}) });
+// Pre-existing (owner decision 2026-10-22, after the Claude Code team's review write-up, where most repeat findings sat
+// in code the change never touched): a finding whose line lies outside the lines the plan changed, by more than
+// PRE_EXISTING_MARGIN, and that the reviewer does not say the change caused, is recorded and deferred, never blocking.
+const PRE_EXISTING_MARGIN = 3;
+const preExisting = (f, changed) => {
+  const ranges = changed[f.file];
+  if (!Array.isArray(ranges) || !Number.isInteger(f.line) || f.line < 1 || f.introduced === true) return false;
+  return !ranges.some(([s, e]) => f.line >= s - PRE_EXISTING_MARGIN && f.line <= e + PRE_EXISTING_MARGIN);
+};
+const rangeText = (ranges) => (ranges === "all" ? "all (new file)" : Array.isArray(ranges) ? ranges.map(([s, e]) => (s === e ? `${s}` : `${s}-${e}`)).join(", ") : "unknown");
+const DEFER_REASON = { downgraded: "missing trigger, confidence < 80 or theoretical", deferred: "non-blocking severity", "pre-existing": "outside the lines this plan changed (pre-existing)" };
 const gateFinding = (f) => {
   const high = ["critical", "high"].includes(String(f.severity).toLowerCase());
   if (!high) return "deferred";
   return String(f.trigger ?? "").trim() && Number(f.confidence) >= 80 && String(f.likelihood).toLowerCase() !== "theoretical" ? "gated" : "downgraded";
 };
-const metrics = { confirmed: 0, refuted: 0, unverified: 0, resolved: 0, deferred: 0 };
-const findingFiles = (list) => [...new Set(list.map((f) => f.file).filter(Boolean))];
+const metrics = { confirmed: 0, refuted: 0, unverified: 0, resolved: 0, deferred: 0, preExisting: 0, secondVerifier: 0 };
+const findingFiles = (list) => [...new Set(list.flatMap((f) => [f.file, ...(f.instances ?? []).map((x) => x.file)]).filter(Boolean))];
 async function verifyFindings(gated, plan) {
   const verdicts = {};
   const dg = digestLine(`findings:${plan}`, await digestOf({ files: findingFiles(gated) }));
   for (let attempt = 0; attempt < 2; attempt++) {
     const missing = gated.filter((f) => !verdicts[f.id]);
     if (!missing.length) break;
-    const r = await call([`Verify these review findings of plan ${plan} independently, read-only: trace each trigger through the code and answer confirmed, refuted or uncertain with evidence.`, `Findings (JSON): ${JSON.stringify(missing.map(({ id, file, line, trigger, description }) => ({ id, file, line, trigger, description })))}`, "Return JSON {verdicts: [{id, verdict, evidence}]}.", dg].join("\n\n"), { label: `verify-findings-${plan}`, agentType: agentFor("finding_verifier", "finding-verifier"), role: "finding_verifier", readOnly: true, schema: VERDICT_SCHEMA });
+    const r = await call([`Verify these review findings of plan ${plan} independently, read-only: trace each trigger through the code and answer confirmed, refuted or uncertain with evidence.`, `Findings (JSON): ${JSON.stringify(missing.map(findingBrief))}`, "Return JSON {verdicts: [{id, verdict, evidence}]}.", dg].join("\n\n"), { label: `verify-findings-${plan}`, agentType: agentFor("finding_verifier", "finding-verifier"), role: "finding_verifier", readOnly: true, schema: VERDICT_SCHEMA });
     // GSDF-01: a quota, credit or auth failure is never retried.
     if (r.result === null && fatal(r.reason)) return { stop: owner("Review", `finding verifier of ${plan} failed: ${r.reason}`, { failure: classify(r.reason) }) };
     for (const v of r.result?.verdicts ?? []) if (missing.some((f) => f.id === v.id)) verdicts[v.id] = v.verdict;
+  }
+  // A second, independent verifier decides what the first left uncertain, before the owner is asked; it does not see
+  // the first verdict. Still uncertain stays unverified.
+  const unsure = gated.filter((f) => verdicts[f.id] === "uncertain");
+  if (unsure.length) {
+    metrics.secondVerifier += unsure.length;
+    const r = await call([`Verify these review findings of plan ${plan} independently, read-only: trace each trigger through the code and answer confirmed, refuted or uncertain with evidence.`, `Findings (JSON): ${JSON.stringify(unsure.map(findingBrief))}`, "Return JSON {verdicts: [{id, verdict, evidence}]}.", dg].join("\n\n"), { label: `verify-findings-${plan}-second`, agentType: agentFor("finding_verifier", "finding-verifier"), role: "finding_verifier", readOnly: true, schema: VERDICT_SCHEMA });
+    if (r.result === null && fatal(r.reason)) return { stop: owner("Review", `second finding verifier of ${plan} failed: ${r.reason}`, { failure: classify(r.reason) }) };
+    for (const v of r.result?.verdicts ?? []) if (unsure.some((f) => f.id === v.id) && v.verdict !== "uncertain") verdicts[v.id] = v.verdict;
   }
   for (const f of gated) f.verdict = verdicts[f.id] ?? "unverified";
   return {};
@@ -442,22 +465,37 @@ async function reviewPlan(t, waveId, codeOnly, scopeOverride) {
   const lenses = lensesFor(sc.scope ?? []);
   const record = { plan: t.plan, scope: sc.scope ?? [], excluded: sc.excluded ?? [], lenses: lenses.map((l) => l.name), codeOnly, findings: [], resolution: [] };
   if (record.scope.length) {
-    const prompt = [`Review plan ${t.plan} (${planPath(t.plan)}) at depth ${g.review_depth}. Review only these files: ${record.scope.join(", ")}.`, codeOnly ? "This code is not built yet (code-only review)." : "The wave is built and its tests are green.", `Lenses:\n${lenses.map((l) => `- ${l.name}: ${l.text}`).join("\n")}`, "Every finding carries trigger (the concrete input or sequence that makes it fail), likelihood (likely|possible|theoretical), confidence 0-100, impact, file and line.", `Return JSON {findings: [{id, severity (${SEVERITIES.join("|")}), trigger, likelihood, confidence, impact, file, line, description}]}.`, digestLine(`review:${t.plan}`, await digestOf({ files: record.scope }))].join("\n\n");
+    const changed = (await flow(["changed-lines", phaseDir], { plan: t.plan, files: record.scope })).json?.files ?? {};
+    const prompt = [
+      `Review plan ${t.plan} (${planPath(t.plan)}) at depth ${g.review_depth}. Review only these files: ${record.scope.join(", ")}.`,
+      `Lines this plan changed:\n${record.scope.map((p) => `- ${p}: ${rangeText(changed[p])}`).join("\n")}`,
+      codeOnly ? "This code is not built yet (code-only review)." : "The wave is built and its tests are green.",
+      `Lenses:\n${lenses.map((l) => `- ${l.name}: ${l.text}`).join("\n")}`,
+      "Every finding carries trigger (the concrete input or sequence that makes it fail), likelihood (likely|possible|theoretical), confidence 0-100, impact, file and line.",
+      "Set introduced true when this plan's change causes the defect, also on an unchanged line (a caller broken by a changed signature); false when the defect was there before the change. A defect outside the changed lines that the change did not cause is recorded as pre-existing and does not block.",
+      "Report one defect once: when the same defect occurs in several places, give it a class (a short name of the defect kind) and list every other place in the reviewed files as instances [{file, line}], so one fix covers all of them.",
+      `Return JSON {findings: [{id, severity (${SEVERITIES.join("|")}), trigger, likelihood, confidence, impact, file, line, description, introduced, class, instances}]}; an empty findings list when nothing needs fixing.`,
+      digestLine(`review:${t.plan}`, await digestOf({ files: record.scope })),
+    ].join("\n\n");
     let r = await call(prompt, { label: `review-${t.plan}`, agentType: agentFor("reviewer", "gsd-code-reviewer"), role: "reviewer", readOnly: true, schema: FINDINGS_SCHEMA });
     if (r.result === null && !fatal(r.reason)) r = await call(prompt, { label: `review-${t.plan}`, agentType: agentFor("reviewer", "gsd-code-reviewer"), role: "reviewer", readOnly: true, schema: FINDINGS_SCHEMA });
     if (r.result === null) return { stop: owner("Review", `reviewer of ${t.plan} returned nothing${r.reason ? ` (${r.reason})` : ""}`) };
     // CR-GSF-17: an unknown severity is a named blocking error, never a silent downgrade to non-blocking.
     const unknown = (r.result.findings ?? []).filter((f) => !SEVERITIES.includes(String(f.severity).toLowerCase()));
     if (unknown.length) return { stop: owner("Review", `reviewer of ${t.plan} returned unknown severities (${[...new Set(unknown.map((f) => f.severity))].join(", ")}), expected ${SEVERITIES.join("|")}`, { findings: unknown }) };
-    record.findings = (r.result.findings ?? []).map((f, i) => ({ id: f.id ?? `${t.plan}-F${i + 1}`, severity: String(f.severity).toLowerCase(), trigger: f.trigger ?? "", likelihood: f.likelihood ?? "", confidence: Number(f.confidence ?? 0), impact: f.impact ?? "", file: f.file ?? "", line: f.line ?? null, description: f.description ?? "", status: gateFinding(f), verdict: null }));
+    record.findings = (r.result.findings ?? []).map((f, i) => {
+      const kept = { id: f.id ?? `${t.plan}-F${i + 1}`, severity: String(f.severity).toLowerCase(), trigger: f.trigger ?? "", likelihood: f.likelihood ?? "", confidence: Number(f.confidence ?? 0), impact: f.impact ?? "", file: f.file ?? "", line: f.line ?? null, description: f.description ?? "", introduced: typeof f.introduced === "boolean" ? f.introduced : null, class: f.class ?? "", instances: Array.isArray(f.instances) ? f.instances.filter((x) => x && typeof x.file === "string") : [] };
+      return { ...kept, status: preExisting(kept, changed) ? "pre-existing" : gateFinding(f), verdict: null };
+    });
     const gated = record.findings.filter((f) => f.status === "gated");
     if (gated.length) {
       const vf = await verifyFindings(gated, t.plan);
       if (vf.stop) return vf;
     }
     const deferred = record.findings.filter((f) => f.status !== "gated");
-    if (deferred.length) await flow(["append", `${phaseDir}/deferred.md`], deferred.map((f) => `- ${f.id} (${f.severity}, ${f.status}) plan ${t.plan} ${f.file}${f.line ? `:${f.line}` : ""}: ${f.description} [reason: ${f.status === "downgraded" ? "missing trigger, confidence < 80 or theoretical" : "non-blocking severity"}]`).join("\n"));
+    if (deferred.length) await flow(["append", `${phaseDir}/deferred.md`], deferred.map((f) => `- ${f.id} (${f.severity}, ${f.status}) plan ${t.plan} ${f.file}${f.line ? `:${f.line}` : ""}: ${f.description} [reason: ${DEFER_REASON[f.status]}]`).join("\n"));
     metrics.deferred += deferred.length;
+    metrics.preExisting += deferred.filter((f) => f.status === "pre-existing").length;
   }
   for (const f of record.findings) if (f.verdict) metrics[f.verdict === "uncertain" ? "unverified" : f.verdict] = (metrics[f.verdict === "uncertain" ? "unverified" : f.verdict] ?? 0) + 1;
   const bad = await writeRecord(waveId, record);
@@ -486,7 +524,7 @@ async function resolutionCheck(reviews, waveId) {
   for (const rv of reviews) {
     const confirmed = rv.record.findings.filter((f) => f.verdict === "confirmed");
     if (!confirmed.length) continue;
-    const r = await call([`Resolution check of plan ${rv.record.plan}: decide for each finding below whether the current code resolves it. Review only these findings; raise no new ones.`, `Findings (JSON): ${JSON.stringify(confirmed.map(({ id, file, line, trigger, description }) => ({ id, file, line, trigger, description })))}`, "Return JSON {resolution: [{id, resolved, evidence}]}.", digestLine(`resolve:${rv.record.plan}`, await digestOf({ files: [...new Set([...rv.record.scope, ...findingFiles(confirmed)])] }))].join("\n\n"), { label: `resolve-${rv.record.plan}`, agentType: agentFor("reviewer", "gsd-code-reviewer"), role: "reviewer", readOnly: true, schema: RESOLUTION_SCHEMA });
+    const r = await call([`Resolution check of plan ${rv.record.plan}: decide for each finding below whether the current code resolves it; a finding with instances is resolved only when every instance is. Review only these findings; raise no new ones.`, `Findings (JSON): ${JSON.stringify(confirmed.map(findingBrief))}`, "Return JSON {resolution: [{id, resolved, evidence}]}.", digestLine(`resolve:${rv.record.plan}`, await digestOf({ files: [...new Set([...rv.record.scope, ...findingFiles(confirmed)])] }))].join("\n\n"), { label: `resolve-${rv.record.plan}`, agentType: agentFor("reviewer", "gsd-code-reviewer"), role: "reviewer", readOnly: true, schema: RESOLUTION_SCHEMA });
     if (r.result === null && fatal(r.reason)) return { stop: owner("Review", `resolution check of ${rv.record.plan} failed: ${r.reason}`, { failure: classify(r.reason) }) };
     rv.record.resolution = confirmed.map((f) => r.result?.resolution?.find((x) => x.id === f.id) ?? { id: f.id, resolved: false, evidence: "no answer" });
     for (const x of rv.record.resolution) x.resolved ? metrics.resolved++ : unresolved.push(x);

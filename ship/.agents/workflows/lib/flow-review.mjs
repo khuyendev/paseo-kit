@@ -4,11 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { readJsonIf, readText, writeJsonAtomic, writeTextAtomic } from "../../harness/lib/io.mjs";
 import { isInside, resolveInside, toSlash } from "../../harness/lib/paths.mjs";
+import { git } from "./flow-git.mjs";
 import { keyFiles } from "./flow-owns.mjs";
 
 const LOCKFILES = /(^|\/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|Cargo\.lock|poetry\.lock|Pipfile\.lock|uv\.lock|Gemfile\.lock|composer\.lock|go\.sum|[^/]+\.lock)$/;
 const SEVERITIES = ["critical", "high", "medium", "low", "info"];
-const STATUSES = ["gated", "downgraded", "deferred"];
+const STATUSES = ["gated", "downgraded", "deferred", "pre-existing"];
 const VERDICTS = ["confirmed", "refuted", "uncertain", "unverified", null];
 
 function normalize(root, p) {
@@ -65,6 +66,48 @@ export function reviewScope(root, phaseDir, { plan, files, summary, evaluation }
     return true;
   });
   return { plan, source, scope, excluded, log };
+}
+
+// New-side line ranges [start, end] of a `git diff -U0` text; a pure deletion marks the line it sits before.
+export function diffHunks(diff) {
+  const out = [];
+  for (const m of String(diff).matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) {
+    const start = Number(m[1]);
+    const count = m[2] === undefined ? 1 : Number(m[2]);
+    out.push(count === 0 ? [Math.max(1, start), Math.max(1, start)] : [start, start + count - 1]);
+  }
+  return out;
+}
+
+// The lines each scope file's change added or rewrote, for the pre-existing rule of the code review (owner decision
+// 2026-10-22, after the Claude Code team's review write-up: most repeat findings sat in code the change never touched).
+// "all" for a file git does not track yet; ranges from the uncommitted change, else from the plan's commit in
+// commits.json; null when git cannot say (no repository, no change found), which never marks a finding pre-existing.
+export function changedLines(root, phaseDir, { plan, files }) {
+  const dir = resolveInside(root, phaseDir);
+  const commits = readJsonIf(path.join(dir, "commits.json"), []) ?? [];
+  const planCommit = [...commits].reverse().find((c) => Array.isArray(c.plans?.[plan]));
+  const diff = (args) => {
+    const r = git(root, ["diff", "-U0", "--no-color", "--no-ext-diff", ...args], { allowFail: true });
+    return r.code === 0 ? diffHunks(r.out) : [];
+  };
+  const out = {};
+  for (const f of files ?? []) {
+    const p = normalize(root, f);
+    if (!p) continue;
+    if (git(root, ["rev-parse", "--is-inside-work-tree"], { allowFail: true }).code !== 0) {
+      out[p] = null;
+      continue;
+    }
+    if (git(root, ["ls-files", "--error-unmatch", "--", p], { allowFail: true }).code !== 0) {
+      out[p] = "all";
+      continue;
+    }
+    let ranges = diff(["HEAD", "--", p]);
+    if (!ranges.length && planCommit?.plans[plan].includes(p)) ranges = diff([`${planCommit.sha}^`, planCommit.sha, "--", p]);
+    out[p] = ranges.length ? ranges : null;
+  }
+  return { plan, files: out };
 }
 
 export function validateRecord(rec) {

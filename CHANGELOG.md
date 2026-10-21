@@ -6,6 +6,18 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Owner-approved review rules, 2026-10-22 (owner request after reading the Claude Code team's code-review write-up,
+  "chỉ làm review trước"): the code review of `gsd-execute` gets the lines each plan changed (new flow verb
+  `changed-lines`: uncommitted hunks, all of a new file, or the plan's commit) and marks a finding outside them, by more
+  than 3 lines, that the reviewer does not say the change caused (`introduced`) as `pre-existing`: recorded in
+  `deferred.md`, never verified, fixed or blocking. A finding names its defect `class` and every `instances` place, and
+  the verifier, the fixer and the resolution check see all of them. A second, independent `finding-verifier` decides
+  findings the first left uncertain before the owner is asked. `review-metrics.jsonl` adds `preExisting` and
+  `secondVerifier`. Prompt text: the reviewer prompt in `gsd-execute.js`, `finding-verifier.md`, the gsd-execute skill
+  and lens-writing rules in `kit-adapter.md` (what failure looks like, skipped paths, file-and-line evidence, capped
+  nits). Measured check: `tests/gsd-flows/review-rules.test.mjs` (6 tests) plus the full offline suite; not yet run on
+  a live phase, so the effect on review rounds is unmeasured.
+
 - Owner-approved Office plugin, 2026-10-21: `office` is a native port of habblaud's drawing code (MIT,
   `LICENSES/habblaud-MIT.txt`, commit in `NOTICE.md`) into a new read-only plugin, id `office`, that replaces
   swarm-map. Data comes only from the official Paseo API; the usage slot stays empty until the owner supplies the API;

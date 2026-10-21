@@ -71,6 +71,21 @@ array run without a shell from the code root (`["npm", "test"]`, never `"npm tes
 | other `gsd` keys | ADPT-13 | `execution_mode`, `isolation`, `commit_policy`, `branching`, `protected_branches`, `requirement_id_regex`, `research`, `plan_review`, `skeleton_lanes`, loop bounds, `debug`, `fixer`, `parallelization`, `review_depth`: set only what the project needs to differ |
 | `tiers` | CONF-11 | the shipped tiers are unconfigured; set `frontier`, `pro` and `standard` to `circle/<model>` with the owner's choice of models |
 
+Writing a review lens (`review_lenses[].text`; the rules of good review guides in the Claude Code team's review
+write-up, owner decision 2026-10-22). A lens is read on every review of the files it applies to, so it states what
+the reviewer cannot infer and nothing else:
+- What failure looks like in these files, in the project's terms: for docs "it states something false", for config
+  "it routes or enables the wrong thing", for a parser "it accepts input the format forbids". Not a generic list of
+  bug kinds; the kit lens `correctness` already covers those.
+- The paths or generated parts inside `applies_to` that the lens ignores, and why.
+- Evidence: a file and line that shows the failure, not a guess from a name.
+- No style, naming or nit findings unless the project asks for one kind; a lens that wants them caps them at a few
+  per review and keeps them below `medium`.
+- One lens per failure area; split a lens whose findings land on unrelated files.
+The review already marks findings outside the plan's changed lines as pre-existing (deferred, never blocking), asks
+for one finding per defect class with its instances, and sends uncertain verdicts to a second verifier; a lens does
+not repeat those rules.
+
 Example (a Node web service):
 
 ```json
