@@ -49,9 +49,10 @@ import { drawerModel } from "./drawer-model.ts";
 import { Drawer } from "./drawer.tsx";
 import { EMPTY_EFFECT_QUEUE, enqueueEffect, finishEffect, type EffectQueue } from "./effects.ts";
 import { buildBuilding } from "../shared/layout/building.ts";
-import { DOUBLE_PRESS_BEATS, FEED_REFRESH_BEATS, SEARCH_RESULTS_MAX, SIDEBAR_MAX_ROWS } from "./limits-panels.ts";
+import { DOUBLE_PRESS_BEATS, FEED_REFRESH_BEATS, NARROW_GAP_PX, NARROW_SCRIM_OPACITY, SEARCH_RESULTS_MAX, SIDEBAR_MAX_ROWS } from "./limits-panels.ts";
+import { feedHeight, layoutMode, sheetHeight, sidePanelWidth } from "./narrow.ts";
 import { EMPTY_FEED, feedDrafts, feedRows, pushFeed, type FeedState } from "./feed.ts";
-import { FeedPanel } from "./feed-panel.tsx";
+import { FeedBar, FeedPanel } from "./feed-panel.tsx";
 import { agentTarget, journeyFootAt, nextRequest, searchAgents } from "./hud.ts";
 import { SearchBox } from "./search.tsx";
 import { footPx, SHEET_POSE_GROUPS, type CharacterSheet } from "./life/frames.ts";
@@ -601,7 +602,30 @@ export function OfficeScreen(props: PluginScreenProps) {
     },
     [pushViewport],
   );
-  const onFocusProject = useCallback((row: ProjectRow) => moveCamera(row.target), [moveCamera]);
+  // Narrow layout (phones, client/narrow.ts): measured on the body under the top bar; the room list is an overlay that a picked
+  // room or agent closes, as on habblaud's phone layout.
+  const [body, setBody] = useState({ w: 0, h: 0 });
+  const [roomsOpen, setRoomsOpen] = useState(false);
+  const narrow = layoutMode(body.w) === "narrow";
+  const narrowRef = useRef(false);
+  narrowRef.current = narrow;
+  const onBodyLayout = useCallback((event: { nativeEvent?: { layout?: { width?: number; height?: number } } }) => {
+    const layout = event?.nativeEvent?.layout;
+    const w = numberOr(layout?.width, 0);
+    const h = numberOr(layout?.height, 0);
+    setBody((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
+  }, []);
+  // A room list left open in the narrow layout does not reappear after a switch to wide and back.
+  useEffect(() => {
+    if (!narrow) setRoomsOpen(false);
+  }, [narrow]);
+  const onFocusProject = useCallback(
+    (row: ProjectRow) => {
+      if (narrowRef.current) setRoomsOpen(false);
+      moveCamera(row.target);
+    },
+    [moveCamera],
+  );
   // Selects an agent and moves the camera to it (search results, feed lines, Next request).
   const focusAgent = useCallback(
     (agentId: string) => {
@@ -779,18 +803,68 @@ export function OfficeScreen(props: PluginScreenProps) {
   const drawer = drawerModel(snapshot, selectedAgentId, dayNow.getTime());
   const bar = topbarModel(visibleSnap, selectedAgentId, model.rooms.length);
   const feedLines = feedOpen ? feedRows(feed, hidden, beat.current) : [];
+  // The collapsed Activity bar of the narrow layout shows the newest visible line.
+  const latestFeed = narrow ? (feedLines[0] ?? feedRows(feed, hidden, beat.current)[0] ?? null) : null;
   const size = sceneSize(building.rect, zoom);
   const stateText = status.state === "failed" ? text("screenFailed") : status.state === "ready" ? (snapshot.projects.length === 0 ? text("sidebarEmpty") : null) : text("screenLoading");
 
+  const roomsPanel = (onPick: (agentId: string) => void) => (
+    <>
+      <SearchBox open={searchOpen} query={query} results={results} colors={colors} onOpen={onSearchOpen} onQuery={setQuery} onPick={onPick} />
+      <Sidebar list={projects} colors={colors} onToggle={onToggleProject} onShowAll={onShowAll} onHideAll={onHideAll} onFocus={onFocusProject} />
+    </>
+  );
+  const drawerView = drawer !== null ? <Drawer model={drawer} colors={colors} onClose={() => setSelectedAgentId(null)} following={followId !== null && followId === drawer.agentId} onFollow={onFollow} /> : null;
+  // Narrow: the details sheet covers the Activity bar while it is open (habblaud's phone layout shows one bottom panel at a time).
+  const narrowPanels = narrow ? (
+    <>
+      {drawerView === null ? (
+        <View testID="office-feed-dock" style={{ position: "absolute", left: NARROW_GAP_PX, right: NARROW_GAP_PX, bottom: NARROW_GAP_PX, gap: NARROW_GAP_PX }}>
+          {feedOpen ? (
+            <View style={{ height: feedHeight(body.h) }}>
+              <FeedPanel
+                rows={feedLines}
+                colors={colors}
+                full
+                onPick={(id) => {
+                  setFeedOpen(false);
+                  focusAgent(id);
+                }}
+              />
+            </View>
+          ) : null}
+          <FeedBar latest={latestFeed} open={feedOpen} colors={colors} onToggle={() => setFeedOpen((open) => !open)} />
+        </View>
+      ) : (
+        <View testID="office-sheet" style={{ position: "absolute", left: NARROW_GAP_PX, right: NARROW_GAP_PX, bottom: NARROW_GAP_PX, height: sheetHeight(body.h), borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface1, overflow: "hidden" }}>
+          {drawerView}
+        </View>
+      )}
+      {roomsOpen ? (
+        <View testID="office-rooms-overlay" style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0 }}>
+          <Pressable testID="office-scrim" accessibilityRole="button" accessibilityLabel={text("narrowCloseLabel")} onPress={() => setRoomsOpen(false)} style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, backgroundColor: colors.surface1, opacity: NARROW_SCRIM_OPACITY }} />
+          <View testID="office-rooms-panel" style={{ position: "absolute", left: NARROW_GAP_PX, top: NARROW_GAP_PX, bottom: NARROW_GAP_PX, width: sidePanelWidth(body.w), borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface1, overflow: "hidden" }}>
+            <View style={{ flexDirection: "row", justifyContent: "flex-end", padding: 4 }}>
+              <Pressable testID="office-rooms-close" accessibilityRole="button" accessibilityLabel={text("narrowCloseLabel")} onPress={() => setRoomsOpen(false)} hitSlop={8} style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: colors.surface2 }}>
+                <Text style={{ color: colors.foreground, fontSize: 14 }}>{text("narrowClose")}</Text>
+              </Pressable>
+            </View>
+            {roomsPanel((id) => {
+              setRoomsOpen(false);
+              focusAgent(id);
+            })}
+          </View>
+        </View>
+      ) : null}
+    </>
+  ) : null;
+
   return (
     <View style={{ flex: 1, flexDirection: "column", backgroundColor: colors.surface1 }}>
-      <TopBar model={bar} colors={colors} />
-      <View style={{ flex: 1, flexDirection: "row" }}>
-        <View style={{ width: SCENE_SIDEBAR_WIDTH_PX, borderRightWidth: 1, borderColor: colors.border }}>
-          <SearchBox open={searchOpen} query={query} results={results} colors={colors} onOpen={onSearchOpen} onQuery={setQuery} onPick={focusAgent} />
-          <Sidebar list={projects} colors={colors} onToggle={onToggleProject} onShowAll={onShowAll} onHideAll={onHideAll} onFocus={onFocusProject} />
-        </View>
-        <View style={{ flex: 1 }} onLayout={onLayout}>
+      <TopBar model={bar} colors={colors} compact={narrow} onMenu={() => setRoomsOpen(true)} />
+      <View testID="office-body" style={{ flex: 1, flexDirection: "row" }} onLayout={onBodyLayout}>
+        {narrow ? null : <View style={{ width: SCENE_SIDEBAR_WIDTH_PX, borderRightWidth: 1, borderColor: colors.border }}>{roomsPanel(focusAgent)}</View>}
+        <View testID="office-viewport" style={{ flex: 1 }} onLayout={onLayout}>
           <ScrollView ref={outer as never} onScroll={onOuterScroll} scrollEventThrottle={32}>
             <ScrollView ref={inner as never} horizontal onScroll={onInnerScroll} scrollEventThrottle={32}>
               <Scene
@@ -822,9 +896,11 @@ export function OfficeScreen(props: PluginScreenProps) {
             <Pressable testID="office-overview" accessibilityRole="button" accessibilityLabel={text("cameraOverview")} onPress={onOverview} style={{ height: SCENE_CONTROL_PX, paddingHorizontal: 8, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: colors.surface2 }}>
               <Text style={{ color: colors.foreground, fontSize: 12 }}>{text("cameraOverview")}</Text>
             </Pressable>
-            <Pressable testID="office-feed-toggle" accessibilityRole="button" accessibilityLabel={text("feedToggle")} accessibilityState={{ selected: feedOpen }} onPress={() => setFeedOpen((open) => !open)} style={{ height: SCENE_CONTROL_PX, paddingHorizontal: 8, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: feedOpen ? colors.accent : colors.surface2 }}>
-              <Text style={{ color: feedOpen ? colors.surface1 : colors.foreground, fontSize: 12 }}>{text("feedToggle")}</Text>
-            </Pressable>
+            {narrow ? null : (
+              <Pressable testID="office-feed-toggle" accessibilityRole="button" accessibilityLabel={text("feedToggle")} accessibilityState={{ selected: feedOpen }} onPress={() => setFeedOpen((open) => !open)} style={{ height: SCENE_CONTROL_PX, paddingHorizontal: 8, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: feedOpen ? colors.accent : colors.surface2 }}>
+                <Text style={{ color: feedOpen ? colors.surface1 : colors.foreground, fontSize: 12 }}>{text("feedToggle")}</Text>
+              </Pressable>
+            )}
             <Pressable testID="office-zoom-out" accessibilityRole="button" accessibilityLabel={text("sceneZoomOut")} onPress={() => changeZoom(-1)} style={{ width: SCENE_CONTROL_PX, height: SCENE_CONTROL_PX, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: colors.surface2 }}>
               <Text style={{ color: colors.foreground, fontSize: 14 }}>{text("sidebarGlyphOpen")}</Text>
             </Pressable>
@@ -835,14 +911,11 @@ export function OfficeScreen(props: PluginScreenProps) {
               <Text style={{ color: colors.foreground, fontSize: 14 }}>{text("sidebarGlyphClosed")}</Text>
             </Pressable>
           </View>
-          {feedOpen ? <FeedPanel rows={feedLines} colors={colors} onPick={focusAgent} /> : null}
+          {feedOpen && !narrow ? <FeedPanel rows={feedLines} colors={colors} onPick={focusAgent} /> : null}
           </View>
         </View>
-        {drawer !== null ? (
-          <View style={{ width: SCENE_DRAWER_WIDTH_PX, borderLeftWidth: 1, borderColor: colors.border }}>
-            <Drawer model={drawer} colors={colors} onClose={() => setSelectedAgentId(null)} following={followId !== null && followId === drawer.agentId} onFollow={onFollow} />
-          </View>
-        ) : null}
+        {drawerView !== null && !narrow ? <View style={{ width: SCENE_DRAWER_WIDTH_PX, borderLeftWidth: 1, borderColor: colors.border }}>{drawerView}</View> : null}
+        {narrowPanels}
       </View>
     </View>
   );

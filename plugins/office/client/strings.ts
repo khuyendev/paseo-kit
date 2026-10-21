@@ -115,6 +115,14 @@ export const STRINGS = {
   // HUD (step D): feed, search, camera controls and drawer stats.
   feedTitle: "Activity",
   feedToggle: "Feed",
+  // Narrow layout (phones): the room-list button, closing the floating panels, and the Activity bar glyphs.
+  narrowRoomsOpen: "☰",
+  narrowRoomsLabel: "Rooms and agents",
+  narrowClose: "✕",
+  narrowCloseLabel: "Close",
+  narrowFeedOpen: "▴",
+  narrowFeedClose: "▾",
+  narrowFeedLine: "{name}: {what}",
   feedEmpty: "Nothing yet",
   feedSpawn: "arrived",
   feedFinished: "finished its turn",

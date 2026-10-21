@@ -1188,7 +1188,7 @@ test("OFFC-14 screen checkboxes: an unchecked project leaves the scene and the c
 
 test("OFFC-14 screen camera: a scroll that changes the visible set requests the newly visible layers only", async () => {
   await withScreen(officeFixture(), async ({ host, handle }) => {
-    handle.find("View").find((n) => n.props.onLayout).props.onLayout({ nativeEvent: { layout: { width: 600, height: 400 } } });
+    byTestId(handle, "View", "office-viewport")[0].props.onLayout({ nativeEvent: { layout: { width: 600, height: 400 } } });
     await settle(handle, 4);
     byTestId(handle, "Pressable", "office-zoom-in")[0].props.onPress();
     await settle(handle, 6);
@@ -1974,5 +1974,110 @@ test("D screen: Overview fits the building at the smallest zoom; Follow from the
     pressCharacter(handle, 1);
     await settle(handle, 3);
     assert.equal(follow().props.accessibilityState.selected, true, "a double press follows the character");
+  });
+});
+
+// ---------------------------------------------------------------- mobile: the narrow layout (habblaud's phone layout)
+
+import { feedHeight, layoutMode, sheetHeight, sidePanelWidth } from "../../plugins/office/client/narrow.ts";
+import { NARROW_GAP_PX, NARROW_MAX_WIDTH_PX, NARROW_SIDE_MAX_PX } from "../../plugins/office/client/limits-panels.ts";
+
+const PHONE = { width: 390, height: 700 };
+const layBody = (handle, size) => byTestId(handle, "View", "office-body")[0].props.onLayout({ nativeEvent: { layout: size } });
+
+test("MOB-01 narrow layout: the breakpoint and the panel sizes", () => {
+  assert.equal(layoutMode(0), "wide", "an unmeasured screen keeps the first frame's layout");
+  assert.equal(layoutMode(Number.NaN), "wide");
+  assert.equal(layoutMode(PHONE.width), "narrow");
+  assert.equal(layoutMode(NARROW_MAX_WIDTH_PX), "narrow");
+  assert.equal(layoutMode(NARROW_MAX_WIDTH_PX + 1), "wide");
+  assert.equal(sidePanelWidth(320), 320 - NARROW_GAP_PX * 2, "a small phone: the screen less the gaps");
+  assert.equal(sidePanelWidth(PHONE.width), NARROW_SIDE_MAX_PX, "a common phone: the cap");
+  assert.equal(sheetHeight(PHONE.height), 406);
+  assert.equal(feedHeight(PHONE.height), 308);
+  assert.equal(sheetHeight(10), 0);
+  assert.equal(feedHeight(-5), 0);
+});
+
+test("MOB-02 screen narrow: the room list leaves the flow for an overlay that the scrim, the close button or a picked room closes", async () => {
+  await withScreen(officeFixture(), async ({ handle }) => {
+    const checks = () => byTestId(handle, "Pressable", "office-sidebar-check").length;
+    const overlay = () => byTestId(handle, "View", "office-rooms-overlay").length;
+    assert.equal(byTestId(handle, "Pressable", "office-rooms-open").length, 0, "wide by default: no room button");
+    assert.equal(checks(), 2);
+    layBody(handle, PHONE);
+    await settle(handle, 3);
+    assert.equal(checks(), 0, "the list column leaves the flow");
+    assert.equal(byTestId(handle, "Pressable", "office-feed-toggle").length, 0, "the Activity bar replaces the feed button");
+    byTestId(handle, "Pressable", "office-rooms-open")[0].props.onPress();
+    await settle(handle, 2);
+    assert.equal(byTestId(handle, "View", "office-rooms-panel")[0].props.style.width, sidePanelWidth(PHONE.width));
+    assert.equal(checks(), 2);
+    byTestId(handle, "Pressable", "office-sidebar-check")[0].props.onPress();
+    await settle(handle, 2);
+    assert.equal(overlay(), 1, "hiding a project keeps the list open");
+    byTestId(handle, "Pressable", "office-sidebar-check")[0].props.onPress();
+    byTestId(handle, "Pressable", "office-scrim")[0].props.onPress();
+    await settle(handle, 2);
+    assert.equal(overlay(), 0);
+    byTestId(handle, "Pressable", "office-rooms-open")[0].props.onPress();
+    await settle(handle, 2);
+    byTestId(handle, "Pressable", "office-rooms-close")[0].props.onPress();
+    await settle(handle, 2);
+    assert.equal(overlay(), 0);
+    byTestId(handle, "Pressable", "office-rooms-open")[0].props.onPress();
+    await settle(handle, 2);
+    byTestId(handle, "Pressable", "office-sidebar-row")[0].props.onPress();
+    await settle(handle, 2);
+    assert.equal(overlay(), 0, "a picked room closes the list");
+    byTestId(handle, "Pressable", "office-rooms-open")[0].props.onPress();
+    await settle(handle, 2);
+    layBody(handle, { width: 1200, height: 700 });
+    await settle(handle, 3);
+    assert.deepEqual([checks(), overlay(), byTestId(handle, "Pressable", "office-rooms-open").length], [2, 0, 0], "wide again: the column is back");
+    layBody(handle, PHONE);
+    await settle(handle, 3);
+    assert.equal(overlay(), 0, "the list left open does not come back");
+  });
+});
+
+test("MOB-03 screen narrow: the Activity bar shows the newest line and opens the feed; agent details open as a bottom sheet over it", async () => {
+  await withScreen(officeFixture(), async ({ handle, fake }) => {
+    layBody(handle, PHONE);
+    await settle(handle, 3);
+    const bar = () => byTestId(handle, "Pressable", "office-feed-bar");
+    assert.equal(bar().length, 1);
+    assert.ok(textsOf(handle).includes(str("feedEmpty")));
+    fake.emitAgent(agentUpsert(agentPayload("r1", { workspaceId: "w3", status: "running", pendingPermissions: [{ id: "q" }] })));
+    await settle(handle, 4);
+    assert.ok(textsOf(handle).includes(str("narrowFeedLine", { name: agentName("r1"), what: str("feedPermission") })));
+    bar()[0].props.onPress();
+    await settle(handle, 2);
+    assert.equal(byTestId(handle, "View", "office-feed")[0].props.style.flex, 1, "the open feed spans the screen");
+    assert.equal(bar()[0].props.accessibilityState.expanded, true);
+    byTestId(handle, "Pressable", "office-feed-row")[0].props.onPress();
+    await settle(handle, 3);
+    const sheet = byTestId(handle, "View", "office-sheet");
+    assert.equal(sheet.length, 1, "a picked line opens the agent as a sheet");
+    assert.equal(sheet[0].props.style.height, sheetHeight(PHONE.height));
+    assert.equal(byTestId(handle, "View", "office-feed-dock").length, 0, "one bottom panel at a time");
+    assert.ok(textsOf(handle).includes(agentName("r1")));
+    byTestId(handle, "Pressable", "office-drawer-close")[0].props.onPress();
+    await settle(handle, 2);
+    assert.equal(byTestId(handle, "View", "office-sheet").length, 0);
+    assert.equal(byTestId(handle, "View", "office-feed").length, 0, "picking a line closed the feed");
+    assert.equal(bar().length, 1);
+  });
+});
+
+test("MOB-04 screen narrow: the compact top bar keeps Working and shows the alarms only when set", async () => {
+  await withScreen(officeFixture(), async ({ handle }) => {
+    layBody(handle, PHONE);
+    await settle(handle, 3);
+    const texts = textsOf(handle);
+    assert.ok(texts.includes(str("counterRunning")));
+    assert.ok(texts.includes(str("counterAttention")), "one agent needs the owner in the fixture");
+    for (const key of ["counterRooms", "counterTotal", "counterSubAgents", "counterShells", "counterIdle", "counterError"]) assert.ok(!texts.includes(str(key)), key);
+    assert.equal(byTestId(handle, "View", "office-topbar")[0].props.style.flexWrap, "wrap");
   });
 });
