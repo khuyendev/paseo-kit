@@ -16,7 +16,7 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
   tested. The D-12 spike measurement was waived by the owner on 2026-10-21 and is still owed (`07-SPIKE.md`
   SPIKE_WAIVER: provisional ZOOM_LEVELS [2, 3], TINT_LEVELS 2); this entry claims no measurement, no visual check in
   the app and no spike pass. Measured check: `tsc --noEmit -p plugins/office` exit 0; `node --test
-  "tests/ui/*.test.mjs" "tests/machine/*.test.mjs"` 416 tests, 407 pass, 0 fail, 9 skipped (the retired OFFC-10 spike
+  "tests/ui/*.test.mjs" "tests/machine/*.test.mjs"` 432 tests, 423 pass, 0 fail, 9 skipped (the retired OFFC-10 spike
   tests), exit 0. Operator: run `paseo plugin ls`; if it lists swarm-map, run `paseo plugin remove swarm-map`.
   Supersession ledger: `.planning/requirements/office.md` (OFFC-23, OFFC-25, HARN-15, D-10). The owner delegated the
   approval and the wording of this entry to the main session on 2026-10-21 ("Tự chốt").
