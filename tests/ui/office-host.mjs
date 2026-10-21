@@ -562,9 +562,14 @@ export async function fakeHost(options = {}) {
   const { callPluginRpc } = await import(pathToFileURL(path.join(pluginDist, "rpc.js")).href);
 
   // Every payload crosses the wire as JSON in both directions, like the real host.
+  // options.rpcFail(method, input, callIndex): true makes the call throw like a transient transport failure (the call is still recorded).
+  const callCounts = new Map();
   const invoke = async (method, input) => {
     const payload = roundTrip(input);
     rpcCalls.push({ method, input: payload });
+    const callIndex = callCounts.get(method) ?? 0;
+    callCounts.set(method, callIndex + 1);
+    if (typeof options.rpcFail === "function" && options.rpcFail(method, payload, callIndex) === true) throw new Error("rpc failed");
     const handler = server.handlers.get(method);
     if (!handler) throw new Error(`no handler for ${method}`);
     return roundTrip(await handler(payload, { paseo }));
