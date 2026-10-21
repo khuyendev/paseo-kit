@@ -59,6 +59,16 @@ export const SCENE_MAX_WALKERS = 6;
 export const SCENE_WANDER_RETRY_BEATS = 4;
 // Beats a resolved handoff waits for its move sheet and a free walker slot before it is dropped.
 export const SCENE_HANDOFF_PENDING_BEATS = 12;
+// Beats between two retries of the wanted sprite keys whose office.sprites call failed.
+export const SCENE_SPRITE_RETRY_BEATS = 20;
+// Retry rounds one wanted set may spend.
+export const SCENE_SPRITE_RETRY_ROUNDS_MAX = 3;
+
+// True on the beats a retry round may run: a positive multiple of SCENE_SPRITE_RETRY_BEATS while rounds are left (R11-03).
+export function shouldRetrySprites(beat: number, roundsUsed: number): boolean {
+  if (!Number.isInteger(beat) || !Number.isInteger(roundsUsed) || beat <= 0 || roundsUsed < 0) return false;
+  return beat % SCENE_SPRITE_RETRY_BEATS === 0 && roundsUsed < SCENE_SPRITE_RETRY_ROUNDS_MAX;
+}
 
 const FNV_OFFSET = 0x811c9dc5;
 // Room variants stay below this: the room renderer bounds every floor seed (the variant plus a small offset) by one million.
@@ -537,6 +547,8 @@ export interface LifeDirector {
   step(characters: readonly LifeCharacter[], beat: number): LifeChanges;
   handoff(request: { childId: string; parentId: string }, characters: readonly LifeCharacter[], beat: number): LifeChanges;
   finished(agentId: string, beat: number): LifeChanges;
+  // Swaps the layout (R11-02): every agent keeps its hidden, arrival and sleep state; the journeys of the old layout end and are returned as cancels.
+  relayout(building: BuildingLayout): LifeChanges;
   // True while the character is not on screen: after its departure and before its arrival starts.
   // An agent the director has not seen yet counts as gone only when its status is initializing.
   isGone(agentId: string, status?: AgentStatus): boolean;
@@ -559,11 +571,13 @@ interface Entry {
 const emptyChanges = (): LifeChanges => ({ starts: [], cancels: [], gone: [] });
 const beatsOf = (ms: number): number => Math.max(1, Math.ceil(ms / SCENE_BEAT_MS));
 
-export function createLifeDirector(building: BuildingLayout): LifeDirector {
-  const index: SpotIndex = indexSpots(building);
+export function createLifeDirector(initial: BuildingLayout): LifeDirector {
+  // The current layout and what is derived from it; relayout replaces them together.
+  let building = initial;
+  let index: SpotIndex = indexSpots(building);
   let ledger: SpotLedger = createSpotLedger();
-  const fronts = elevatorFronts(building);
-  const schedule = ElevatorSchedule(Math.max(1, fronts.length));
+  let fronts = elevatorFronts(building);
+  let schedule: ElevatorSchedule = ElevatorSchedule(Math.max(1, fronts.length));
   const entries = new Map<string, Entry>();
   let active = 0;
 
@@ -751,6 +765,8 @@ export function createLifeDirector(building: BuildingLayout): LifeDirector {
     if (kind === "departure") {
       entry.hidden = true;
       changes.gone.push(agentId);
+      // The status left closed during the walk: the agent comes back by elevator (R11-01).
+      if (entry.status !== "closed" && entry.arrivalDue === null && fronts.length > 0) scheduleArrival(entry, beat);
       return changes;
     }
     if (kind === "excursion" || kind === "hangout") {
@@ -761,10 +777,36 @@ export function createLifeDirector(building: BuildingLayout): LifeDirector {
     return changes;
   }
 
+  function relayout(next: BuildingLayout): LifeChanges {
+    const changes = emptyChanges();
+    if (next === building) return changes;
+    building = next;
+    index = indexSpots(building);
+    fronts = elevatorFronts(building);
+    schedule = ElevatorSchedule(Math.max(1, fronts.length));
+    ledger = createSpotLedger();
+    for (const [id, entry] of entries) {
+      if (entry.journey !== null) {
+        entry.journey = null;
+        changes.cancels.push(id);
+      }
+      if (fronts.length === 0) {
+        // Neither an arrival nor a departure can run without an elevator: every hidden agent is shown again.
+        entry.hidden = false;
+        entry.arrivalDue = null;
+      } else if (entry.arrivalDue !== null) {
+        entry.arrivalFront = Math.min(entry.arrivalFront, fronts.length - 1);
+      }
+    }
+    active = 0;
+    return changes;
+  }
+
   return {
     step,
     handoff,
     finished,
+    relayout,
     isGone(agentId, status) {
       const entry = entries.get(agentId);
       return entry ? entry.hidden : status === "initializing" && fronts.length > 0;

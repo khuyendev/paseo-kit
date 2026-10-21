@@ -1280,3 +1280,447 @@ test("OFFC-10 registration: one office screen and sidebar item, every cleanup ru
   host.dispose();
   assert.ok(host.cleanups.every((c) => c.ran), JSON.stringify(host.cleanups));
 });
+
+// ---------------------------------------------------------------- gap plan 07-15: reopen, retry, relayout
+
+const { createWalkGrid, BLOCKED } = await import("../../plugins/office/shared/path/grid.ts");
+const { handoffJourney } = await import("../../plugins/office/client/life/journey.ts");
+const { createSpriteStore } = await import("../../plugins/office/client/sprite-store.ts");
+// The plan fixes these at 20 and 3; the fallback keeps the screen tests meaningful before the constants exist.
+const RETRY_BEATS = CAM.SCENE_SPRITE_RETRY_BEATS ?? 20;
+const RETRY_ROUNDS = CAM.SCENE_SPRITE_RETRY_ROUNDS_MAX ?? 3;
+const tileKey = (t) => `${t.x},${t.y}`;
+const frontKeys = (building) => elevatorFronts(building).map(tileKey);
+const LATER = "2026-10-20T10:00:09.000Z";
+
+// Steps a director from one beat to another over one character list and returns the starts with their beat.
+function runBeats(dir, characters, from, to) {
+  const out = [];
+  for (let beat = from; beat <= to; beat++) for (const s of dir.step(characters, beat).starts) out.push({ ...s, beat });
+  return out;
+}
+
+// Steps until the agent's departure starts and returns that beat (null when it never does).
+function departureBeat(dir, characters, agentId) {
+  for (let beat = 0; beat <= CAM.SCENE_SLEEP_BEATS + 4; beat++) {
+    if (dir.step(characters(), beat).starts.some((s) => s.agentId === agentId && s.kind === "departure")) return beat;
+  }
+  return null;
+}
+
+// The same layout under a new building object with its first elevator front blocked, so the fronts move.
+function blockedFront(building) {
+  const grid = createWalkGrid(building.grid.w, building.grid.h, building.grid.version);
+  grid.cells.set(building.grid.cells);
+  const [first] = elevatorFronts(building);
+  grid.set(first.x, first.y, BLOCKED);
+  return { ...building, grid };
+}
+const noElevators = (building) => ({ ...building, areas: building.areas.map((a) => (a.kind === "reception" ? { ...a, spots: a.spots.filter((s) => s.kind !== "elevator") } : a)) });
+const withoutMove = (characters) => characters.map((c) => ({ ...c, ready: new Set([...c.ready].filter((g) => g !== CAM.MOVE_GROUP)) }));
+
+test("OFFC-13 life reopen: a closed agent that starts work during its departure walk arrives again by elevator", () => {
+  const { building, characters } = lifeScene({ c1: "closed", r1: "running" });
+  const dir = CAM.createLifeDirector(building);
+  const at = departureBeat(dir, characters, "c1");
+  assert.ok(at !== null, "the departure starts");
+  const reopened = characters({ c1: "running" });
+  dir.step(reopened, at + 1);
+  assert.equal(dir.journeyOf("c1"), "departure", "the walk keeps going");
+  assert.deepEqual(dir.finished("c1", at + 2).gone, ["c1"]);
+  assert.equal(dir.isGone("c1"), true);
+  const back = runBeats(dir, reopened, at + 3, at + 40).filter((s) => s.agentId === "c1");
+  assert.deepEqual(back.map((s) => s.kind), ["arrival"], "exactly one arrival");
+  assert.ok(frontKeys(building).includes(tileKey(back[0].journey.startTile)));
+  assert.equal(dir.isGone("c1"), false);
+});
+
+test("OFFC-13 life reopen: a closed agent that stays closed is hidden at the end of its walk and never comes back", () => {
+  const { building, characters } = lifeScene({ c1: "closed", r1: "running" });
+  const dir = CAM.createLifeDirector(building);
+  const at = departureBeat(dir, characters, "c1");
+  assert.deepEqual(dir.finished("c1", at + 1).gone, ["c1"]);
+  assert.deepEqual(runBeats(dir, characters(), at + 2, at + 40).filter((s) => s.agentId === "c1"), []);
+  assert.equal(dir.isGone("c1"), true);
+});
+
+test("OFFC-13 life reopen: a status that leaves closed after the walk ended schedules exactly one arrival", () => {
+  const { building, characters } = lifeScene({ c1: "closed", r1: "running" });
+  const dir = CAM.createLifeDirector(building);
+  const at = departureBeat(dir, characters, "c1");
+  dir.finished("c1", at + 1);
+  const back = runBeats(dir, characters({ c1: "idle" }), at + 2, at + 40).filter((s) => s.agentId === "c1");
+  assert.deepEqual(back.map((s) => s.kind), ["arrival"]);
+  assert.equal(dir.isGone("c1"), false);
+});
+
+// A probe that also hands the test the host's Animated, so walks can be held and finished by hand.
+function lifeProbe() {
+  const dir = makeTempDir("ui office life probe ");
+  const file = path.join(dir, "probe.tsx");
+  const clocks = JSON.stringify(path.join(PLUGIN_DIR, "client", "clocks.ts"));
+  fs.writeFileSync(file, `import { Animated } from "react-native";\nimport { useClock } from ${clocks};\nexport function Probe() { globalThis.__officeClocks = useClock(); globalThis.__officeAnimated = Animated; return null; }\n`);
+  return file;
+}
+
+// The fake host never ends a timed animation; this holds every one started from now on until finish() completes it.
+function holdWalks() {
+  const animated = globalThis.__officeAnimated;
+  const { timing, delay } = animated;
+  const held = [];
+  const hold = (handle, complete, ms) => {
+    let stopped = false;
+    return {
+      ...handle,
+      start(callback) {
+        if (ms === 0) return handle.start(callback);
+        held.push(() => {
+          if (stopped) return;
+          complete();
+          callback?.({ finished: true });
+        });
+      },
+      stop() {
+        stopped = true;
+        handle.stop();
+      },
+    };
+  };
+  animated.timing = (value, config) => hold(timing(value, config), () => value.setValue(config.toValue), config?.duration ?? 500);
+  animated.delay = (ms) => hold(delay(ms), () => undefined, ms);
+  return {
+    count: () => held.length,
+    finish() {
+      for (let round = 0; round < 200 && held.length > 0; round++) for (const done of held.splice(0)) done();
+    },
+    restore() {
+      animated.timing = timing;
+      animated.delay = delay;
+    },
+  };
+}
+
+async function withLifeScreen(fake, hostOptions, body) {
+  const host = await fakeHost({ paseo: fake, ...hostOptions });
+  host.mountModule(lifeProbe(), "Probe", {});
+  const handle = host.mount("office");
+  try {
+    await settle(handle, 10);
+    await body({ host, handle, fake });
+  } finally {
+    host.dispose();
+  }
+}
+
+const pairFixture = () =>
+  fakePaseo({
+    agents: [agentPayload("clo", { workspaceId: "w1", status: "closed" }), agentPayload("run", { workspaceId: "w1", status: "running" })],
+    workspaceEntries: [workspacePayload("w1", { projectId: "p1" })],
+    projectEntries: [projectPayload("p1")],
+  });
+
+// Lets the closed agent depart, runs `during` while its walk is in flight, ends the walks, and returns the drawn characters.
+async function departureRun(during, after = async () => undefined) {
+  let shown = null;
+  await withLifeScreen(pairFixture(), {}, async ({ handle, fake }) => {
+    assert.equal(characterNodes(handle).length, 2, "both agents are drawn");
+    const walks = holdWalks();
+    try {
+      beats(CAM.SCENE_SLEEP_BEATS + 2);
+      await settle(handle, 4);
+      assert.ok(walks.count() > 0, "the departure walk runs");
+      await during({ handle, fake });
+      walks.finish();
+      await settle(handle, 4);
+      beats(12);
+      await settle(handle, 6);
+      await after({ handle, fake, walks });
+      shown = characterNodes(handle).length;
+    } finally {
+      walks.restore();
+    }
+  });
+  return shown;
+}
+
+test("OFFC-13 screen reopen: an agent that reopens during its departure walk is drawn again, one that stays closed is not", async () => {
+  assert.equal(await departureRun(async () => undefined), 1, "control: the closed agent stays gone");
+  const reopen = async ({ handle, fake }) => {
+    fake.emitAgent(agentUpsert(agentPayload("clo", { workspaceId: "w1", status: "running", updatedAt: LATER })));
+    await settle(handle, 4);
+  };
+  assert.equal(await departureRun(reopen), 2, "the reopened agent is drawn again");
+});
+
+test("OFFC-08 retry rule: one round every SCENE_SPRITE_RETRY_BEATS beats, at most SCENE_SPRITE_RETRY_ROUNDS_MAX rounds", () => {
+  assert.equal(CAM.SCENE_SPRITE_RETRY_BEATS, 20);
+  assert.equal(CAM.SCENE_SPRITE_RETRY_ROUNDS_MAX, 3);
+  const every = CAM.SCENE_SPRITE_RETRY_BEATS;
+  const max = CAM.SCENE_SPRITE_RETRY_ROUNDS_MAX;
+  assert.equal(CAM.shouldRetrySprites(every, 0), true);
+  assert.equal(CAM.shouldRetrySprites(every * 3, max - 1), true);
+  for (const [beat, rounds] of [[0, 0], [every - 1, 0], [every + 1, 0], [every, max], [every, max + 1], [-every, 0], [every, -1], [every + 0.5, 0], [every, 0.5], [NaN, 0], [every, NaN], [Infinity, 0]]) {
+    assert.equal(CAM.shouldRetrySprites(beat, rounds), false, `${beat} ${rounds}`);
+  }
+});
+
+test("OFFC-08 retry rule: a final failure costs no round and is never asked again, a transient one is (store level, as the screen applies it)", async () => {
+  // The fake host can only make a call throw (call_failed), so the final failure comes from the real handler's render_failed.
+  const good = CAM.characterSheetKey("agent-a", 0, 2);
+  const bad = "room-layer:room-s32-q0-n:-:2:0";
+  const handle = handler();
+  const asked = [];
+  let calls = 0;
+  const store = createSpriteStore(async ({ keys }) => {
+    asked.push(...keys);
+    calls++;
+    if (calls === 1) throw new Error("rpc failed");
+    return handle({ keys });
+  });
+  const keys = [good, bad];
+  store.request(keys);
+  await store.settle();
+  assert.deepEqual([store.get(good).code, store.get(bad).code], ["call_failed", "call_failed"]);
+  let rounds = 0;
+  for (let beat = 1; beat <= RETRY_BEATS * (RETRY_ROUNDS + 3); beat++) {
+    const transient = keys.some((k) => store.get(k)?.state === "failed" && store.get(k).code === "call_failed");
+    if (CAM.shouldRetrySprites(beat, rounds) && transient) {
+      store.retry(keys);
+      rounds++;
+      await store.settle();
+    }
+  }
+  assert.equal(rounds, 1, "only the round that found a call_failed key");
+  assert.equal(store.get(good).state, "ready");
+  assert.equal(store.get(bad).code, "render_failed");
+  assert.equal(asked.filter((k) => k === bad).length, 2, "the final failure is never asked again");
+  store.dispose();
+});
+
+const runningFixture = () =>
+  fakePaseo({
+    agents: [agentPayload("ra", { workspaceId: "w1", status: "running" }), agentPayload("rb", { workspaceId: "w1", status: "running" })],
+    workspaceEntries: [workspacePayload("w1", { projectId: "p1" })],
+    projectEntries: [projectPayload("p1")],
+  });
+const spriteCalls = (host) => host.rpcCalls.filter((c) => c.method === "office.sprites");
+const imagesOf = (handle) => handle.find("Image").length + handle.find("Animated.Image").length;
+// Fires the beats of whole retry periods, letting the calls of each period settle.
+async function retryPeriods(handle, periods) {
+  for (let i = 0; i < periods; i++) {
+    beats(RETRY_BEATS);
+    await settle(handle, 4);
+  }
+}
+
+test("OFFC-08 screen retry: a key whose office.sprites call failed is asked again on a slow beat and then drawn", async () => {
+  let healthy = null;
+  await withLifeScreen(runningFixture(), {}, async ({ handle }) => {
+    await retryPeriods(handle, 1);
+    healthy = imagesOf(handle);
+  });
+  await withLifeScreen(runningFixture(), { rpcFail: (method, _input, index) => method === "office.sprites" && index === 0 }, async ({ host, handle }) => {
+    const first = spriteCalls(host)[0].input.keys;
+    const before = spriteCalls(host).length;
+    assert.ok(imagesOf(handle) < healthy, "the failed call leaves sprites blank");
+    await retryPeriods(handle, 1);
+    const later = spriteCalls(host).slice(before).flatMap((c) => c.input.keys);
+    assert.deepEqual(first.filter((k) => !later.includes(k)), [], "every key of the failed call is asked again");
+    assert.equal(imagesOf(handle), healthy, "the layers and characters of that call appear");
+  });
+});
+
+test("OFFC-08 screen retry: a persistent failure is asked again at most SCENE_SPRITE_RETRY_ROUNDS_MAX rounds per wanted set", async () => {
+  await withLifeScreen(runningFixture(), { rpcFail: (method) => method === "office.sprites" }, async ({ host, handle }) => {
+    const first = spriteCalls(host).length;
+    await retryPeriods(handle, RETRY_ROUNDS + 3);
+    const spent = spriteCalls(host).length;
+    assert.ok(spent > first, "failed keys are asked again");
+    assert.ok(spent <= first * (1 + RETRY_ROUNDS), `${spent} calls for ${first} first calls`);
+    await retryPeriods(handle, 3);
+    assert.equal(spriteCalls(host).length, spent, "no call after the last round");
+  });
+});
+
+test("OFFC-08 screen retry: with every call succeeding, retry beats make no office.sprites call", async () => {
+  await withLifeScreen(runningFixture(), {}, async ({ host, handle }) => {
+    const first = spriteCalls(host).length;
+    await retryPeriods(handle, RETRY_ROUNDS + 2);
+    assert.equal(spriteCalls(host).length, first);
+  });
+});
+
+test("OFFC-08 screen retry: a new wanted set (a zoom) restores the retry rounds", async () => {
+  await withLifeScreen(runningFixture(), { rpcFail: (method) => method === "office.sprites" }, async ({ host, handle }) => {
+    await retryPeriods(handle, RETRY_ROUNDS + 2);
+    const spent = spriteCalls(host).length;
+    byTestId(handle, "Pressable", "office-zoom-in")[0].props.onPress();
+    await settle(handle, 6);
+    const zoomed = spriteCalls(host).length;
+    assert.ok(zoomed > spent, "the zoom asks its new keys");
+    await retryPeriods(handle, 2);
+    assert.ok(spriteCalls(host).length > zoomed, "the new wanted set is retried again");
+  });
+});
+
+// A model with three agents and, optionally, a second project room; its building and characters by status.
+function relayoutScene(extraRoom) {
+  const list = [drawn("c1"), drawn("s1"), drawn("r1")];
+  const rooms = [roomOf("p1", [cluster("w1", list)])];
+  if (extraRoom) rooms.push(roomOf("p2", [cluster("w2", [drawn("x1")])]));
+  const model = modelOf(rooms);
+  const building = layoutOf(model);
+  const placement = CAM.placeScene(building, model);
+  const characters = (statuses) =>
+    placement.seats
+      .filter((seat) => statuses[seat.agentId])
+      .map((seat) => ({ agentId: seat.agentId, seat: { tile: seat.tile, dir: seat.dir }, status: statuses[seat.agentId], choice: poseFor(agentView(seat.agentId, { status: statuses[seat.agentId] })), ready: new Set([0, 1, 2]) }));
+  return { building, characters };
+}
+
+test("OFFC-13 life relayout: a departed agent stays gone and a sleeping agent keeps its sleep clock across a new building", () => {
+  const one = relayoutScene(false);
+  const two = relayoutScene(true);
+  assert.ok(two.building.areas.length > one.building.areas.length, "the second building has one more project room");
+  const run = (relayoutAt) => {
+    const dir = CAM.createLifeDirector(one.building);
+    let scene = one;
+    const log = [];
+    for (let beat = 0; beat <= 40; beat++) {
+      if (beat === relayoutAt) {
+        const changes = dir.relayout(two.building);
+        assert.deepEqual(changes.starts, []);
+        scene = two;
+      }
+      const statuses = { c1: "closed", s1: beat >= 12 ? "closed" : "running", r1: "running" };
+      for (const s of dir.step(scene.characters(statuses), beat).starts) {
+        log.push({ agentId: s.agentId, kind: s.kind, beat });
+        if (s.agentId === "c1" && s.kind === "departure") dir.finished("c1", beat);
+      }
+    }
+    return { dir, log };
+  };
+  const plain = run(null);
+  const moved = run(14);
+  assert.ok(moved.log.some((s) => s.agentId === "c1" && s.kind === "departure" && s.beat < 14), "c1 departed before the relayout");
+  assert.equal(moved.dir.isGone("c1"), true, "the departed agent stays gone");
+  assert.deepEqual(moved.log.filter((s) => s.agentId === "c1" && s.kind === "arrival"), []);
+  const sleeper = (r) => r.log.find((s) => s.agentId === "s1" && s.kind === "departure")?.beat;
+  assert.ok(sleeper(plain) !== undefined);
+  assert.equal(sleeper(moved), sleeper(plain), "the sleeper departs on the same beat");
+});
+
+test("OFFC-13 life relayout: a pending arrival keeps its schedule and arrives on an elevator of the new building", () => {
+  const { building, characters, placement } = lifeScene({ n1: "initializing", r1: "running" });
+  const moved = blockedFront(building);
+  assert.notDeepEqual(frontKeys(moved), frontKeys(building), "the fronts move");
+  const dir = CAM.createLifeDirector(building);
+  dir.step(withoutMove(characters()), 0);
+  assert.equal(dir.isGone("n1"), true);
+  assert.deepEqual(dir.relayout(moved).starts, []);
+  assert.equal(dir.isGone("n1"), true, "still hidden with its arrival due");
+  const arrivals = runBeats(dir, characters(), 1, 30).filter((s) => s.agentId === "n1");
+  assert.deepEqual(arrivals.map((s) => s.kind), ["arrival"]);
+  assert.ok(arrivals[0].beat <= 2, `arrives on beat ${arrivals[0].beat}`);
+  assert.ok(frontKeys(moved).includes(tileKey(arrivals[0].journey.startTile)));
+  assert.deepEqual(arrivals[0].journey.endTile, placement.seats.find((s) => s.agentId === "n1").tile);
+  // A handoff started after the relayout begins at the child's seat and is computed on the new building.
+  const fam = lifeScene({ parent: "running", child: "running" }, new Set([0, 1, 2]), { child: "parent" });
+  const famMoved = blockedFront(fam.building);
+  const d2 = CAM.createLifeDirector(fam.building);
+  d2.step(fam.characters(), 0);
+  d2.relayout(famMoved);
+  const started = d2.handoff({ childId: "child", parentId: "parent" }, fam.characters(), 1).starts;
+  assert.equal(started.length, 1);
+  const seat = (id) => fam.placement.seats.find((s) => s.agentId === id);
+  assert.deepEqual(started[0].journey.startTile, seat("child").tile);
+  assert.deepEqual(started[0].journey, handoffJourney(famMoved, seat("child").tile, seat("parent").tile, { homeDir: seat("child").dir }));
+});
+
+test("OFFC-13 life relayout: running arrivals, departures, excursions, hangouts and handoffs end once and free every walker slot", () => {
+  const check = (dir, building, label) => {
+    const kinds = new Map();
+    for (const id of ["a1", "c1", "child", ...Array.from({ length: 12 }, (_, i) => `g${i}`)]) if (dir.journeyOf(id)) kinds.set(id, dir.journeyOf(id));
+    const changes = dir.relayout({ ...building });
+    assert.deepEqual([...changes.cancels].sort(), [...kinds.keys()].sort(), `${label}: each running journey ends once`);
+    for (const id of kinds.keys()) assert.equal(dir.journeyOf(id), null, `${label}: ${id}`);
+    return kinds;
+  };
+  // arrival
+  const a = lifeScene({ a1: "initializing" });
+  const da = CAM.createLifeDirector(a.building);
+  runBeats(da, a.characters(), 0, 3);
+  assert.deepEqual([...check(da, a.building, "arrival").values()], ["arrival"]);
+  // departure
+  const c = lifeScene({ c1: "closed" });
+  const dc = CAM.createLifeDirector(c.building);
+  departureBeat(dc, c.characters, "c1");
+  assert.deepEqual([...check(dc, c.building, "departure").values()], ["departure"]);
+  // handoff
+  const h = lifeScene({ parent: "running", child: "running" }, new Set([0, 1, 2]), { child: "parent" });
+  const dh = CAM.createLifeDirector(h.building);
+  dh.step(h.characters(), 0);
+  dh.handoff({ childId: "child", parentId: "parent" }, h.characters(), 1);
+  assert.deepEqual([...check(dh, h.building, "handoff").values()], ["handoff"]);
+  // excursions and hangouts up to the walker cap, none finished
+  const ids = Array.from({ length: 12 }, (_, i) => `g${i}`);
+  const g = lifeScene(Object.fromEntries(ids.map((id) => [id, "idle"])));
+  const dg = CAM.createLifeDirector(g.building);
+  const seen = new Set();
+  let beat = 0;
+  let running = 0;
+  for (; beat < 800 && !(running === CAM.SCENE_MAX_WALKERS && seen.has("hangout") && seen.has("excursion")); beat++) {
+    for (const s of dg.step(g.characters(), beat).starts) {
+      seen.add(s.kind);
+      running++;
+    }
+    if (running === CAM.SCENE_MAX_WALKERS && !(seen.has("hangout") && seen.has("excursion"))) {
+      for (const id of ids) if (dg.journeyOf(id)) dg.finished(id, beat);
+      running = 0;
+    }
+  }
+  assert.equal(running, CAM.SCENE_MAX_WALKERS, "the walker cap is reached");
+  assert.ok(seen.has("hangout") && seen.has("excursion"), [...seen].join(","));
+  assert.equal(dg.step(g.characters(), beat).starts.length, 0, "no slot is free before the relayout");
+  const ended = check(dg, g.building, "outings");
+  assert.equal(ended.size, CAM.SCENE_MAX_WALKERS);
+  const next = runBeats(dg, g.characters(), beat + 1, beat + 1);
+  assert.ok(next.length > 0 && next.length <= CAM.SCENE_MAX_WALKERS, `${next.length} journeys start after the relayout`);
+});
+
+test("OFFC-13 life relayout: the same building object changes nothing", () => {
+  const { building, characters } = lifeScene({ a1: "initializing", r1: "running" });
+  const dir = CAM.createLifeDirector(building);
+  runBeats(dir, characters(), 0, 3);
+  assert.equal(dir.journeyOf("a1"), "arrival");
+  assert.deepEqual(dir.relayout(building), { starts: [], cancels: [], gone: [] });
+  assert.equal(dir.journeyOf("a1"), "arrival");
+});
+
+test("OFFC-13 life relayout: a building without elevators shows every hidden agent and schedules no arrival", () => {
+  const { building, characters } = lifeScene({ n1: "initializing", c1: "closed", r1: "running" });
+  const flat = noElevators(building);
+  assert.equal(elevatorFronts(flat).length, 0);
+  const dir = CAM.createLifeDirector(building);
+  dir.step(withoutMove(characters()), 0);
+  const at = departureBeat(dir, () => withoutMove(characters()).map((c) => (c.agentId === "c1" ? { ...c, ready: new Set([0, 1, 2]) } : c)), "c1");
+  assert.ok(at !== null);
+  dir.finished("c1", at + 1);
+  assert.equal(dir.isGone("n1"), true);
+  assert.equal(dir.isGone("c1"), true);
+  dir.relayout(flat);
+  assert.equal(dir.isGone("n1"), false);
+  assert.equal(dir.isGone("c1"), false);
+  assert.deepEqual(runBeats(dir, characters(), at + 2, at + 30).filter((s) => s.kind === "arrival"), []);
+});
+
+test("OFFC-13 screen relayout: a new project room keeps a departed agent hidden", async () => {
+  const addProject = async ({ handle, fake }) => {
+    fake.emitProject({ kind: "upsert", project: projectPayload("p2") });
+    fake.emitWorkspace({ kind: "upsert", workspace: workspacePayload("w2", { projectId: "p2" }) });
+    fake.emitAgent(agentUpsert(agentPayload("new", { workspaceId: "w2", status: "running" })));
+    await settle(handle, 8);
+  };
+  // The departed agent is gone; a new project, workspace and agent change the building: the new agent appears, the departed one does not.
+  assert.equal(await departureRun(async () => undefined, addProject), 2);
+});

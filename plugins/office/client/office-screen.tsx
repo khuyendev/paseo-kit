@@ -31,6 +31,7 @@ import {
   roomInputsOf,
   sceneSize,
   sheetZoomFor,
+  shouldRetrySprites,
   tintIndices,
   visibleLayers,
   wantedGroups,
@@ -180,8 +181,13 @@ export function OfficeScreen(props: PluginScreenProps) {
   const tints = useMemo(() => tintIndices(day.position, TINT_LEVELS), [day.position]);
   const visible = useMemo(() => visibleLayers(building, zoom, viewport, SCENE_CULL_MARGIN_PX), [building, zoom, viewport]);
 
-  // ---- life: one director and its running journeys per building
-  const life = useMemo(() => ({ director: createLifeDirector(building) as LifeDirector, journeys: new Map<string, Journey>() }), [building]);
+  // ---- life: one director and its running journeys per mount; a new building reaches the director through relayout (R11-02)
+  const lifeHolder = useRef<{ director: LifeDirector; journeys: Map<string, Journey> } | null>(null);
+  if (lifeHolder.current === null) {
+    const director = createLifeDirector(building);
+    lifeHolder.current = { director, journeys: new Map<string, Journey>() };
+  }
+  const life = lifeHolder.current;
   const [, setLifeVersion] = useState(0);
   const [pendingVersion, setPendingVersion] = useState(0);
   const pending = useRef<{ childId: string; parentId: string; age: number }[]>([]);
@@ -227,7 +233,10 @@ export function OfficeScreen(props: PluginScreenProps) {
     return keys;
   }, [layerKeys, characterKeys]);
   const wantedSignature = wantedKeys.join("\n");
+  // Retry rounds spent on the current wanted set; a new set starts again at zero (R11-03).
+  const retryRounds = useRef(0);
   useEffect(() => {
+    retryRounds.current = 0;
     store.request(wantedKeys);
   }, [store, wantedSignature]);
 
@@ -248,8 +257,8 @@ export function OfficeScreen(props: PluginScreenProps) {
     return out;
   }, [placement, agentsById, characterKeys, store, spriteVersion]);
 
-  const latest = useRef({ life, lifeCharacters, placement, building, zoom, viewport, visible, model, snapshot });
-  latest.current = { life, lifeCharacters, placement, building, zoom, viewport, visible, model, snapshot };
+  const latest = useRef({ life, lifeCharacters, placement, building, zoom, viewport, visible, model, snapshot, wantedKeys });
+  latest.current = { life, lifeCharacters, placement, building, zoom, viewport, visible, model, snapshot, wantedKeys };
 
   const applyChanges = useCallback((changes: LifeChanges): boolean => {
     const current = latest.current.life;
@@ -295,6 +304,14 @@ export function OfficeScreen(props: PluginScreenProps) {
     },
     [applyChanges],
   );
+
+  // A new building: the director swaps its layout and keeps each agent's state; journeys of the old layout are dropped.
+  // Declared before the step effect so a building change is applied before the next step.
+  useEffect(() => {
+    const changes = life.director.relayout(building);
+    const any = changes.starts.length + changes.cancels.length + changes.gone.length > 0;
+    if (applyChanges(changes) || any) setLifeVersion((v) => v + 1);
+  }, [life, building]);
 
   // New handoffs of the store, resolved against the model, and the first step of the director for a new character set.
   useEffect(() => {
@@ -364,6 +381,18 @@ export function OfficeScreen(props: PluginScreenProps) {
     let changed = applyChanges(current.director.step(characters, beat.current));
     if (runPending()) changed = true;
     trigger.pump();
+    // A wanted key whose call failed is asked again on a slow beat, a bounded number of rounds; final failures stay failed.
+    if (shouldRetrySprites(beat.current, retryRounds.current)) {
+      const keys = latest.current.wantedKeys;
+      const transient = keys.some((key) => {
+        const entry = store.get(key);
+        return entry !== null && entry.state === "failed" && entry.code === "call_failed";
+      });
+      if (transient) {
+        retryRounds.current += 1;
+        store.retry(keys);
+      }
+    }
     if (beat.current % SCENE_DAY_REFRESH_BEATS === 0) setDayNow(new Date());
     if (changed) setLifeVersion((v) => v + 1);
   };

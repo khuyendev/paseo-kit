@@ -710,3 +710,87 @@ test("OFFC-02 retirement: the plugin, its tests and every reference are gone", (
   assert.deepEqual(skipped.filter(([rel]) => TEXT_EXTENSION.test(rel)).map(([rel, , reason]) => `${rel}: ${reason}`), [], "a text file was skipped");
   assert.deepEqual(retirementProblems(scanned.map(([rel, text]) => [rel, text]), RETIRED_ID), []);
 });
+
+// ---- OFFC-23 / HARN-15: the owner-approved office entry at the top of the Unreleased section --------------------------
+const CHANGELOG_PREFIX = "- Owner-approved Office plugin, ";
+const CHANGELOG_WORDS = ["office", "habblaud", "OFFC-", "Measured check:", "paseo plugin remove"];
+
+// Bullets of a text: each runs from a line starting `- ` to the next line starting `- ` or the next blank line; wrapped lines are joined by one space.
+function changelogBullets(lines) {
+  const bullets = [];
+  let current = null;
+  for (const line of lines) {
+    if (line.startsWith("- ")) {
+      current = line.trimEnd();
+      bullets.push(current);
+    } else if (line.trim() === "") current = null;
+    else if (current !== null) bullets[bullets.length - 1] = current = `${current} ${line.trim()}`;
+  }
+  return bullets;
+}
+
+function changelogProblems(text) {
+  const lines = normalise(text).split("\n");
+  const start = lines.findIndex((l) => l.trimEnd() === "## [Unreleased]");
+  const problems = [];
+  const isOffice = (b) => b.startsWith(CHANGELOG_PREFIX.slice(0, CHANGELOG_PREFIX.indexOf(",")));
+  let section = [];
+  if (start < 0) problems.push("CHANGELOG.md has no ## [Unreleased] section");
+  else {
+    const next = lines.findIndex((l, i) => i > start && l.startsWith("## ["));
+    section = lines.slice(start + 1, next < 0 ? lines.length : next);
+  }
+  const entries = changelogBullets(section).filter(isOffice);
+  if (start >= 0 && entries.length === 0) {
+    problems.push(changelogBullets(lines).some(isOffice) ? "the office entry is outside the Unreleased section" : "the Unreleased section has no Owner-approved Office plugin bullet");
+  }
+  if (entries.length > 1) problems.push(`the Unreleased section has ${entries.length} office bullets, not one`);
+  for (const entry of entries.slice(0, 1)) {
+    const dated = /^- Owner-approved Office plugin, (\d{4}-\d{2}-\d{2}):/.exec(entry);
+    if (!dated) problems.push("the office bullet has a missing or malformed date (want `Owner-approved Office plugin, YYYY-MM-DD:`)");
+    const body = dated ? entry.slice(dated[0].length) : entry.slice(entry.indexOf(":") + 1);
+    for (const word of CHANGELOG_WORDS) {
+      if (!(word === "office" ? body.toLowerCase() : body).includes(word)) problems.push(`the office bullet lacks the word ${word}`);
+    }
+  }
+  return problems;
+}
+
+test("OFFC-23 changelog checker: every malformed or missing entry is reported and one good entry passes", () => {
+  const good = [
+    `- Owner-approved Office plugin, 2026-10-21: the \`office\` plugin replaces ${RETIRED_ID}, art ported from habblaud (OFFC-01..25).`,
+    `  Measured check: \`tsc\` clean. Operator: \`paseo plugin ls\`, then \`paseo plugin remove ${RETIRED_ID}\`.`,
+    "",
+  ].join("\n");
+  const older = "- Owner-approved tier policy, 2026-10-20: older text.\n\n";
+  const doc = (unreleased, released = "- First release.\n") => `# Changelog\n\n## [Unreleased]\n\n${unreleased}## [0.0.1] - 2026-10-20\n\n${released}`;
+  const withBullet = (b) => doc(`${b}\n`);
+  assert.deepEqual(changelogProblems(doc(good + older)), []);
+  assert.deepEqual(changelogProblems(doc(older + good)), [], "the position inside the section is not judged");
+  assert.deepEqual(changelogProblems(doc(good).replace(/\n/g, "\r\n")), [], "CRLF");
+  // a wrapped phrase still counts
+  assert.deepEqual(changelogProblems(withBullet(good.replace("Measured check:", "Measured\n  check:").replace("paseo plugin remove", "paseo plugin\n  remove").trimEnd())), []);
+  // no section, no bullet, wrong section
+  assert.deepEqual(changelogProblems(good), ["CHANGELOG.md has no ## [Unreleased] section"]);
+  assert.deepEqual(changelogProblems(doc(older)), ["the Unreleased section has no Owner-approved Office plugin bullet"]);
+  assert.deepEqual(changelogProblems(doc("", good)), ["the office entry is outside the Unreleased section"]);
+  assert.deepEqual(changelogProblems(doc(older, good)), ["the office entry is outside the Unreleased section"]);
+  // dates
+  for (const bad of ["soon", "2026-1-5", "21-10-2026", ""]) {
+    const problems = changelogProblems(withBullet(good.replace("2026-10-21", bad)));
+    assert.equal(problems.length, 1, bad);
+    assert.match(problems[0], /missing or malformed date/, bad);
+  }
+  assert.match(changelogProblems(withBullet(good.replace("2026-10-21:", "2026-10-21")))[0], /malformed date/);
+  // each required word, named
+  const lacking = { office: good.replace("`office`", "the plugin"), habblaud: good.replace("habblaud", "upstream"), "OFFC-": good.replace("OFFC-01..25", "all"), "Measured check:": good.replace("Measured check:", "Check:"), "paseo plugin remove": good.replace("paseo plugin remove", "remove") };
+  for (const [word, bullet] of Object.entries(lacking)) assert.deepEqual(changelogProblems(withBullet(bullet.trimEnd())), [`the office bullet lacks the word ${word}`], word);
+  // two entries
+  assert.deepEqual(changelogProblems(doc(good + good)), ["the Unreleased section has 2 office bullets, not one"]);
+  // the bullet ends at the blank line: a required word after it does not count
+  assert.deepEqual(changelogProblems(doc(good.replace(" Operator:", "\n\n  Operator:"))), ["the office bullet lacks the word paseo plugin remove"]);
+});
+
+test("OFFC-23 changelog: the Unreleased section holds the owner-approved office entry with a date", () => {
+  assert.deepEqual(changelogProblems(read("CHANGELOG.md")), []);
+});
