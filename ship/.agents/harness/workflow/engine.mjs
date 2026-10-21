@@ -129,7 +129,9 @@ export async function runWorkflow(o) {
       }
       return r.status === "ok" || r.status === "cached" ? wrap(r.result) : null;
     };
-    const base = () => ({ n: ++state.seq, key, occ, label, phase, ...(opts.session !== undefined ? { session: opts.session } : {}) });
+    // agentType, role, roleHash and effort name the version of the agent for the metrics ledger (metrics.mjs).
+    const who = { agentType: opts.agentType ?? null, role: opts.role ?? null, roleHash: identity.roleHash || null, effort: identity.effort ?? null };
+    const base = () => ({ n: ++state.seq, key, occ, label, phase, ...who, ...(opts.session !== undefined ? { session: opts.session } : {}) });
     const spec = (n) => ({ n, runId: o.runId, workflowName: meta.name, label, phase, prompt, opts, identity });
     return inSession(opts.session, () => runCall({ key, occ, label, phase, opts, identity, reply, base, spec }));
   }

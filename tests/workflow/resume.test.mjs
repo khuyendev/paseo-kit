@@ -108,7 +108,7 @@ test("FLOW-17 journal: one start and one finish per started call, gap-free n aft
   const r = await engine(`await agent("a"); await agent("b"); try { await agent("c"); } catch (e) { log(e.message); } return 1;`, { host, journalPath, limits: { budgetTotal: 6 } }).p;
   const j = readJournal(journalPath);
   assert.deepEqual(j.map((e) => `${e.n}:${e.status}`), ["1:start", "1:ok", "2:start", "2:null"]);
-  assert.deepEqual(Object.keys(j[1]).sort(), ["agentId", "duration_s", "key", "label", "model", "n", "occ", "phase", "reason", "result", "status", "tokens", "usage"].sort());
+  assert.deepEqual(Object.keys(j[1]).sort(), ["agentId", "agentType", "duration_s", "effort", "key", "label", "model", "n", "occ", "phase", "reason", "result", "role", "roleHash", "status", "tokens", "usage"].sort());
   assert.equal(j[3].reason, "agent error: x");
   assert.equal(r.stats.started, 2);
 });

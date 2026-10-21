@@ -1,0 +1,95 @@
+// Harness metrics ledger (evolve data): one line per ended workflow run in _workspace/harness-metrics.jsonl. It
+// outlives `ph runs --prune`, which removes run directories; `ph evolve-stats` aggregates it per agent version.
+import fs from "node:fs";
+import path from "node:path";
+import { readText } from "../lib/io.mjs";
+
+export const METRICS_REL = "_workspace/harness-metrics.jsonl";
+export const RECORD_VERSION = 1;
+
+// A null reason's cause. Agent causes are the agent's own doing; infra causes are the daemon, the provider, caps
+// and permissions, which say nothing about the role text; anything else (config, scripts) is "other".
+const CAUSES = [
+  ["schema", /did not match the schema/],
+  ["timeout", /^no reply within/],
+  ["empty", /^finished without a reply/],
+  ["infra", /daemon|^runner error|live agent cap|usage tracking|model readback|worktree .* is gone|^agent error:|waiting for a permission|^agent status/],
+];
+export const AGENT_CAUSES = Object.freeze(["schema", "timeout", "empty"]);
+
+export function nullCause(reason) {
+  const text = String(reason ?? "");
+  return CAUSES.find(([, re]) => re.test(text))?.[0] ?? "other";
+}
+
+// The agent of a journal entry: its definition, else `label:` and the label's role part without numbered suffixes
+// (`plan-07-02` -> `label:plan`), for calls without agentType and journals written before it was journaled.
+export function agentOf(e) {
+  if (e.agentType) return e.agentType;
+  const words = String(e.label ?? "").split(":")[0].split("-");
+  while (words.length > 1 && /\d/.test(words.at(-1))) words.pop();
+  return `label:${words.join("-") || "agent"}`;
+}
+
+const num = (x) => (typeof x === "number" && Number.isFinite(x) ? x : 0);
+
+// One ledger record from a run's run.json, journal and result. Only calls that ran count (ok and null); cached calls
+// of a resumed run were counted in the run that made them.
+export function runRecord(runId, info, journal, result) {
+  const groups = new Map();
+  for (const e of journal) {
+    if (e.status !== "ok" && e.status !== "null") continue;
+    const g = { agent: agentOf(e), roleHash: e.roleHash ? String(e.roleHash).slice(0, 12) : null, model: e.model ?? null, effort: e.effort ?? null };
+    const key = JSON.stringify(g);
+    if (!groups.has(key)) groups.set(key, { ...g, calls: 0, ok: 0, nulls: 0, causes: {}, secs: [], input: 0, cachedInput: 0, output: 0, costUsd: 0, costKnown: true });
+    const s = groups.get(key);
+    s.calls++;
+    if (e.status === "ok") s.ok++;
+    else {
+      s.nulls++;
+      const c = nullCause(e.reason);
+      s.causes[c] = (s.causes[c] ?? 0) + 1;
+    }
+    if (typeof e.duration_s === "number") s.secs.push(e.duration_s);
+    s.input += num(e.usage?.input);
+    s.cachedInput += num(e.usage?.cachedInput);
+    s.output += num(e.usage?.output ?? e.tokens);
+    if (typeof e.usage?.costUsd === "number") s.costUsd += e.usage.costUsd;
+    else if (e.agentId) s.costKnown = false;
+  }
+  const start = Date.parse(info?.startedAt);
+  const stop = Date.parse(info?.endedAt);
+  const outcome = result && typeof result === "object" && typeof result.status === "string" ? { status: result.status, ...(Array.isArray(result.gaps) ? { gaps: result.gaps.length } : {}) } : null;
+  return {
+    v: RECORD_VERSION, runId, workflow: info?.name ?? null, status: info?.status ?? null, startedAt: info?.startedAt ?? null, endedAt: info?.endedAt ?? null,
+    wallS: Number.isFinite(start) && Number.isFinite(stop) ? Math.round((stop - start) / 1000) : null, outcome,
+    groups: [...groups.values()].map(({ costKnown, costUsd, ...g }) => ({ ...g, costUsd: costKnown ? Math.round(costUsd * 10000) / 10000 : null })),
+  };
+}
+
+// Appends records in one write, so concurrent runs never interleave inside a line.
+export function appendRecords(root, records) {
+  if (!records.length) return;
+  const file = path.join(root, METRICS_REL);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.appendFileSync(file, records.map((r) => `${JSON.stringify(r)}\n`).join(""), "utf8");
+}
+
+// {records, bad}: unparsable or foreign lines are counted, not fatal.
+export function readLedger(root) {
+  const file = path.join(root, METRICS_REL);
+  const records = [];
+  let bad = 0;
+  if (!fs.existsSync(file)) return { records, bad, file };
+  for (const line of readText(file).split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const r = JSON.parse(line);
+      if (r?.v === RECORD_VERSION && typeof r.runId === "string" && Array.isArray(r.groups)) records.push(r);
+      else bad++;
+    } catch {
+      bad++;
+    }
+  }
+  return { records, bad, file };
+}

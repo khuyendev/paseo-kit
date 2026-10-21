@@ -7,7 +7,8 @@ import { PH_FILE, UsageError, errText } from "../lib/cli.mjs";
 import { readText, writeJsonAtomic, readJsonIf } from "../lib/io.mjs";
 import { samePath } from "../lib/paths.mjs";
 import { runWorkflow } from "./engine.mjs";
-import { RUN_FILES, loadJournalCache, newRunId, parseBudget, runsDirOf, runsDirSuffix } from "./journal.mjs";
+import { RUN_FILES, loadJournalCache, newRunId, parseBudget, readJournal, runsDirOf, runsDirSuffix } from "./journal.mjs";
+import { METRICS_REL, appendRecords, runRecord } from "./metrics.mjs";
 import { createPaseoHost } from "./runner.mjs";
 import { runtime as kitRuntime } from "./runtime-bridge.mjs";
 import { parseScript } from "./script.mjs";
@@ -153,6 +154,15 @@ function detach(ctx, p, deps) {
 
 const fmtCost = (usd) => (typeof usd === "number" ? `$${Math.round(usd * 10000) / 10000}` : "$?");
 
+// The ended run's line in the metrics ledger; a failure to write it never fails the run.
+function recordMetrics(ctx, p, info, journalPath, result, out) {
+  try {
+    appendRecords(ctx.root, [runRecord(p.runId, info, readJournal(journalPath), result)]);
+  } catch (e) {
+    out(`log warning: run metrics not recorded in ${METRICS_REL}: ${errText(e)}`);
+  }
+}
+
 async function runForeground(ctx, p) {
   const logFile = path.join(p.runDir, RUN_FILES.log);
   let info = writeRunStart(p, ctx, process.pid);
@@ -193,12 +203,14 @@ async function runForeground(ctx, p) {
     writeJsonAtomic(resultFile, r.result ?? null);
     info = { ...info, status: "done", endedAt: new Date(ctx.clock.now()).toISOString(), agents: r.stats };
     writeJsonAtomic(runFile, info);
+    recordMetrics(ctx, p, info, journalPath, r.result, out);
     out(`workflow done ${p.runId}: ${resultFile} (ok ${r.stats.ok}, null ${r.stats.null}, cached ${r.stats.cached}, tokens ${r.stats.tokens}, cost ${fmtCost(r.stats.costUsd)})`);
     return 0;
   } catch (e) {
     await host?.finish().catch(() => {});
     info = { ...info, status: "failed", endedAt: new Date(ctx.clock.now()).toISOString(), error: errText(e) };
     writeJsonAtomic(runFile, info);
+    recordMetrics(ctx, p, info, journalPath, null, out);
     out(`workflow failed ${p.runId}: ${errText(e)}`);
     return 2;
   }

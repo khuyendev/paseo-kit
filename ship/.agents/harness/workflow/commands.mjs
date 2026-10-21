@@ -1,8 +1,9 @@
-// ph commands of the workflow module (M6): workflow, watch-run, run-stats, runs.
+// ph commands of the workflow module (M6): workflow, watch-run, run-stats, evolve-stats, runs.
 import { WORKFLOW_OPTIONS, WORKFLOW_USAGE, workflowCommand } from "./cmd-workflow.mjs";
 import { WATCH_OPTIONS, watchRunCommand } from "./cmd-watch-run.mjs";
 import { RUN_STATS_OPTIONS, runStatsCommand } from "./cmd-run-stats.mjs";
 import { RUNS_OPTIONS, runsCommand } from "./cmd-runs.mjs";
+import { EVOLVE_STATS_OPTIONS, EVOLVE_STATS_USAGE, evolveStatsCommand } from "./cmd-evolve-stats.mjs";
 
 export const commands = [
   {
@@ -28,6 +29,14 @@ export const commands = [
     options: RUN_STATS_OPTIONS,
     config: "none",
     run: (ctx) => runStatsCommand(ctx),
+  },
+  {
+    name: "evolve-stats",
+    summary: "the metrics ledger per agent version (role-text hash, model, effort) and per workflow, for harness-evolve; --import adds ended runs",
+    usage: EVOLVE_STATS_USAGE,
+    options: EVOLVE_STATS_OPTIONS,
+    config: "none",
+    run: (ctx) => evolveStatsCommand(ctx),
   },
   {
     name: "runs",

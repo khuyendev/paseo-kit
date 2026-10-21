@@ -51,7 +51,7 @@ or config error (nothing done), 2 done with failed items or problems.
 | `ph task add\|update\|list\|get --ws D ...` | the team's shared task list `<ws>/tasks.json` (see below). |
 | `ph freeze --ws D --phase P [--check]` | sha256 record of `<ws>/P_*` files; `--check` reports `modified`, `missing`, `new` (exit 2). |
 | `ph worktrees [--prune] [--runs-dir D]` | harness git worktrees and their state; `--prune` removes only merged-and-clean ones and registrations whose directory is gone. |
-| `ph workflow`, `ph watch-run`, `ph run-stats`, `ph runs` | workflow scripts (see the workflow section). |
+| `ph workflow`, `ph watch-run`, `ph run-stats`, `ph evolve-stats`, `ph runs` | workflow scripts (see the workflow section). |
 | `ph gsd <verb>` | GSD state verbs used by the GSD skills. |
 
 Options are `--key value` only; a value may itself start with `--`. Prompts: exactly one of `--prompt` and
@@ -127,6 +127,10 @@ until dry, budget-aware loop, custom type + schema + effort, tier choice).
 - Run directory `_workspace/_runs/<runId>/`: `script.js`, `args.json`, `run.json`, `journal.jsonl`, `log.txt`,
   `result.json`. `ph run-stats <runId>` sums time, tokens and cost; `ph runs [--prune]` lists and prunes runs;
   `ph archive --run <runId>` stops a run for good.
+- Every ended run appends one line to `_workspace/harness-metrics.jsonl`, which pruning keeps. `ph evolve-stats
+  [--agent A] [--workflow N] [--since YYYY-MM-DD]` prints it per agent version (agent, role-text hash, model,
+  effort) and per workflow; `--import [--runs-dir D]` first adds ended runs that are not in it yet. `harness-evolve`
+  reads it (harness skill, `references/kit-adapter.md` section 11).
 
 Authoring rules:
 - Guard `null` per stage (an `agent()` call returns `null` with a journaled reason when it fails) and

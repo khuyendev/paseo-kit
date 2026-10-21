@@ -6,6 +6,16 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Owner-approved evolve metrics, 2026-10-21 (owner request after reviewing the eval/hillclimbing article: measured
+  data for `harness-evolve`): workflow journals record each call's `agentType`, `role`, `roleHash` and `effort`;
+  every ended run appends one line to `_workspace/harness-metrics.jsonl` (kept by `ph runs --prune`); new
+  `ph evolve-stats` prints the ledger per agent version and per workflow, with `null` reasons split into agent,
+  infra and other causes, and `--import` adds older runs. Kit-authored prompt text: `kit-adapter.md` section 11
+  (sort failures by cause first, compare versions only with at least 5 runs each, judge on runs the change was not
+  tuned on, cost at the same results, `measured:`/`not measured` in the history Reason) and the ph skill; protected
+  Harness method text is unchanged. Measured check: `tests/workflow/evolve-stats.test.mjs` plus the full offline
+  suite; not yet run on a live project.
+
 - Owner-approved tier policy, 2026-10-20: kit-authored adapter/runtime guidance keeps model, thinking and native
   `features.fast_mode` in one project tier, batches owner-requested mapping updates and uses tier references by
   default instead of duplicate Fast tiers. Existing runtime feature forwarding is reused; protected Harness/GSD

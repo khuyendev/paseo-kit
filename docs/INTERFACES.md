@@ -298,7 +298,7 @@ Command modules (fixed list in `ph.mjs`, imported in this order; a module file t
 | module | owner | commands (examples) |
 | --- | --- | --- |
 | `./runtime/commands.mjs` | code-ph | doctor, spawn, fanout, send, watch, result, team, context, compact-self (+ hidden watcher), stop, archive, task, freeze, worktrees |
-| `./workflow/commands.mjs` | code-workflow | workflow, watch-run, run-stats, runs |
+| `./workflow/commands.mjs` | code-workflow | workflow, watch-run, run-stats, evolve-stats, runs |
 | `./gsd/commands.mjs` | code-gsd-core | gsd |
 | `./adapter/commands.mjs` | code-harness | harness (`ph harness lint [--all]`, HARN-05) |
 

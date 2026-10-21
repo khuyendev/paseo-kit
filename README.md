@@ -82,9 +82,11 @@ Non-blocking commands end with a `next:` line naming the command to wait with.
   provider, with the kit prompt notes and a model resolved from tiers, aliases, roles and `allowed_models`.
 - Coordination: `task` (shared task list), `freeze` (sha256 of phase files), `worktrees`.
 - Workflows: `workflow --script F | --name N [--args JSON] [--resume RUNID] [--budget N] [--detach]`, `watch-run`,
-  `run-stats`, `runs`. Scripts use `agent`, `parallel`, `pipeline`, `phase`, `log`, `budget`, `workflow`, `shell`
+  `run-stats`, `evolve-stats`, `runs`. Scripts use `agent`, `parallel`, `pipeline`, `phase`, `log`, `budget`, `workflow`, `shell`
   and the `runId` global; runs live in `_workspace/_runs/<runId>/` with a journal for resume and a model-time
-  watchdog. Running a workflow needs the owner's consent (ph skill).
+  watchdog. Every ended run also appends one line to `_workspace/harness-metrics.jsonl` (kept when runs are pruned);
+  `evolve-stats` prints it per agent version and per workflow for `harness-evolve`. Running a workflow needs the
+  owner's consent (ph skill).
 - `config` (effective config with provenance), `doctor`, `gsd <verb>`, `harness lint [--all]`.
 
 ## GSD

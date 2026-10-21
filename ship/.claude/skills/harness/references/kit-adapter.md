@@ -270,5 +270,22 @@ findings per run); and each phase's `.planning/phases/<NN>-<slug>/deferred.md`. 
 it touches (a verify kind that keeps failing to resolve -> its resolver; repeated review findings of one kind -> a
 review lens or the stack skill; a gate that is slow -> `commands` timeouts or `mutex`). Apply one change at a time,
 run lint, re-run at least 3 + 3 trigger requests when a skill description changed, and append a history row.
+
+Measure before you change, and say what was measured. `_workspace/harness-metrics.jsonl` keeps one line per ended
+workflow run (it survives `ph runs --prune`); `ph evolve-stats --import` adds older runs from `_workspace/_runs/`, and
+`ph evolve-stats [--agent A] [--workflow N] [--since DATE]` prints one line per agent version (agent, role-text hash,
+model, effort: calls, ok, `null` split into agent, infra and other causes, median seconds, cost per call, the results
+of its runs) and one line per workflow (results such as `passed`/`gaps_found`, gaps, wall time, cost per run).
+- Sort every failure by cause before editing anything; a lesson is a cause shared by several failures, not one
+  failure. Infra `null`s (daemon, provider, caps, permissions) and a grader or check that contradicts its own task are
+  fixed in the runtime, the check or the task, never in role text.
+- An edit to an agent definition changes its role-text hash, so `evolve-stats` shows the old and the new version on
+  separate lines. Compare them only when each side has at least 5 runs (fewer are marked `few runs`); a difference that
+  one or two runs could flip is noise, not a gain. Judge on runs the change was not tuned on (later runs, other phases),
+  and revert a change that helps only the runs that prompted it.
+- When outputs are stable and failures are rare, target cost at the same results: a lower tier or effort for one role
+  (section 7) is a cheap, attributable change; check it with the same comparison.
+- End the Reason cell of the history row with `measured: <agent> <old hash> -> <new hash>, <numbers before> ->
+  <numbers after>` or with `not measured (<why>)`; never call an unmeasured change an improvement.
 Lessons that apply to every project go back to the kit with `node <kit>/kit.mjs pull <project> <files> --kit
 <kit dir>`.
