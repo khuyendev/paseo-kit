@@ -59,3 +59,29 @@ Desktop only; mobile not tested; one host.
   }
 }
 ```
+
+## SPIKE_SMOOTHNESS_RULE
+
+Dated: 2026-10-21T07:03:33Z
+
+Threshold 1 counts ticks of a JavaScript timer, not painted frames, so the gate also requires the owner's answer to one question, asked after the 30 second cadence window at the zoom used for cadence with 32 characters and 6 walkers: during the window, did the characters move without visible stutter, freezing, skipped steps or flicker. Only yes passes; no fails the gate; an unanswered question leaves the record incomplete. This section is never edited afterwards (D-12).
+
+## SPIKE_WAIVER
+
+Waived by: owner
+Dated: 2026-10-21T08:13:00Z
+Reason: The owner chose to skip the D-12 measurement ("Bỏ cổng") to start waves 3 and 4 at once, after the spike screen rendered in the owner's Paseo app; the owner gave no report. This is a waiver, not a pass.
+No measurement recorded (the owner gave no report): crispness, payload, cadence, steady state, update log.
+Smoothness: the owner said verbally that everything ran smoothly; no report and no numbers were provided
+Scope: the owner uses the desktop app and the phone app; no measurement recorded for either
+Update log: not captured
+Surfaces: not probed
+Provisional ZOOM_LEVELS: [2, 3]
+Provisional TINT_LEVELS: 2
+Measurement owed: yes
+
+Provisional levels are the conservative ones (the two smallest zoom candidates, the minimum tint count). Waves 3 and 4 are built on them. If the measurement is taken later and fails, the fallback of D-12 (link-out to a separately running habblaud) or a smaller scene (fewer characters, no common areas) is decided then, and the work of waves 3 and 4 may be partly lost. When the measurement is recorded, replace this section by SPIKE_MEASUREMENTS as plan 07-03 Task 3 describes.
+
+## SPIKE_VERDICT
+
+Verdict: waived by owner, not measured

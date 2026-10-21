@@ -590,5 +590,7 @@ test("OFFC-10 thresholds: the markdown block equals the JSON file", () => {
   assert.match(md, /^## SPIKE_THRESHOLDS$/m);
   assert.match(md, /^Dated: \d{4}-\d{2}-\d{2}T/m);
   assert.ok(md.includes("Desktop only; mobile not tested; one host."));
-  assert.doesNotMatch(md, /^Verdict/m);
+  // The threshold section is dated and has no verdict; the sections appended after it by 07-03 (a waiver or a measurement and its verdict) are not part of it.
+  const base = md.split(/^## (?:SPIKE_SMOOTHNESS_RULE|SPIKE_WAIVER|SPIKE_MEASUREMENTS|Selected levels|SPIKE_VERDICT|SPIKE_UPDATE_LOG|Observations)$/m)[0];
+  assert.doesNotMatch(base, /^Verdict/m);
 });

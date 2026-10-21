@@ -5,7 +5,7 @@ import { z } from "zod";
 import { POSE_NAMES, ZOOM_CANDIDATES, type Pose, type ZoomCandidate } from "./art-types.ts";
 
 // Later plans only add entries here and to SPRITE_REGISTRY, never change the shape.
-export const SPRITE_KINDS = ["ruler"] as const;
+export const SPRITE_KINDS = ["ruler", "spike-char", "spike-room"] as const;
 export type SpriteKind = (typeof SPRITE_KINDS)[number];
 
 // Pose part of a key that carries no poses.

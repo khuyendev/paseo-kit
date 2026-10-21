@@ -1,6 +1,8 @@
 // Kind to renderer table: a new SpriteKind without a renderer here fails tsc.
 import type { SpriteFrame, SpriteKind, SpriteSpec } from "../shared/sprites-rpc.ts";
 import { PixelBuf } from "./art/core/pixbuf.ts";
+import { renderSpikeChar } from "./art/spike/chars.ts";
+import { renderSpikeRoom } from "./art/spike/rooms.ts";
 
 // A drawn buffer plus its frame grid in unscaled pixels (null for a single image).
 export type RenderedBuf = { buf: PixelBuf; frame: SpriteFrame | null };
@@ -21,4 +23,6 @@ const renderRuler: SpriteRenderer = () => {
 
 export const SPRITE_REGISTRY: Readonly<Record<SpriteKind, SpriteRenderer>> = {
   ruler: renderRuler,
+  "spike-char": renderSpikeChar,
+  "spike-room": renderSpikeRoom,
 };
