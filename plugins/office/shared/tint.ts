@@ -6,6 +6,7 @@ export const TINT_MAX_LEVELS = 5;
 export const TINT_CANDIDATES = [2, 3, 4, 5] as const;
 // PROVISIONAL: the owner waived the D-12 spike on 2026-10-21 (07-SPIKE.md, SPIKE_WAIVER); the first-load bytes of the tint
 // variants were not measured, so the minimum is kept. Replace with the recorded count when the measurement is taken.
+// 07-SPIKE.md records the waiver (SPIKE_WAIVER); the measured count replaces this value and that section together.
 export const TINT_LEVELS: TintCandidate = 2;
 export type TintCandidate = (typeof TINT_CANDIDATES)[number];
 
