@@ -2,7 +2,7 @@
 // Departure: the corridor id and its talk groups are English (core:corridor, talk:corridor:N). Layout data only (D-06).
 // Corridor across the building from west to east, with water coolers, benches and plants.
 import { COL_W, CORE_COLS, CORRIDOR_H, CORRIDOR_Y } from "./constants.ts";
-import { AreaBuilder } from "./builder.ts";
+import { createAreaBuilder } from "./builder.ts";
 import type { AreaLayout } from "./types.ts";
 
 export const CORRIDOR_ID = "core:corridor";
@@ -14,7 +14,7 @@ const RUNNERS = ["#8b9bb0", "#8597ab", "#909fb3"] as const;
 
 export function layoutCorridor(cols: number): AreaLayout {
   const w = cols * COL_W;
-  const b = new AreaBuilder(CORRIDOR_ID, "corridor", { x: 0, y: CORRIDOR_Y, w, h: CORRIDOR_H });
+  const b = createAreaBuilder(CORRIDOR_ID, "corridor", { x: 0, y: CORRIDOR_Y, w, h: CORRIDOR_H });
   b.floor("concrete", 0, 0, w, CORRIDOR_H, 501);
   // glass facades at the corridor ends (main entrance to the west)
   for (let ly = 0; ly < CORRIDOR_H; ly++) {

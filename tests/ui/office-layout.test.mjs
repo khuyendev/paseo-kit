@@ -3,9 +3,9 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import { findPath, PathFinder } from "../../plugins/office/client/path/astar.ts";
-import { BLOCKED, FREE, MAX_GRID_CELLS, SEAT, WalkGrid, gridFromRows, gridOf } from "../../plugins/office/client/path/grid.ts";
-import { AreaBuilder, SEATED_SORT_BIAS, SEAT_FOOT_DY, furnitureBlocks, furnitureIsSeat } from "../../plugins/office/client/layout/builder.ts";
+import { createPathFinder, findPath } from "../../plugins/office/client/path/astar.ts";
+import { BLOCKED, FREE, MAX_GRID_CELLS, SEAT, createWalkGrid, gridFromRows, gridOf } from "../../plugins/office/client/path/grid.ts";
+import { SEATED_SORT_BIAS, SEAT_FOOT_DY, createAreaBuilder, furnitureBlocks, furnitureIsSeat } from "../../plugins/office/client/layout/builder.ts";
 import * as C from "../../plugins/office/client/layout/constants.ts";
 import { CAFE_ID, ELEVATOR_CX, LOUNGE_ID, RECEPTION_ID, RESTROOM_ID, layoutCafe, layoutLounge, layoutReception, layoutRestroom } from "../../plugins/office/client/layout/core.ts";
 import { CORRIDOR_ID, layoutCorridor } from "../../plugins/office/client/layout/corridor.ts";
@@ -112,7 +112,7 @@ test("OFFC-12 path: repeated calls agree and interleaved grids never reuse stale
   }
   assert.equal(findPath(wide, pt(0, 0), pt(2, 1)), null);
   // a finder built by hand and re-pointed at another grid of the same cell count stays correct
-  const finder = new PathFinder(wide);
+  const finder = createPathFinder(wide);
   const out = [];
   assert.equal(finder.find(0, 0, 5, 3, out), true);
   finder.setGrid(tall);
@@ -121,7 +121,7 @@ test("OFFC-12 path: repeated calls agree and interleaved grids never reuse stale
 });
 
 test("OFFC-12 grid: cells outside are blocked, fill covers the rectangle, set outside is ignored", () => {
-  const g = new WalkGrid(4, 3);
+  const g = createWalkGrid(4, 3);
   assert.equal(g.get(-1, 0), BLOCKED);
   assert.equal(g.get(4, 0), BLOCKED);
   assert.equal(g.get(0, 3), BLOCKED);
@@ -138,7 +138,7 @@ test("OFFC-12 grid: cells outside are blocked, fill covers the rectangle, set ou
 });
 
 test("OFFC-12 grid: nearestWalkable finds the closest tile by ring or null beyond its radius", () => {
-  const g = new WalkGrid(5, 5);
+  const g = createWalkGrid(5, 5);
   g.set(3, 2, FREE);
   assert.deepEqual(g.nearestWalkable(3, 2), pt(3, 2));
   assert.deepEqual(g.nearestWalkable(0, 0), pt(3, 2));
@@ -159,13 +159,13 @@ test("OFFC-12 grid: reachableFrom marks exactly the 4-connected component", () =
 
 test("OFFC-12 grid: the constructor refuses bad sizes and accepts exactly the cap", () => {
   for (const [w, h] of [[0, 1], [1, 0], [-1, 3], [3, -1], [1.5, 2], [2, 1.5], [Number.NaN, 2], [2, Number.NaN], [Infinity, 1]]) {
-    assert.throws(() => new WalkGrid(w, h), RangeError, `${w}x${h}`);
+    assert.throws(() => createWalkGrid(w, h), RangeError, `${w}x${h}`);
   }
   assert.equal(MAX_GRID_CELLS, 250000);
-  assert.equal(new WalkGrid(500, 500).cells.length, MAX_GRID_CELLS);
-  assert.throws(() => new WalkGrid(500, 501), RangeError);
-  assert.throws(() => new WalkGrid(MAX_GRID_CELLS + 1, 1), RangeError);
-  assert.equal(new WalkGrid(3, 2, 7).version, 7);
+  assert.equal(createWalkGrid(500, 500).cells.length, MAX_GRID_CELLS);
+  assert.throws(() => createWalkGrid(500, 501), RangeError);
+  assert.throws(() => createWalkGrid(MAX_GRID_CELLS + 1, 1), RangeError);
+  assert.equal(createWalkGrid(3, 2, 7).version, 7);
 });
 
 test("OFFC-12 grid: gridFromRows maps its characters and refuses ragged or unknown input; gridOf returns the grid itself", () => {
@@ -256,7 +256,7 @@ test("OFFC-10 geometry: slots map to columns, sides and rectangles", () => {
 });
 
 test("OFFC-10 builder: local tiles become absolute pixels with one id sequence per area", () => {
-  const b = new AreaBuilder("area-x", "room", { x: 2, y: 3, w: 16, h: 12 });
+  const b = createAreaBuilder("area-x", "room", { x: 2, y: 3, w: 16, h: 12 });
   assert.equal(b.px(1), 48);
   assert.equal(b.py(2), 80);
   assert.equal(b.px(0.5), 40);

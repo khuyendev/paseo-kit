@@ -2,7 +2,7 @@
 // Departure: the Portuguese area ids and talk groups are English (core:reception, core:restroom, core:cafe, talk:reception, talk:cafe). Layout data only (D-06): no wandering or hangout choice.
 // Building core (columns 0 and 1): reception with elevators, restroom, cafe and lounge.
 import { COL_W, NORTH_Y, ROOM_H, SOUTH_Y, TILE } from "./constants.ts";
-import { AreaBuilder, SEATED_SORT_BIAS } from "./builder.ts";
+import { createAreaBuilder, SEATED_SORT_BIAS } from "./builder.ts";
 import type { WallStyle } from "./defs.ts";
 import type { AreaLayout } from "./types.ts";
 
@@ -25,7 +25,7 @@ export const CORE_WALLS = {
 export const ELEVATOR_CX = [3, 6.5] as const;
 
 export function layoutReception(): AreaLayout {
-  const b = new AreaBuilder(RECEPTION_ID, "reception", { x: 0, y: NORTH_Y, w: COL_W, h: ROOM_H });
+  const b = createAreaBuilder(RECEPTION_ID, "reception", { x: 0, y: NORTH_Y, w: COL_W, h: ROOM_H });
   const wall = CORE_WALLS.reception;
   b.floor("marble", 0, 0, 16, 12, 101);
   b.rug(1.5, 2.2, 6.5, 2.6, "#3d5a80", 102);
@@ -74,7 +74,7 @@ export function layoutReception(): AreaLayout {
 }
 
 export function layoutRestroom(): AreaLayout {
-  const b = new AreaBuilder(RESTROOM_ID, "restroom", { x: 0, y: SOUTH_Y, w: COL_W, h: ROOM_H });
+  const b = createAreaBuilder(RESTROOM_ID, "restroom", { x: 0, y: SOUTH_Y, w: COL_W, h: ROOM_H });
   const wall = CORE_WALLS.restroom;
   b.floor("tile_white", 0, 0, 16, 12, 201);
   // small mat only in front of the sinks (no big rug in the middle of a restroom)
@@ -118,7 +118,7 @@ export function layoutRestroom(): AreaLayout {
 }
 
 export function layoutCafe(): AreaLayout {
-  const b = new AreaBuilder(CAFE_ID, "cafe", { x: COL_W, y: NORTH_Y, w: COL_W, h: ROOM_H });
+  const b = createAreaBuilder(CAFE_ID, "cafe", { x: COL_W, y: NORTH_Y, w: COL_W, h: ROOM_H });
   const wall = CORE_WALLS.cafe;
   b.floor("tile_check", 0, 0, 16, 12, 301);
   // marble splash behind the counter + light wall with windows
@@ -189,7 +189,7 @@ export function layoutCafe(): AreaLayout {
 }
 
 export function layoutLounge(): AreaLayout {
-  const b = new AreaBuilder(LOUNGE_ID, "lounge", { x: COL_W, y: SOUTH_Y, w: COL_W, h: ROOM_H });
+  const b = createAreaBuilder(LOUNGE_ID, "lounge", { x: COL_W, y: SOUTH_Y, w: COL_W, h: ROOM_H });
   const wall = CORE_WALLS.lounge;
   b.floor("wood", 0, 0, 16, 12, 401);
   b.rug(1.5, 3.2, 7, 5.2, "#4f8a5b", 402);

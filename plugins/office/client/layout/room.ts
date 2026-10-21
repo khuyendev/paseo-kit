@@ -10,7 +10,7 @@
 // the island (mirrored layout), the meeting corner (rectangular table, small round tables or an armchair
 // nook), the lower corners (rest, print, green, standing desk) and the support column along the wall.
 import { DOOR_W, DOOR_X, TILE } from "./constants.ts";
-import { AreaBuilder } from "./builder.ts";
+import { createAreaBuilder } from "./builder.ts";
 import type { SpotOpts } from "./builder.ts";
 import { FURNITURE } from "./defs.ts";
 import type { Dir, FurnitureKind, RoomTheme, WallStyle } from "./defs.ts";
@@ -74,7 +74,7 @@ export function layoutProjectRoom(room: RoomInput, theme: RoomTheme): AreaLayout
   const rng = mulberry32(room.seed ^ 0x5eed);
   const pick = <T>(arr: readonly T[]): T => arr[Math.floor(rng() * arr.length) % arr.length];
   const v = roomVariant(room.seed);
-  const b = new AreaBuilder(room.id, "room", rect);
+  const b = createAreaBuilder(room.id, "room", rect);
   const area = b.area;
   area.side = side;
   const wall: WallStyle = theme.wall;

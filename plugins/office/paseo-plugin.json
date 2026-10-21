@@ -2,6 +2,6 @@
   "id": "office",
   "description": "Read-only pixel-art office of Paseo projects, workspaces and agents.",
   "requirements": {
-    "paseo": "0.11.2"
+    "paseo": "0.12.0"
   }
 }

@@ -12,6 +12,9 @@ const IDS = ["planning-panel", "swarm-map", "office"];
 // kit/machine/plugins.mjs is changed only by 07-12 (swarm-map stays registered until the recorded spike pass); 07-12 changes this to planning-panel and office.
 const MACHINE_IDS = ["planning-panel", "swarm-map"];
 const SOURCE_DIRS = ["client", "server", "shared"];
+// Paseo version each plugin is pinned to (manifest requirement and @getpaseo/plugin): office targets the 0.12.0 daemon, which
+// refuses a 0.11.2 plugin; planning-panel and swarm-map stay on the tested CLI version.
+const PASEO_PIN = { "planning-panel": TESTED_PASEO_CLI, "swarm-map": TESTED_PASEO_CLI, office: "0.12.0" };
 
 function sources(id, dirs = SOURCE_DIRS) {
   const root = path.join(PLUGINS, id);
@@ -26,11 +29,11 @@ test("PANL-01 manifests: id = directory, tested Paseo version, files exist, pinn
     const manifest = JSON.parse(fs.readFileSync(path.join(dir, "paseo-plugin.json"), "utf8"));
     assert.equal(manifest.id, id);
     assert.ok(manifest.description);
-    assert.equal(manifest.requirements.paseo, TESTED_PASEO_CLI);
+    assert.equal(manifest.requirements.paseo, PASEO_PIN[id], `${id}: requirements.paseo`);
     const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
     for (const f of pkg.files) assert.ok(fs.existsSync(path.join(dir, f)), `${id}: files entry ${f} missing`);
     for (const dep of ["@getpaseo/plugin", "react", "react-native", "@tanstack/react-query", "zod", "typescript", "@types/node"]) assert.ok(pkg.devDependencies[dep], `${id}: ${dep}`);
-    assert.equal(pkg.devDependencies["@getpaseo/plugin"], TESTED_PASEO_CLI);
+    assert.equal(pkg.devDependencies["@getpaseo/plugin"], PASEO_PIN[id], `${id}: @getpaseo/plugin pin`);
     const ts = JSON.parse(fs.readFileSync(path.join(dir, "tsconfig.json"), "utf8")).compilerOptions;
     assert.deepEqual([ts.strict, ts.noEmit], [true, true]);
     assert.ok(fs.existsSync(path.join(dir, "package-lock.json")), `${id}: package-lock.json for npm ci`);

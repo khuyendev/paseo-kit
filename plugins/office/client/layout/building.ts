@@ -3,7 +3,7 @@
 // Building assembly: core + corridor + project rooms -> walk grid and spots (D-04: even slots north of the corridor, odd slots south).
 import { BUILDING_H, COL_W } from "./constants.ts";
 import { FURNITURE } from "./defs.ts";
-import { BLOCKED, FREE, MAX_GRID_CELLS, SEAT, WalkGrid } from "../path/grid.ts";
+import { BLOCKED, FREE, MAX_GRID_CELLS, SEAT, createWalkGrid, type WalkGrid } from "../path/grid.ts";
 import { furnitureBlocks, furnitureIsSeat } from "./builder.ts";
 import { layoutCafe, layoutLounge, layoutReception, layoutRestroom } from "./core.ts";
 import { layoutCorridor } from "./corridor.ts";
@@ -49,7 +49,7 @@ export function paintArea(grid: WalkGrid, area: AreaLayout): void {
 }
 
 export function buildWalkGrid(cols: number, areas: readonly AreaLayout[], version = 0): WalkGrid {
-  const grid = new WalkGrid(cols * COL_W, BUILDING_H, version);
+  const grid = createWalkGrid(cols * COL_W, BUILDING_H, version);
   for (const a of areas) paintArea(grid, a);
   return grid;
 }
