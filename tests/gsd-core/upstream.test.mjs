@@ -191,8 +191,10 @@ test("GSDC-48 bump: an unmapped verb keeps it failing until a verb row exists", 
 
 test("GSDC-49 the licence equals the vendored LICENSE; every departure row cites a requirement of the method file", () => {
   assert.equal(fs.readFileSync(path.join(KIT, "LICENSES/gsd-core-MIT.txt"), "utf8"), fs.readFileSync(path.join(KIT, "ship/.agents/gsd/upstream/LICENSE"), "utf8"));
-  const method = fs.readFileSync(path.join(KIT, ".planning/requirements/method.md"), "utf8");
-  const notice = fs.readFileSync(path.join(KIT, "ship/.agents/gsd/NOTICE.md"), "utf8");
+  // Rows are split on LF; a Windows checkout with core.autocrlf stores CRLF.
+  const lf = (p) => fs.readFileSync(path.join(KIT, p), "utf8").replace(/\r\n/g, "\n");
+  const method = lf(".planning/requirements/method.md");
+  const notice = lf("ship/.agents/gsd/NOTICE.md");
   const pin = JSON.parse(fs.readFileSync(path.join(KIT, "ship/.agents/gsd/upstream/UPSTREAM.json"), "utf8"));
   assert.match(notice, /open-gsd\/gsd-core/);
   assert.equal(pin.commit, "274f8cae13d03ad80e18959b135b0e51b33329e8");

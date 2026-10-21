@@ -121,7 +121,7 @@ test("INST-17 seeds created once, valid, unrecorded; existing seeds and .plannin
   assert.doesNotThrow(() => loadConfig(fresh.root));
   const seed = fresh.json(".agents/harness.config.json");
   assert.deepEqual(Object.keys(seed), ["_notes", "adapter", "gsd"]);
-  assert.ok(fresh.read(".agents/harness-history.md").split("\n").includes("| Date | Change | Scope | Reason | Supersedes |"));
+  assert.ok(fresh.read(".agents/harness-history.md").replace(/\r\n/g, "\n").split("\n").includes("| Date | Change | Scope | Reason | Supersedes |"));
   assert.deepEqual(fs.readdirSync(fresh.path(".planning")), []);
   const files = Object.keys(fresh.manifest().files);
   assert.equal(files.some((k) => k.startsWith(".agents/harness.config") || k.startsWith(".agents/harness-history") || k.startsWith(".planning")), false);

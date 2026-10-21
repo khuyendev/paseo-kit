@@ -85,7 +85,8 @@ test("GSDC-12 every mutator refuses a worker and leaves files byte-identical; wr
   }
   assert.equal(snap(), before);
   for (const name of fs.readdirSync(new URL("../../ship/.agents/agents/", import.meta.url))) {
-    const text = fs.readFileSync(new URL(`../../ship/.agents/agents/${name}`, import.meta.url), "utf8");
+    // The pattern matches LF; a Windows checkout with core.autocrlf stores CRLF.
+    const text = fs.readFileSync(new URL(`../../ship/.agents/agents/${name}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
     assert.match(text, /include:\n {2}- \.agents\/gsd\/overlays\/kit-core\.md/, name);
   }
   assert.match(fs.readFileSync(new URL("../../ship/.agents/gsd/overlays/kit-core.md", import.meta.url), "utf8"), /single writer/);
