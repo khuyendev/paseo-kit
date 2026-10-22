@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// io guard (PreToolUse on file tools, PostToolUse on lookups): just-in-time reminders of the AGENTS.md File I/O rules,
+// io guard (PreToolUse on file tools, PostToolUse on lookups): just-in-time reminders of the File I/O rules, which since
+// 2026-10-22 live only here, not in the AGENTS.md block,
 // for every session (HOOK-13..25). A round is one assistant message; its parallel tool calls share the message id.
 // The in-flight round never counts as a previous round, so parallel siblings do not count each other. Every
 // PreToolUse reminder is claimed by an exclusive-create file, so the hooks of one parallel round speak once; a
@@ -27,7 +28,7 @@ export const TOOLS = {
 };
 const toolOf = (name) => (Object.hasOwn(TOOLS, name) ? TOOLS[name] : null);
 
-const PREFIX = "File I/O (AGENTS.md): ";
+const PREFIX = "File I/O: ";
 const WITH_MOD = "when the harness-files tools are available, else native Read/Edit";
 const BATCH_HOW = `one Grep with alternation, one Glob with a single brace group, and ${HF}read_ranges for several files ${WITH_MOD}`;
 // HOOK-23: model-facing texts, at most three sentences each; wording changes only with owner review (INV-49).

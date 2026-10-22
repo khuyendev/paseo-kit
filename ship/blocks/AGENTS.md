@@ -1,28 +1,13 @@
-## File I/O
+## Reporting
 
-- Use Grep for content and Glob for file names; combine independent lookups in one call.
-- Batch reads and edits with the available file tools: read the relevant sections of all known targets in one call, prefer batch edits for related changes and whole-file writes for new files.
-- Do not re-read a file solely to verify a successful write; run the relevant checks instead.
-- Correctness takes priority over fewer tool calls.
-- Write long documents in parts: create the file with its first part, then append; a single long response hits the output cap and stalls.
+- When you report to the owner, end with three headings: **Blocked on me** (what needs the owner's decision or action, or "nothing"), **Changed** (what changed, with the checks you ran and their result) and **Found** (what you learned that matters). A worker's final reply follows the format its prompt asks for.
+- Report only what you observed. Mark anything you could not confirm `[UNVERIFIED]` and say where you looked. When an agent stops without a reply, say so; never fill in its judgment.
 
-## Definition of Done
+## Checks and cleanup
 
-- Before executing, derive a Definition of Done from the request: the observable results that prove the work is complete. Verify against it before you report done.
-- Use only verified facts. Mark any claim you did not observe yourself `[UNVERIFIED]`.
 - Fix the product, not the fixture: when a check fails, find the root cause in the code under test; never weaken a test, a fixture or a gate to make it pass.
-
-## Agents and waiting
-
-- Never hand-roll polling (sleep loops, repeated status checks). Follow the printed `next:` command and end the turn while waiting; you are woken when the result is ready.
-- Never retry quota, credit, billing, auth or permission failures; report them to the owner.
-- Never fabricate a stopped agent's judgment: when an agent stops without a reply, say so and rerun it or report the gap.
-- Before a fan-out, preflight 2-3 items through every stage and fix what they reveal.
-- Scripts own mechanical bookkeeping (state files, counters, journals); do not hand-edit what a script writes.
-- Pass paths, not content: give agents file paths to read instead of inlining file text into prompts.
 - Clean up only what you created: agents, worktrees, temp files and branches of other runs are not yours.
-- A worker never messages the main session; it reports only in its final reply.
 
 ## Planning state
 
-- `.planning/` holds the project's GSD state (PROJECT, REQUIREMENTS, ROADMAP, STATE, phases). Read `.planning/STATE.md` first when resuming work; it is written by the GSD flows and `ph gsd`, not by hand.
+- `.planning/` holds the project's GSD state (PROJECT, REQUIREMENTS, ROADMAP, STATE, phases). Read `.planning/STATE.md` first when resuming work. The GSD flows, `ph gsd` and the kit scripts write it and every other state file (journals, counters, run records); never edit those by hand.

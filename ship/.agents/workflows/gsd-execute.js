@@ -351,7 +351,11 @@ const fixerBlock = () => (g.fixer_verifies_itself
   ? `After your changes run the build (${JSON.stringify(cmds.build)}) and the tests (${JSON.stringify(testArgv)}) yourself, at most ${g.fixer.max_build_attempts} times and within ${g.fixer.minutes} minutes; stop early when two consecutive attempts do not reduce the failure count. Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence}.`
   : "Do not run the build or the tests: the orchestrator's gate verifies your changes. Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence}.");
 const fixerText = (owns, findings, failures) => [`<kit_fixer_runtime>\nYou own: ${JSON.stringify(owns)}. Fix the confirmed review findings and gate failures below, nothing else; a finding with instances is fixed at every instance. Never commit.\n${fixerBlock()}\n</kit_fixer_runtime>`, findings.length ? `Confirmed findings (JSON): ${JSON.stringify(findings.map(findingBrief))}` : "", failures.length ? `Gate failures:\n${failureText(failures)}` : ""].filter(Boolean).join("\n\n");
-const fixerOpts = (label, extra = {}) => ({ label, agentType: agentFor("fixer", "gsd-code-fixer"), role: "fixer", schema: FIXER_SCHEMA, ...extra });
+// The fixer repairs confirmed defects and failed checks in existing code, where more effort finds the edge cases its
+// tests miss (owner decision 2026-10-22, after "Spending your effort"): it runs at FIXER_EFFORT on its own tier's
+// model unless the project's gsd.roles.fixer sets an effort.
+const FIXER_EFFORT = "high";
+const fixerOpts = (label, extra = {}) => ({ label, agentType: agentFor("fixer", "gsd-code-fixer"), role: "fixer", ...(cfg.gsd.roles?.fixer?.effort ? {} : { effort: FIXER_EFFORT }), schema: FIXER_SCHEMA, ...extra });
 // CR-GSF-16: every fix result is inspected before the gate reruns; a failed or unresolved repair stops the round.
 async function fixRounds(waveId, tasks, first, label, tail) {
   let cur = first;

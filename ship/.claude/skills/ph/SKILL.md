@@ -129,7 +129,8 @@ until dry, budget-aware loop, custom type + schema + effort, tier choice).
   `ph archive --run <runId>` stops a run for good.
 - Every ended run appends one line to `_workspace/harness-metrics.jsonl`, which pruning keeps. `ph evolve-stats
   [--agent A] [--workflow N] [--since YYYY-MM-DD]` prints it per agent version (agent, role-text hash, model,
-  effort) and per workflow; `--import [--runs-dir D]` first adds ended runs that are not in it yet. `harness-evolve`
+  effort) and per workflow, with a suggested `--budget` (4 x the median output tokens of a run); `--import [--runs-dir D]`
+  first adds ended runs that are not in it yet. `harness-evolve`
   reads it (harness skill, `references/kit-adapter.md` section 11).
 
 Authoring rules:

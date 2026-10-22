@@ -59,27 +59,23 @@ test("INST-28 kit help states verbs, requirements, ownership, --force limits, th
   assert.doesNotMatch(text, /backlog|codex|opencode/i);
 });
 
-test("HARN-14 the shipped AGENTS.md block carries the always-loaded rules and stays small", () => {
+// Owner decision 2026-10-22: the block keeps only rules nothing else enforces. File I/O is restated by the io guard hook
+// (HOOK-24), waiting and retries by ph's next: lines, the ph skill and NEVER_RETRY, prompt size by max_prompt_bytes,
+// worker messaging by the worker deny list and first_prompt_note, preflight by the harness skill.
+test("HARN-14 the shipped AGENTS.md block carries only the unenforced always-loaded rules and stays small", () => {
   const block = fs.readFileSync(path.join(SHIP_DIR, "blocks", "AGENTS.md"), "utf8");
   for (const anchor of [
-    "Batch reads and edits with the available file tools",
-    "Do not re-read a file solely to verify a successful write",
-    "Correctness takes priority over fewer tool calls",
-    "derive a Definition of Done",
-    "Never hand-roll polling",
-    "Follow the printed `next:` command and end the turn while waiting",
-    "Never retry quota, credit, billing, auth or permission failures",
-    "Never fabricate a stopped agent's judgment",
-    "Use only verified facts",
+    "**Blocked on me**",
+    "**Changed**",
+    "**Found**",
+    "A worker's final reply follows the format its prompt asks for",
+    "`[UNVERIFIED]` and say where you looked",
+    "When an agent stops without a reply, say so",
     "Fix the product, not the fixture",
-    "preflight 2-3 items through every stage",
-    "Scripts own mechanical bookkeeping",
-    "Pass paths, not content",
     "Clean up only what you created",
-    "`[UNVERIFIED]`",
-    "Write long documents in parts",
-    "A worker never messages the main session",
+    "never edit those by hand",
   ]) assert.ok(block.includes(anchor), anchor);
-  assert.ok(Buffer.byteLength(block) < 3000);
+  for (const gone of ["## File I/O", "Definition of Done", "## Agents and waiting", "Never hand-roll polling", "Pass paths, not content"]) assert.ok(!block.includes(gone), gone);
+  assert.ok(Buffer.byteLength(block) < 1500);
   assert.doesNotMatch(block, /PASEO-HARNESS-KIT/);
 });

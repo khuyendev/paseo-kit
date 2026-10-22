@@ -6,6 +6,19 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Owner-approved kit rules, 2026-10-22 (owner request after reading the claude.dev posts on Opus 5.5, effort and agent
+  automations; owner judged the AGENTS.md block outdated and approved the cut with "Gật"): the AGENTS.md block keeps only
+  rules nothing else enforces. Added: report to the owner under **Blocked on me / Changed / Found**, mark unconfirmed
+  claims `[UNVERIFIED]` with where you looked, say when an agent stopped without a reply. Kept: fix the product, not the
+  fixture; clean up only what you created; state files are written by scripts. Removed, because code or another always
+  present text already carries them: File I/O (io guard reminders, first_prompt_note), Definition of Done (plan
+  must_haves and the gate), polling and next: lines (every ph command and the ph skill), quota retries (NEVER_RETRY),
+  preflight (harness skill), paths not content (max_prompt_bytes), worker messaging (worker deny list); the io guard
+  reminders now start with "File I/O: " instead of pointing at the removed AGENTS.md section. The code fixer
+  of gsd-execute runs at effort `high` on its tier unless `gsd.roles.fixer.effort` is set (kit-adapter.md section 7).
+  `ph evolve-stats` suggests a `--budget` of 4 x a workflow's median output tokens per run. Measured check: HARN-14,
+  HOOK-24, EVOL-06, REVW-05 and the full offline suite; the effect on live runs is unmeasured.
+
 - Owner-approved review rules, 2026-10-22 (owner request after reading the Claude Code team's code-review write-up,
   "chỉ làm review trước"): the code review of `gsd-execute` gets the lines each plan changed (new flow verb
   `changed-lines`: uncommitted hunks, all of a new file, or the plan's commit) and marks a finding outside them, by more

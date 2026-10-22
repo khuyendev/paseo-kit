@@ -171,7 +171,7 @@ test("HOOK-23 texts: prefix, at most three sentences, only shipped tool names", 
   const texts = allTexts();
   assert.equal(texts.length, 7);
   for (const text of texts) {
-    assert.ok(text.startsWith("File I/O (AGENTS.md): "), text);
+    assert.ok(text.startsWith("File I/O: "), text);
     assert.ok(sentences(text) <= 3, `${sentences(text)} sentences: ${text}`);
     for (const token of text.match(/mcp__[\w-]+/g) ?? []) assert.ok(SHIPPED_TOOLS.has(token), token);
     for (const word of text.match(/\b(?:Read|Edit|Write|Grep|Glob|MultiEdit|NotebookEdit|Bash)\b/g) ?? []) assert.ok(SHIPPED_TOOLS.has(word), word);

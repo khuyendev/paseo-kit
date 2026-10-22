@@ -133,3 +133,14 @@ test("REVW-04 a second, independent verifier decides what the first left uncerta
   assert.equal(labels(stuck).filter((l) => l === "verify-findings-01-01-second").length, 1);
   assert.equal(record(w2).findings[0].verdict, "uncertain");
 });
+
+test("REVW-05 the code fixer runs at effort high on its tier unless the project's gsd.roles.fixer sets an effort", async () => {
+  const fixerCall = (r) => r.calls.find((c) => c.opts.label === "fix-review-w1");
+  const w = makeExecWorld({ waves: [[task("01-01")]] });
+  const r = await exec(w, { "review-": () => ({ findings: [finding("F", { line: 1 })] }) });
+  assert.equal(r.result.status, "executed");
+  assert.deepEqual([fixerCall(r).opts.role, fixerCall(r).opts.effort, fixerCall(r).opts.model], ["fixer", "high", undefined]);
+  const own = makeExecWorld({ waves: [[task("01-01")]], overlay: { gsd: { roles: { fixer: { effort: "medium", reason: "project choice" } } } } });
+  const r2 = await exec(own, { "review-": () => ({ findings: [finding("F", { line: 1 })] }) });
+  assert.equal(fixerCall(r2).opts.effort, undefined, "the project's role effort resolves in the runner");
+});

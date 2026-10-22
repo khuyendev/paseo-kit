@@ -206,6 +206,10 @@ request such as "pro, medium, Fast off" changes one mapping, not every workflow.
 `agent(..., {model: "pro"})` receive that tier's features; a direct `--model circle/<model>` bypasses the tier
 and does not inherit its Fast setting. Explicit effort overrides remain independent.
 
+One kit default sits outside the tiers: `gsd-execute` runs the code fixer (`fixer` role) at effort `high` on its own
+tier's model, because it repairs confirmed defects and failed checks in existing code, where more effort finds the
+edge cases the tests miss. A project's `gsd.roles.fixer.effort` replaces it; `gsd.roles.fixer.model` alone keeps it.
+
 For example, a configured tier entry can be:
 
 ```json
@@ -290,7 +294,9 @@ Measure before you change, and say what was measured. `_workspace/harness-metric
 workflow run (it survives `ph runs --prune`); `ph evolve-stats --import` adds older runs from `_workspace/_runs/`, and
 `ph evolve-stats [--agent A] [--workflow N] [--since DATE]` prints one line per agent version (agent, role-text hash,
 model, effort: calls, ok, `null` split into agent, infra and other causes, median seconds, cost per call, the results
-of its runs) and one line per workflow (results such as `passed`/`gaps_found`, gaps, wall time, cost per run).
+of its runs) and one line per workflow (results such as `passed`/`gaps_found`, gaps, wall time, cost per run, and a
+suggested `ph workflow --budget` of 4 x the median output tokens of a run: a cap that stops a runaway run, not a
+normal one; tighten it once there are real numbers).
 - Sort every failure by cause before editing anything; a lesson is a cause shared by several failures, not one
   failure. Infra `null`s (daemon, provider, caps, permissions) and a grader or check that contradicts its own task are
   fixed in the runtime, the check or the task, never in role text.

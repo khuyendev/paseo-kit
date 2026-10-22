@@ -11,6 +11,12 @@ export const EVOLVE_STATS_OPTIONS = Object.freeze({ agent: "string", workflow: "
 export const EVOLVE_STATS_USAGE = "ph evolve-stats [--agent A] [--workflow N] [--since YYYY-MM-DD] [--import [--runs-dir D]]";
 // Fewer runs than this per version are reported, but are no measurement of a change.
 export const FEW_RUNS = 5;
+// The suggested `ph workflow --budget` of a workflow: this many times its median output tokens per run (owner decision
+// 2026-10-22, after "Building effective agent automations": a cap of three to five normal runs, tightened later).
+export const BUDGET_FACTOR = 4;
+
+// A --budget value rounded up to whole thousands: 118400 -> "119k".
+export const budgetText = (tokens) => `${Math.max(1, Math.ceil(tokens / 1000))}k`;
 
 function median(values) {
   if (!values.length) return 0;
@@ -87,7 +93,7 @@ function workflowLines(records) {
   const flows = new Map();
   for (const r of records) {
     const name = r.workflow ?? "-";
-    if (!flows.has(name)) flows.set(name, { runs: 0, status: {}, outcomes: {}, gaps: 0, walls: [], cost: 0, costKnown: true });
+    if (!flows.has(name)) flows.set(name, { runs: 0, status: {}, outcomes: {}, gaps: 0, walls: [], outputs: [], cost: 0, costKnown: true });
     const f = flows.get(name);
     f.runs++;
     f.status[r.status ?? "unknown"] = (f.status[r.status ?? "unknown"] ?? 0) + 1;
@@ -96,6 +102,7 @@ function workflowLines(records) {
       f.gaps += r.outcome.gaps ?? 0;
     }
     if (typeof r.wallS === "number") f.walls.push(r.wallS);
+    f.outputs.push(r.groups.reduce((t, g) => t + (g.output ?? 0), 0));
     for (const g of r.groups) {
       if (typeof g.costUsd === "number") f.cost += g.costUsd;
       else f.costKnown = false;
@@ -103,7 +110,10 @@ function workflowLines(records) {
   }
   return [...flows.entries()].map(([name, f]) => {
     const outcomes = Object.keys(f.outcomes).length ? `; results ${counts(f.outcomes)}${f.gaps ? `, gaps ${f.gaps}` : ""}` : "";
-    return `workflow ${name}: runs ${f.runs} (${counts(f.status)})${outcomes}; median wall ${round1(median(f.walls))} s; cost ${f.costKnown ? `${usd(f.cost / f.runs)}/run` : "?"}`;
+    // --budget counts output tokens, so the suggestion scales the median output of a run.
+    const out = median(f.outputs);
+    const budget = out > 0 ? `; suggested --budget ${budgetText(out * BUDGET_FACTOR)} (${BUDGET_FACTOR} x median output ${Math.round(out)})${f.runs < FEW_RUNS ? `, few runs` : ""}` : "";
+    return `workflow ${name}: runs ${f.runs} (${counts(f.status)})${outcomes}; median wall ${round1(median(f.walls))} s; cost ${f.costKnown ? `${usd(f.cost / f.runs)}/run` : "?"}${budget}`;
   });
 }
 

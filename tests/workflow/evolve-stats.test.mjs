@@ -63,7 +63,7 @@ test("EVOL-03 ph evolve-stats --import reads ended runs once, splits agent versi
     "imported 2 runs (1 skipped: already recorded, running or without run.json)",
     "gsd-verifier aaaaaaaaaaaa circle/m high: runs 1, calls 1, ok 1, null 0; median 20 s; tokens/call in 100 cached 50 out 10; cost $0.01/call; 2026-10-18..2026-10-18; run results passed 1 (few runs: < 5, not a measurement)",
     "gsd-verifier bbbbbbbbbbbb circle/m high: runs 1, calls 1, ok 0, null 1 (agent 1: schema 1; infra 0; other 0); median 20 s; tokens/call in 100 cached 50 out 10; cost $0.01/call; 2026-10-19..2026-10-19; run results gaps_found 1 (few runs: < 5, not a measurement)",
-    "workflow gsd-verify: runs 2 (done 2); results passed 1, gaps_found 1, gaps 1; median wall 40 s; cost $0.01/run",
+    "workflow gsd-verify: runs 2 (done 2); results passed 1, gaps_found 1, gaps 1; median wall 40 s; cost $0.01/run; suggested --budget 1k (4 x median output 10), few runs",
     `evolve-stats: 2 runs from ${METRICS_REL}`,
   ]);
   const again = await s.ph(["evolve-stats", "--import"]);
@@ -73,6 +73,21 @@ test("EVOL-03 ph evolve-stats --import reads ended runs once, splits agent versi
   assert.equal(one.out.length, 2);
   assert.match(one.out[0], /^gsd-verifier bbbbbbbbbbbb /);
   assert.equal(one.out[1], `evolve-stats: 1 runs from ${METRICS_REL}`);
+});
+
+test("EVOL-06 the suggested budget is four median runs of output tokens, in whole thousands ph workflow accepts", async () => {
+  const { BUDGET_FACTOR, budgetText } = await import("../../ship/.agents/harness/workflow/cmd-evolve-stats.mjs");
+  const { parseBudget } = await import("../../ship/.agents/harness/workflow/journal.mjs");
+  assert.equal(BUDGET_FACTOR, 4);
+  assert.deepEqual([budgetText(118400), budgetText(1000), budgetText(1), budgetText(0)], ["119k", "1k", "1k", "1k"]);
+  assert.equal(parseBudget(budgetText(118400)), 119000);
+  const s = setup();
+  for (const [i, out] of [30000, 50000, 40000, 45000, 35000].entries()) {
+    fixtureRun(s, `wf_${i}`, { startedAt: `2026-10-2${i}T10:00:00.000Z`, journal: [call({ usage: { input: 1, cachedInput: 0, output: out, costUsd: 0.01 } })], result: { status: "passed" }, name: "gsd-plan" });
+  }
+  const r = await s.ph(["evolve-stats", "--import"]);
+  const line = r.out.find((l) => l.startsWith("workflow gsd-plan"));
+  assert.match(line, /; suggested --budget 160k \(4 x median output 40000\)$/, "five runs: no few-runs note");
 });
 
 test("EVOL-03 bad arguments exit 1; an empty or damaged ledger is reported, not fatal", async () => {

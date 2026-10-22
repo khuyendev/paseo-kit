@@ -8,7 +8,8 @@ import { testEnv } from "../helpers/env.mjs";
 import { makeTempProject, SHIP_DIR } from "../helpers/temp.mjs";
 import { benchContextGuard } from "./bench_context_guard.mjs";
 
-// The five File I/O rules of the AGENTS.md block (HOOK-24) and the words each reminder uses to restate its rule.
+// The five File I/O rules (HOOK-24) and the words each io guard reminder uses to state its rule. Since 2026-10-22 the
+// reminders carry the rules alone: the AGENTS.md block no longer repeats them (owner decision).
 const RULES = {
   lookups: /Grep[^\n]*content[^\n]*Glob[^\n]*name/i,
   readBatch: /relevant[^\n]*(parts|sections|functions)[^\n]*/i,
@@ -29,7 +30,7 @@ const KIND_RULE = [
 const blockOf = (text) => /<!-- PASEO-HARNESS-KIT START[^\n]*\n([\s\S]*?)<!-- PASEO-HARNESS-KIT END -->/.exec(text)?.[1] ?? "";
 const count = (text, re) => (text.match(new RegExp(re.source, `${re.flags.replace("g", "")}g`)) ?? []).length;
 
-test("HOOK-24 each io guard reminder kind restates one AGENTS.md File I/O rule", () => {
+test("HOOK-24 each io guard reminder kind states one File I/O rule", () => {
   for (const [kind, text, rule, words] of KIND_RULE) {
     assert.ok(RULES[rule], kind);
     assert.match(text, words, kind);
@@ -37,7 +38,7 @@ test("HOOK-24 each io guard reminder kind restates one AGENTS.md File I/O rule",
   assert.deepEqual(new Set(KIND_RULE.map(([kind]) => kind)), new Set(Object.keys(MSG)));
 });
 
-test("HOOK-24 a fresh install carries the five File I/O rules once and an update does not duplicate them", async () => {
+test("HOOK-24 an installed block leaves the File I/O rules to the io guard reminders and an update does not duplicate the block", async () => {
   const project = makeTempProject();
   const env = testEnv();
   const io = { env, out: () => {}, err: () => {} };
@@ -45,7 +46,7 @@ test("HOOK-24 a fresh install carries the five File I/O rules once and an update
   assert.ok([0, 2].includes(await kitMain(["update", project.root], io)));
   const block = blockOf(project.read("AGENTS.md"));
   assert.ok(block, "kit block present");
-  for (const [name, re] of Object.entries(RULES)) assert.equal(count(block, re), 1, `${name} once in the installed block`);
+  for (const [name, re] of Object.entries(RULES)) assert.equal(count(block, re), 0, `${name} is not repeated in the installed block`);
   assert.equal(count(project.read("AGENTS.md"), /PASEO-HARNESS-KIT START/), 1);
   assert.ok(fs.existsSync(path.join(SHIP_DIR, "blocks", "AGENTS.md")));
 });
