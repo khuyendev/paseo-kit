@@ -6,6 +6,16 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Owner-approved watchdog thresholds, 2026-10-22 ("mở các ngưỡng lên"): both live projects had loosened or disabled
+  the watchdog (one disabled it entirely on 2026-10-16; the office project raised the nudge to 45 min, piecemeal to 40,
+  reread to 6), and 39 % of one project's piecemeal warnings hit read-only reviewers. Shipped defaults now:
+  `agent_nudge_s` 2700 (was 900), `agent_stop_s` 5400 (was 1800, and must stay above the nudge: 1800 under a
+  2700 nudge stopped agents before any nudge), `watchdog_same_file_reads` 6 (was 3), `watchdog_reads_without_write`
+  40 (was 15). Unchanged: `watchdog_repeat_calls` 3 and the stuck-tool limits, which caught the only real hangs. The
+  watchdog code and its messages are unchanged. Prompt text: the ph skill table and the numbers in
+  `paseo-runtime.md` (kit region, digest updated). Measured check: FLOW-38, HARN-01, the watchdog tests (now with
+  fixed small thresholds) and the full offline suite.
+
 - Owner-approved run-mode pointer and stop reasons, 2026-10-22 (after reading WildEraV6's 250 runs: 37 stopped
   mid-phase with no reason recorded, and the new kit records none either): `ai-orchestrator` gains "Choosing how to
   run", which sends project work with `.planning/` to the GSD skills and other work to the existing execution-mode

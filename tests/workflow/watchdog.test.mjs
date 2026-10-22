@@ -9,9 +9,13 @@ import { CALLER, meta, setup, tick } from "./helpers.mjs";
 
 const S = 1000;
 
+// The mechanism tests count reads against fixed small thresholds, independent of the shipped defaults (raised
+// 2026-10-22 to 6 rereads and 40 reads without a write).
+const TEST_THRESHOLDS = { watchdog_same_file_reads: 3, watchdog_reads_without_write: 15 };
+
 async function rig(overlay = {}) {
   const clock = createFakeClock({ auto: false });
-  const s = setup({ clock, overlay });
+  const s = setup({ clock, overlay: { ...TEST_THRESHOLDS, ...overlay } });
   const session = await connectFake(s.fake, { env: s.env, root: s.project.root, clock });
   const agent = s.fake.addAgent({ parent: CALLER, status: "running" });
   await session.observe([agent.id]);

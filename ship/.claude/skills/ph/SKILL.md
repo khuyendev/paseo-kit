@@ -170,13 +170,13 @@ Time counts model time since the last prompt, tool time excluded. Teammates get 
 
 | key | shipped | effect |
 | --- | --- | --- |
-| `agent_nudge_s` | 900 | one steering message after this much model time |
-| `agent_stop_s` | 1800 | the agent is stopped and the call returns `null` |
+| `agent_nudge_s` | 2700 | one steering message after this much model time |
+| `agent_stop_s` | 5400 | the agent is stopped and the call returns `null` |
 | `agent_tool_stuck_s` | 900 | a tool call open this long is interrupted once with a retry message |
 | `agent_file_tool_stuck_s` | 180 | the same for the file tools |
 | `watchdog_repeat_calls` | 3 | identical tool calls in a row before a loop warning |
-| `watchdog_same_file_reads` | 3 | reads of one file before a reread warning |
-| `watchdog_reads_without_write` | 15 | reads without a write before a piecemeal warning |
+| `watchdog_same_file_reads` | 6 | reads of one file before a reread warning |
+| `watchdog_reads_without_write` | 40 | reads without a write before a piecemeal warning |
 
 ## When something is wrong
 

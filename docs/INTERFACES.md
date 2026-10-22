@@ -133,13 +133,13 @@ Merge column: `entry` = one-level per-entry merge; `replace` = whole value repla
 | `warmup_s` | integer >= 0 | 8 | replace | M6 |
 | `warmup_timeout_s` | integer >= 0 | 90 | replace | M6 |
 | `max_prompt_bytes` | integer >= 1 | 262144 | replace | M4 (size check) |
-| `agent_nudge_s` | integer >= 0 (0 disables) | 900 | replace | M6 watchdog |
-| `agent_stop_s` | integer >= 0 (0 disables) | 1800 | replace | M6 |
+| `agent_nudge_s` | integer >= 0 (0 disables) | 2700 | replace | M6 watchdog |
+| `agent_stop_s` | integer >= 0 (0 disables) | 5400 | replace | M6 |
 | `agent_tool_stuck_s` | integer >= 0 | 900 | replace | M6 |
 | `agent_file_tool_stuck_s` | integer >= 0 | 180 | replace | M6 |
 | `watchdog_repeat_calls` | integer >= 0 | 3 | replace | M6 |
-| `watchdog_same_file_reads` | integer >= 0 | 3 | replace | M6 |
-| `watchdog_reads_without_write` | integer >= 0 | 15 | replace | M6 |
+| `watchdog_same_file_reads` | integer >= 0 | 6 | replace | M6 |
+| `watchdog_reads_without_write` | integer >= 0 | 40 | replace | M6 |
 | `watchdog_enabled` | boolean | true | replace | M6 |
 | `compact_resume` | string | `Compaction done. Continue where you left off; re-arm any Monitor you stopped.` | replace | M5 compact-self |
 | `context_guard` | exactly `{window_tokens >= 1, start_pct 1..100, step_pct 1..100}` integers | `{1000000, 60, 5}` | entry | M8, `ph context`, M13 |

@@ -282,9 +282,9 @@ Watchdog (workflow agents only; `watchdog_enabled`). Time is the agent's own mod
 runner sent it: tool execution time (from the moment a call's input is complete until it completes; overlapping
 calls once) is subtracted, and each prompt resets it (the watchdog's own messages do not). Behaviour checks send one
 specific message each per prompt: the same tool with the same input `watchdog_repeat_calls` (3) times (`loop`), one
-file read `watchdog_same_file_reads` (3) times (`reread`), `watchdog_reads_without_write` (15) reads or searches
-without a write (`piecemeal`). After `agent_nudge_s` (900) of model time the agent gets one steering message to
-finish (`log watchdog: ... nudged`); after `agent_stop_s` (1800) it is archived and its `agent()` returns `null`
+file read `watchdog_same_file_reads` (6) times (`reread`), `watchdog_reads_without_write` (40) reads or searches
+without a write (`piecemeal`). After `agent_nudge_s` (2700) of model time the agent gets one steering message to
+finish (`log watchdog: ... nudged`); after `agent_stop_s` (5400) it is archived and its `agent()` returns `null`
 with reason `watchdog stopped the agent after <N> s`. Read the agent's activity before resuming: a stopped agent
 usually needs a smaller task or a script, not a rerun. A single tool call that runs longer than
 `agent_file_tool_stuck_s` (180, file tools) or `agent_tool_stuck_s` (900, shell and other tools) is interrupted
