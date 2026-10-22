@@ -194,3 +194,24 @@ test("PHCL-11 a wait that times out refuses delivery, with and without --now (IN
   assertLine(now, /^failed send slow2: turn still timeout after 60 s; not sent$/);
   assert.equal(s.fake.callsOf("sendAgentMessage").length, 0);
 });
+
+test("PHCL-20 archive --run --reason records the stop reason and puts the run in the metrics ledger at once", async () => {
+  const s = setup();
+  const runner = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore", windowsHide: true });
+  try {
+    const id = "wf_20261022-090000_feed";
+    s.project.writeJson(`_workspace/_runs/${id}/run.json`, { runId: id, status: "running", pid: runner.pid, adopted: [], name: "code-wave", startedAt: "2026-10-22T09:00:00.000Z" });
+    s.project.write(`_workspace/_runs/${id}/journal.jsonl`, `${JSON.stringify({ n: 1, label: "Code", agentType: "gsd-executor", status: "ok", agentId: "a1", tokens: 50, usage: { input: 1, cachedInput: 0, output: 50, costUsd: 0.01 }, duration_s: 9 })}\n`);
+    assertExit(await s.ph(["archive", "--run", id, "--reason", "  build hung\n on the  shared mutex "]), 0);
+    assert.equal(s.project.readJson(`_workspace/_runs/${id}/run.json`).stopReason, "build hung on the shared mutex");
+    const ledger = s.project.read("_workspace/harness-metrics.jsonl").trim().split("\n").map((l) => JSON.parse(l));
+    assert.deepEqual(ledger.map((r) => [r.runId, r.workflow, r.status, r.stopReason, r.groups[0].agent]), [[id, "code-wave", "stopped", "build hung on the shared mutex", "gsd-executor"]]);
+    assertExit(await s.ph(["archive", "--run", id, "--reason", "again"]), 0);
+    assert.equal(s.project.read("_workspace/harness-metrics.jsonl").trim().split("\n").length, 1, "a stopped run is recorded once");
+  } finally {
+    runner.kill();
+  }
+  const misuse = await s.ph(["archive", "--idle", "--reason", "x"]);
+  assertExit(misuse, 1);
+  assertErrLine(misuse, /--reason goes with --run/);
+});

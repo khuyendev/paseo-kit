@@ -11,6 +11,10 @@ Derive a verifiable Definition of Done (DoD) from the request before execution.
 
 You are responsible for ensuring the final integrated result passes verification against the DoD before declaring completion; use failed checks to guide corrections within the affected scope.
 
+## Choosing how to run
+
+Project work in a repository with `.planning/` goes through the GSD skills (`gsd-plan`, `gsd-execute`, `gsd-verify`, `gsd-quick`, `gsd-debug`); they are workflows already. For other work, pick the execution mode with the decision tree in `.claude/skills/harness/references/execution-modes.md` (section 4), the team pattern from `references/team-patterns.md`, and for a workflow script the recipes in `references/workflow-recipes.md`. Doing the work yourself is a valid choice: more agents must earn their coordination cost.
+
 ## Accepting an agent's work
 
 An agent's "done" is a claim, not a result. Ask each agent for evidence you can check (the files and lines it changed or read, the commands it ran and their output) and check that evidence before you accept the result: open the cited lines, rerun the deciding command or read its log.
@@ -21,4 +25,4 @@ An agent's "done" is a claim, not a result. Ask each agent for evidence you can 
 
 ## Waiting for agents
 
-Never wait with your own sleep/grep polling loop. Run `ph fanout --file F --collect DIR` in the foreground: it returns once every reply is collected. For agents started without `--collect` (`ph spawn`, `ph send`, `ph fanout`) and for `ph workflow --detach`, follow the `next:` line those commands print: run `ph watch <names>` or `ph watch-run <runId>` under Monitor.
+Never wait with your own sleep/grep polling loop. Run `ph fanout --file F --collect DIR` in the foreground: it returns once every reply is collected. For agents started without `--collect` (`ph spawn`, `ph send`, `ph fanout`) and for `ph workflow --detach`, follow the `next:` line those commands print: run `ph watch <names>` or `ph watch-run <runId>` under Monitor. When you stop a run before it ends, say why: `ph archive --run <runId> --reason "<why>"`.

@@ -306,7 +306,8 @@ workflow run (it survives `ph runs --prune`); `ph evolve-stats --import` adds ol
 model, effort: calls, ok, `null` split into agent, infra and other causes, median seconds, cost per call, the results
 of its runs) and one line per workflow (results such as `passed`/`gaps_found`, gaps, wall time, cost per run, and a
 suggested `ph workflow --budget` of 4 x the median output tokens of a run: a cap that stops a runaway run, not a
-normal one; tighten it once there are real numbers).
+normal one; tighten it once there are real numbers), with the stopped runs counted by their `ph archive --run
+--reason`; stops without a reason are counted too and teach nothing.
 - Sort every failure by cause before editing anything; a lesson is a cause shared by several failures, not one
   failure. Infra `null`s (daemon, provider, caps, permissions) and a grader or check that contradicts its own task are
   fixed in the runtime, the check or the task, never in role text.

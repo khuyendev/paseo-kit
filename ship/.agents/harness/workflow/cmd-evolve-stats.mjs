@@ -14,6 +14,8 @@ export const FEW_RUNS = 5;
 // The suggested `ph workflow --budget` of a workflow: this many times its median output tokens per run (owner decision
 // 2026-10-22, after "Building effective agent automations": a cap of three to five normal runs, tightened later).
 export const BUDGET_FACTOR = 4;
+// Characters of one stop reason shown on a workflow line.
+const STOP_SHOWN_CHARS = 60;
 
 // A --budget value rounded up to whole thousands: 118400 -> "119k".
 export const budgetText = (tokens) => `${Math.max(1, Math.ceil(tokens / 1000))}k`;
@@ -93,10 +95,14 @@ function workflowLines(records) {
   const flows = new Map();
   for (const r of records) {
     const name = r.workflow ?? "-";
-    if (!flows.has(name)) flows.set(name, { runs: 0, status: {}, outcomes: {}, gaps: 0, walls: [], outputs: [], cost: 0, costKnown: true });
+    if (!flows.has(name)) flows.set(name, { runs: 0, status: {}, outcomes: {}, gaps: 0, walls: [], outputs: [], stops: {}, cost: 0, costKnown: true });
     const f = flows.get(name);
     f.runs++;
     f.status[r.status ?? "unknown"] = (f.status[r.status ?? "unknown"] ?? 0) + 1;
+    if (r.status === "stopped") {
+      const why = r.stopReason ? JSON.stringify(r.stopReason.slice(0, STOP_SHOWN_CHARS)) : "no reason";
+      f.stops[why] = (f.stops[why] ?? 0) + 1;
+    }
     if (r.outcome) {
       f.outcomes[r.outcome.status] = (f.outcomes[r.outcome.status] ?? 0) + 1;
       f.gaps += r.outcome.gaps ?? 0;
@@ -113,7 +119,8 @@ function workflowLines(records) {
     // --budget counts output tokens, so the suggestion scales the median output of a run.
     const out = median(f.outputs);
     const budget = out > 0 ? `; suggested --budget ${budgetText(out * BUDGET_FACTOR)} (${BUDGET_FACTOR} x median output ${Math.round(out)})${f.runs < FEW_RUNS ? `, few runs` : ""}` : "";
-    return `workflow ${name}: runs ${f.runs} (${counts(f.status)})${outcomes}; median wall ${round1(median(f.walls))} s; cost ${f.costKnown ? `${usd(f.cost / f.runs)}/run` : "?"}${budget}`;
+    const stops = Object.keys(f.stops).length ? `; stopped: ${counts(f.stops)}` : "";
+    return `workflow ${name}: runs ${f.runs} (${counts(f.status)})${outcomes}${stops}; median wall ${round1(median(f.walls))} s; cost ${f.costKnown ? `${usd(f.cost / f.runs)}/run` : "?"}${budget}`;
   });
 }
 

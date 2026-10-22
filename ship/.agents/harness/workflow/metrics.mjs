@@ -68,6 +68,7 @@ export function runRecord(runId, info, journal, result) {
   const outcome = result && typeof result === "object" && typeof result.status === "string" ? { status: result.status, ...(Array.isArray(result.gaps) ? { gaps: result.gaps.length } : {}) } : null;
   return {
     v: RECORD_VERSION, runId, workflow: info?.name ?? null, status: info?.status ?? null, startedAt: info?.startedAt ?? null, endedAt: info?.endedAt ?? null,
+    ...(info?.status === "stopped" ? { stopReason: typeof info.stopReason === "string" ? info.stopReason : null } : {}),
     wallS: Number.isFinite(start) && Number.isFinite(stop) ? Math.round((stop - start) / 1000) : null, outcome,
     groups: [...groups.values()].map(({ costKnown, costUsd, ...g }) => ({ ...g, costUsd: costKnown ? Math.round(costUsd * 10000) / 10000 : null })),
   };

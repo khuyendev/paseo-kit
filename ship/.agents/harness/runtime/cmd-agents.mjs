@@ -7,6 +7,8 @@ import { readJsonIf, writeJsonAtomic } from "../lib/io.mjs";
 import { id8, resolveInside } from "../lib/paths.mjs";
 import { pidAlive } from "../lib/proc.mjs";
 import { resultJson } from "./result.mjs";
+import { readJournal } from "../workflow/journal.mjs";
+import { appendRecords, readLedger, runRecord } from "../workflow/metrics.mjs";
 import { readPrompt, waitHint } from "./start.mjs";
 
 export const RUNS_DIR = "_workspace/_runs";
@@ -171,8 +173,30 @@ async function runAgents(ctx, session, own) {
   // FLOW-48: agents adopted from an earlier run belong to this run too.
   const adopted = new Set((info.adopted ?? []).map((a) => a.agentId));
   const selected = own.filter((a) => a.labels?.["harness.run"] === runId || adopted.has(a.id));
-  return { selected, finish: () => info.status === "running" && writeJsonAtomic(file, { ...info, status: "stopped", endedAt: new Date(ctx.clock.now()).toISOString() }) };
+  // The stop reason (owner decision 2026-10-22: 37 runs of one project stopped mid-phase left no reason to learn from) goes into
+  // run.json and, with the run, into the metrics ledger at once; a killed runner never records itself.
+  const finish = () => {
+    if (info.status !== "running") return;
+    const stopped = { ...info, status: "stopped", endedAt: new Date(ctx.clock.now()).toISOString(), stopReason: stopReasonOf(ctx.opts.reason) };
+    writeJsonAtomic(file, stopped);
+    try {
+      if (!readLedger(ctx.root).records.some((r) => r.runId === runId)) appendRecords(ctx.root, [runRecord(runId, stopped, readJournalIf(path.join(path.dirname(file), "journal.jsonl")), null)]);
+    } catch (e) {
+      ctx.out(`run metrics not recorded: ${errText(e)}`);
+    }
+  };
+  return { selected, finish };
 }
+
+const STOP_REASON_MAX_CHARS = 300;
+const stopReasonOf = (text) => (typeof text === "string" && text.trim() ? text.replace(/\s+/g, " ").trim().slice(0, STOP_REASON_MAX_CHARS) : null);
+const readJournalIf = (file) => {
+  try {
+    return readJournal(file);
+  } catch {
+    return [];
+  }
+};
 
 async function archive(ctx) {
   const { opts } = ctx;
@@ -181,6 +205,7 @@ async function archive(ctx) {
   const own = await session.listAgents();
   let selected;
   let finish = () => {};
+  if (opts.reason !== undefined && opts.run === undefined) throw new UsageError("--reason goes with --run");
   if (opts.run !== undefined) ({ selected, finish } = await runAgents(ctx, session, own));
   else if (ctx.args.length) selected = await session.resolveTargets(ctx.args);
   else if (opts.idle || opts["name-prefix"] !== undefined) {
@@ -252,8 +277,8 @@ export const agentCommands = [
   {
     name: "archive",
     summary: "archive agents by name, --idle, --name-prefix, or every agent of a workflow run",
-    usage: "ph archive NAME|ID... | --idle [--name-prefix P] | --name-prefix P | --run RUNID [--runs-dir D]",
-    options: { idle: "bool", "name-prefix": "string", run: "string", "runs-dir": "string" },
+    usage: "ph archive NAME|ID... | --idle [--name-prefix P] | --name-prefix P | --run RUNID [--reason TEXT] [--runs-dir D]",
+    options: { idle: "bool", "name-prefix": "string", run: "string", reason: "string", "runs-dir": "string" },
     config: "required",
     run: archive,
   },

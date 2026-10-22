@@ -165,5 +165,9 @@ test("HARN-17 ai-orchestrator, the main session's skill: triggers, the agent lim
   assert.match(text, /check that evidence before you accept the result/);
   assert.match(text, /confirm N results came back/);
   assert.match(text, /have a different agent confirm it/);
+  assert.ok(text.includes("## Choosing how to run"));
+  for (const ref of ["execution-modes.md", "team-patterns.md", "workflow-recipes.md", "gsd-execute"]) assert.ok(text.includes(ref), ref);
+  for (const rel of ["execution-modes.md", "team-patterns.md", "workflow-recipes.md"]) assert.ok(fs.existsSync(path.join(SKILLS, "harness", "references", rel)), `${rel} exists`);
+  assert.match(text, /ph archive --run <runId> --reason/);
   assert.doesNotMatch(text, /\b20\b|backlog/i);
 });

@@ -6,6 +6,15 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Owner-approved run-mode pointer and stop reasons, 2026-10-22 (after reading WildEraV6's 250 runs: 37 stopped
+  mid-phase with no reason recorded, and the new kit records none either): `ai-orchestrator` gains "Choosing how to
+  run", which sends project work with `.planning/` to the GSD skills and other work to the existing execution-mode
+  decision tree, team patterns and workflow recipes of the harness skill instead of a new table. `ph archive --run`
+  takes `--reason`, writes `stopReason` into run.json and puts the stopped run into the metrics ledger at once (a killed
+  runner never records itself); `ph evolve-stats` counts stopped runs per workflow by reason. Prompt text: the
+  ai-orchestrator skill, the ph skill and kit-adapter.md section 11. Measured check: PHCL-20, EVOL-07, HARN-17 and the
+  full offline suite.
+
 - Owner-approved main-session skill and null counting, 2026-10-22: the owner states `ai-orchestrator` is their own
   skill, so it is no longer carried as protected method text (D-111): its PROVENANCE entries, source fixture and NOTICE
   are removed and HARN-17 checks the kit text. Its description now says when to trigger, with English and Vietnamese

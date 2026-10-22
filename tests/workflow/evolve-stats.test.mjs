@@ -95,6 +95,18 @@ test("EVOL-06 the suggested budget is four median runs of output tokens, in whol
   assert.match(line, /; suggested --budget 160k \(4 x median output 40000\)$/, "five runs: no few-runs note");
 });
 
+test("EVOL-07 a workflow line counts stopped runs by reason and says how many stopped without one", async () => {
+  const s = setup();
+  fixtureRun(s, "wf_s1", { status: "stopped", startedAt: "2026-10-20T10:00:00.000Z", journal: [call({})], name: "code-wave" });
+  fixtureRun(s, "wf_s2", { status: "stopped", startedAt: "2026-10-21T10:00:00.000Z", journal: [call({})], name: "code-wave" });
+  fixtureRun(s, "wf_s3", { status: "done", startedAt: "2026-10-22T10:00:00.000Z", journal: [call({})], result: { status: "executed" }, name: "code-wave" });
+  const info = (id) => s.project.path(`_workspace/_runs/${id}/run.json`);
+  fs.writeFileSync(info("wf_s2"), JSON.stringify({ ...JSON.parse(fs.readFileSync(info("wf_s2"), "utf8")), stopReason: "owner changed the plan" }));
+  const r = await s.ph(["evolve-stats", "--import"]);
+  const line = r.out.find((l) => l.startsWith("workflow code-wave"));
+  assert.match(line, /^workflow code-wave: runs 3 \(stopped 2, done 1\); results executed 1; stopped: no reason 1, "owner changed the plan" 1; /);
+});
+
 test("EVOL-03 bad arguments exit 1; an empty or damaged ledger is reported, not fatal", async () => {
   const s = setup();
   assert.equal((await s.ph(["evolve-stats", "--since", "yesterday"])).code, 1);
