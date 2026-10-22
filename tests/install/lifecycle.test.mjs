@@ -16,7 +16,7 @@ const installed = async (kit = makeKit(), files = {}) => {
 };
 
 test("INST-05 manifest: exactly five keys, installedAt kept, code-point key order, no kit or project path", async () => {
-  const kit = makeKit({ files: { "B.md": "b\n", "a.md": "a\n", ".claude/hooks/io_guard.mjs": "x\n", ".claude/hooks/context_guard.mjs": "x\n", ".claude/hooks/bash_long_command.mjs": "x\n", ".claude/hooks/syntax_check.mjs": "x\n" } });
+  const kit = makeKit({ files: { "B.md": "b\n", "a.md": "a\n", ".claude/hooks/io_guard.mjs": "x\n", ".claude/hooks/context_guard.mjs": "x\n", ".claude/hooks/bash_long_command.mjs": "x\n", ".claude/hooks/syntax_check.mjs": "x\n", ".claude/hooks/skill_usage.mjs": "x\n" } });
   const p = makeProject();
   await runKit(["install", p.root], { kit, now: () => new Date("2026-01-01T00:00:00Z") });
   const first = p.manifest();

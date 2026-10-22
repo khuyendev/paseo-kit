@@ -5,6 +5,8 @@ import path from "node:path";
 import { readText } from "../lib/io.mjs";
 
 export const METRICS_REL = "_workspace/harness-metrics.jsonl";
+// Written by the skill usage hook (.claude/hooks/skill_usage.mjs): one line per skill the model invoked.
+export const SKILL_USAGE_REL = "_workspace/skill-usage.jsonl";
 export const RECORD_VERSION = 1;
 
 // A null reason's cause. Agent causes are the agent's own doing; infra causes are the daemon, the provider, caps
@@ -73,6 +75,35 @@ export function appendRecords(root, records) {
   const file = path.join(root, METRICS_REL);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.appendFileSync(file, records.map((r) => `${JSON.stringify(r)}\n`).join(""), "utf8");
+}
+
+// Skill calls per skill name since an ISO date, and every project skill folder, so a never-called skill shows as 0.
+export function skillUsage(root, since) {
+  const calls = new Map();
+  const file = path.join(root, SKILL_USAGE_REL);
+  if (fs.existsSync(file)) {
+    for (const line of readText(file).split("\n")) {
+      if (!line.trim()) continue;
+      let e;
+      try {
+        e = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (typeof e?.skill !== "string" || (since !== undefined && String(e.at ?? "") < since)) continue;
+      const c = calls.get(e.skill) ?? { calls: 0, last: null };
+      c.calls++;
+      if (!c.last || String(e.at) > c.last) c.last = String(e.at);
+      calls.set(e.skill, c);
+    }
+  }
+  const dir = path.join(root, ".claude", "skills");
+  if (fs.existsSync(dir)) {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (ent.isDirectory() && fs.existsSync(path.join(dir, ent.name, "SKILL.md")) && !calls.has(ent.name)) calls.set(ent.name, { calls: 0, last: null });
+    }
+  }
+  return calls;
 }
 
 // {records, bad}: unparsable or foreign lines are counted, not fatal.

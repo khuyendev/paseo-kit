@@ -1,6 +1,6 @@
 ---
 name: gsd-execute
-description: Executes a planned GSD phase wave by wave through the gsd-execute workflow - executors per plan, build/test/obligation gate, bounded code review and fixes, orchestrator commits. Use when the owner asks to execute, build or implement a planned phase, resume an interrupted execution, or run its gap-closure wave. Not before the phase has handoff files (plan it with gsd-plan).
+description: "Executes a planned GSD phase wave by wave through the gsd-execute workflow - executors per plan, build/test/obligation gate, bounded code review and fixes, orchestrator commits. Use when the owner asks to execute, build or implement a planned phase, resume an interrupted execution, or run its gap-closure wave. Not before the phase has handoff files (plan it with gsd-plan). Trigger on: 'execute phase 3', 'build the planned phase', 'resume the execution', 'chạy phase 3', 'thực thi phase', 'làm phase này', 'chạy tiếp execute'."
 ---
 
 # gsd-execute

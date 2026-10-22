@@ -1,6 +1,6 @@
 ---
 name: gsd-undo
-description: Reverts GSD commits of the last N commits, a phase or a plan with git revert --no-commit after a hard confirmation. Use when the owner asks to undo, roll back or revert a phase, a plan or recent GSD work. Never resets history.
+description: "Reverts GSD commits of the last N commits, a phase or a plan with git revert --no-commit after a hard confirmation. Use when the owner asks to undo, roll back or revert a phase, a plan or recent GSD work. Never resets history. Trigger on: 'undo phase 3', 'revert the last plan', 'roll back', 'hoàn tác', 'revert phase', 'bỏ commit vừa rồi'."
 ---
 
 # gsd-undo

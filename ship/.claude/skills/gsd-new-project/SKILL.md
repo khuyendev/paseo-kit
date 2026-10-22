@@ -1,6 +1,6 @@
 ---
 name: gsd-new-project
-description: Starts a GSD project - questioning, PROJECT.md, workflow preferences, optional research, REQUIREMENTS, an approved ROADMAP and STATE. Use when the owner wants to start, initialize or set up GSD planning for a project, or resume an unfinished project setup. Not when .planning is already initialized (use gsd-progress).
+description: "Starts a GSD project - questioning, PROJECT.md, workflow preferences, optional research, REQUIREMENTS, an approved ROADMAP and STATE. Use when the owner wants to start, initialize or set up GSD planning for a project, or resume an unfinished project setup. Not when .planning is already initialized (use gsd-progress). Trigger on: 'start a new project', 'set up GSD planning', 'new roadmap', 'bắt đầu dự án mới', 'lên kế hoạch dự án', 'tạo roadmap mới'."
 ---
 
 # gsd-new-project

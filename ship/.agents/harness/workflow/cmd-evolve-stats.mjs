@@ -5,7 +5,7 @@ import { UsageError, failedLine } from "../lib/cli.mjs";
 import { readJsonIf } from "../lib/io.mjs";
 import { listRuns } from "./cmd-runs.mjs";
 import { RUN_FILES, readJournal, runsDirOf } from "./journal.mjs";
-import { AGENT_CAUSES, METRICS_REL, appendRecords, readLedger, runRecord } from "./metrics.mjs";
+import { AGENT_CAUSES, METRICS_REL, appendRecords, readLedger, runRecord, skillUsage } from "./metrics.mjs";
 
 export const EVOLVE_STATS_OPTIONS = Object.freeze({ agent: "string", workflow: "string", since: "string", import: "bool", "runs-dir": "string" });
 export const EVOLVE_STATS_USAGE = "ph evolve-stats [--agent A] [--workflow N] [--since YYYY-MM-DD] [--import [--runs-dir D]]";
@@ -134,6 +134,11 @@ export async function evolveStatsCommand(ctx) {
     .sort((a, b) => String(a.startedAt ?? "").localeCompare(String(b.startedAt ?? "")));
   for (const line of versionLines(records, agent)) ctx.out(line);
   if (agent === undefined) for (const line of workflowLines(records)) ctx.out(line);
+  // Skills the model invoked (the skill usage hook), most used first; a 0 marks a skill whose description never fired.
+  if (agent === undefined && workflow === undefined) {
+    const skills = [...skillUsage(ctx.root, since).entries()].sort((a, b) => b[1].calls - a[1].calls || a[0].localeCompare(b[0]));
+    for (const [name, s] of skills) ctx.out(`skill ${name}: ${s.calls} calls by the model${s.last ? `, last ${s.last.slice(0, 10)}` : ""}`);
+  }
   ctx.out(`evolve-stats: ${records.length} runs from ${METRICS_REL}${ledger.bad ? `, ${ledger.bad} unreadable lines skipped` : ""}`);
   return code;
 }

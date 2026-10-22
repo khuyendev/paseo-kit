@@ -1,6 +1,6 @@
 ---
 name: gsd-plan
-description: Plans one GSD phase (outline, skeleton review, per-plan planners, checker, coverage, handoff) through the gsd-plan workflow, then chains execute and verify. Use when the owner asks to plan a phase, replan it, plan its gaps after verification, or run the next phase. Not for discussing scope (gsd-discuss) or quick one-off tasks (gsd-quick).
+description: "Plans one GSD phase (outline, skeleton review, per-plan planners, checker, coverage, handoff) through the gsd-plan workflow, then chains execute and verify. Use when the owner asks to plan a phase, replan it, plan its gaps after verification, or run the next phase. Not for discussing scope (gsd-discuss) or quick one-off tasks (gsd-quick). Trigger on: 'plan phase 3', 'replan', 'plan the gaps', 'run the next phase', 'lên plan phase 3', 'plan lại', 'phase tiếp theo'."
 ---
 
 # gsd-plan

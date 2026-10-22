@@ -6,6 +6,17 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Owner-approved skill fixes, 2026-10-22 (owner request after the Claude Code team's skills write-up: "làm ngay sửa
+  bug", "trigger cả tiếng anh các tiếng việt luôn"): the gsd-research description held an unquoted "Standalone: never",
+  so its front matter was not YAML and Claude Code listed the skill without a description; it is quoted, and SKIL-01
+  checks every shipped SKILL.md front matter. The 13 GSD skills and ph end their descriptions with trigger phrases in
+  English and Vietnamese. New hook `skill_usage.mjs` (PreToolUse Skill) logs each skill the model invokes to
+  `_workspace/skill-usage.jsonl`, and `ph evolve-stats` lists every project skill with its count. kit-adapter.md
+  section 6: a `## Gotchas` section in the stack skill, trigger-style descriptions in the owner's wording, quoting.
+  harness, harness-evolve and ai-orchestrator (protected method text) are unchanged. Measured check: SKIL-01..03, the
+  hook registration tests and the full offline suite; the trigger phrases are not yet checked with live 3 + 3 trigger
+  requests.
+
 - Owner-approved kit rules, 2026-10-22 (owner request after reading the claude.dev posts on Opus 5.5, effort and agent
   automations; owner judged the AGENTS.md block outdated and approved the cut with "Gật"): the AGENTS.md block keeps only
   rules nothing else enforces. Added: report to the owner under **Blocked on me / Changed / Found**, mark unconfirmed

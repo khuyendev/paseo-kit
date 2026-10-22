@@ -18,6 +18,7 @@ const cmd = (script) => `node "$CLAUDE_PROJECT_DIR/.claude/hooks/${script}"`;
 const EXPECTED = [
   ["PreToolUse", `Read|Grep|Glob|Write|Edit|MultiEdit|NotebookEdit|${HF}.*`, "io_guard.mjs", 10],
   ["PreToolUse", "Bash", "bash_long_command.mjs", 10],
+  ["PreToolUse", "Skill", "skill_usage.mjs", 10],
   ["PreToolUse", `Edit|MultiEdit|Write|${HF}(edit|write)_multiple_files`, "syntax_check.mjs", 90],
   ["PostToolUse", `Read|Grep|Glob|${HF}read_ranges`, "io_guard.mjs", 10],
   ["PostToolUse", "*", "context_guard.mjs", 10],
@@ -33,7 +34,7 @@ async function kit(argv, env) {
   return { code, out, err };
 }
 
-test("HOOK-01 template: exactly the seven kit entries with their matchers and timeouts", () => {
+test("HOOK-01 template: exactly the eight kit entries with their matchers and timeouts", () => {
   const regs = registrations(template());
   assert.ok(regs.every((r) => r.type === "command" && r.command === cmd(r.script)));
   assert.deepEqual(regs.map((r) => key([r.event, r.matcher, r.script, r.timeout])).sort(), EXPECTED.map(key).sort());

@@ -1,6 +1,6 @@
 ---
 name: gsd-quick
-description: Runs a small GSD task outside the phase plan - one plan of 1-3 tasks under .planning/quick/, executed by a gsd-executor; --full adds discussion, research, a checker and a verifier. Use when the owner asks for a quick fix, small change or one-off task in a project with a ROADMAP. Not for phase work (gsd-plan) or trivial one-line fixes (do those inline).
+description: "Runs a small GSD task outside the phase plan - one plan of 1-3 tasks under .planning/quick/, executed by a gsd-executor; --full adds discussion, research, a checker and a verifier. Use when the owner asks for a quick fix, small change or one-off task in a project with a ROADMAP. Not for phase work (gsd-plan) or trivial one-line fixes (do those inline). Trigger on: 'quick fix', 'small change', 'one-off task', 'sửa nhanh', 'fix nhanh cái này', 'việc nhỏ thôi'."
 ---
 
 # gsd-quick

@@ -1,6 +1,6 @@
 ---
 name: ph
-description: The ph command-line contract of the kit runtime - start, message, wait for, read and archive Paseo agents (spawn, fanout, send, watch, result, team, context, stop, archive), team task lists, artifact freeze, worktrees, self-compaction, doctor, and workflow scripts. Use whenever you orchestrate Paseo agents from a session or an agent, or when a skill or GSD command tells you to run ph.
+description: "The ph command-line contract of the kit runtime - start, message, wait for, read and archive Paseo agents (spawn, fanout, send, watch, result, team, context, stop, archive), team task lists, artifact freeze, worktrees, self-compaction, doctor, and workflow scripts. Use whenever you orchestrate Paseo agents from a session or an agent, or when a skill or GSD command tells you to run ph. Trigger on: 'spawn agents', 'run a workflow', 'watch the run', 'chạy agent', 'giao cho agent', 'xem run'."
 ---
 
 # ph: the agent runtime CLI
@@ -129,8 +129,9 @@ until dry, budget-aware loop, custom type + schema + effort, tier choice).
   `ph archive --run <runId>` stops a run for good.
 - Every ended run appends one line to `_workspace/harness-metrics.jsonl`, which pruning keeps. `ph evolve-stats
   [--agent A] [--workflow N] [--since YYYY-MM-DD]` prints it per agent version (agent, role-text hash, model,
-  effort) and per workflow, with a suggested `--budget` (4 x the median output tokens of a run); `--import [--runs-dir D]`
-  first adds ended runs that are not in it yet. `harness-evolve`
+  effort) and per workflow, with a suggested `--budget` (4 x the median output tokens of a run), then every project
+  skill with the times the model invoked it (`_workspace/skill-usage.jsonl`); `--import [--runs-dir D]` first adds ended
+  runs that are not in it yet. `harness-evolve`
   reads it (harness skill, `references/kit-adapter.md` section 11).
 
 Authoring rules:

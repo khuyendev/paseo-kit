@@ -16,7 +16,7 @@ const PROJECT_HOOK = { type: "command", command: "node .claude/hooks/project_che
 const registrations = (settings) => Object.entries(settings.hooks ?? {}).flatMap(([event, groups]) =>
   groups.flatMap((g) => g.hooks.map((h) => [event, g.matcher ?? null, h.command, h.timeout ?? null])));
 
-test("HOOK-01 template merged into empty settings gives exactly the seven kit entries", () => {
+test("HOOK-01 template merged into empty settings gives exactly the eight kit entries", () => {
   const edits = "Edit|MultiEdit|Write|mcp__harness-files__(edit|write)_multiple_files";
   assert.deepEqual(registrations(reconcileSettings({}, TEMPLATE)).sort(), [
     ["PreToolUse", "Read|Grep|Glob|Write|Edit|MultiEdit|NotebookEdit|mcp__harness-files__.*", cmd("io_guard"), 10],
@@ -24,6 +24,7 @@ test("HOOK-01 template merged into empty settings gives exactly the seven kit en
     ["PostToolUse", "*", cmd("context_guard"), 10],
     ["UserPromptSubmit", null, cmd("context_guard"), 10],
     ["PreToolUse", "Bash", cmd("bash_long_command"), 10],
+    ["PreToolUse", "Skill", cmd("skill_usage"), 10],
     ["PreToolUse", edits, cmd("syntax_check"), 90],
     ["PostToolUse", edits, cmd("syntax_check"), 90],
   ].sort());

@@ -1,6 +1,6 @@
 ---
 name: gsd-verify
-description: Verifies an executed GSD phase with one fresh gsd-verifier, then routes it - phase complete and transition, UAT with the owner, or gap closure. Use when the owner asks to verify, test, accept or finish a phase, or to continue a UAT session. Not for executing plans (gsd-execute).
+description: "Verifies an executed GSD phase with one fresh gsd-verifier, then routes it - phase complete and transition, UAT with the owner, or gap closure. Use when the owner asks to verify, test, accept or finish a phase, or to continue a UAT session. Not for executing plans (gsd-execute). Trigger on: 'verify phase 3', 'accept the phase', 'run UAT', 'kiểm tra phase', 'nghiệm thu phase', 'verify lại'."
 ---
 
 # gsd-verify

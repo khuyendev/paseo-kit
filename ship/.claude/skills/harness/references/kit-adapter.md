@@ -179,6 +179,16 @@ run, report the adapter **not ready**, with the blocker; a lint pass or trigger 
   project's conventions from `CONVENTIONS.md`, and the traps from `CONCERNS.md`. Executor and fixer prompts tell
   the agent to follow it. Follow the skill-writing guide (description with "use when" triggers, body under 500
   lines, details in `references/`).
+- Give the stack skill a `## Gotchas` section and put the most effort there (owner decision 2026-10-22, after the
+  Claude Code team's skills write-up: the highest-signal part of a skill): each gotcha is a trap of this codebase an
+  agent fell into or would fall into, stated as the fact and what to do instead ("the `subscriptions` table is
+  append-only: the current row has the highest version, not the latest `created_at`"). Leave out what an agent
+  learns by reading the code or knows by default. `harness-evolve` adds a gotcha when the same failure repeats.
+- Write every skill description as when to trigger, not a summary, and name the owner's own wording in English and
+  in the owner's language (`Trigger on: 'run the tests', 'chạy test'`). Quote the description when it holds `: `, or
+  the front matter stops being YAML and the skill is listed without it. `ph evolve-stats` lists every project skill
+  with the times the model invoked it (`_workspace/skill-usage.jsonl`, written by the kit's skill usage hook); a
+  skill at 0 calls after it should have fired needs a better description.
 - Reuse the kit's GSD agents in `.agents/agents/` (`gsd-executor`, `gsd-code-reviewer`, `gsd-code-fixer`,
   `gsd-verifier` and the others) before creating any agent. A project agent is justified only when a role needs
   knowledge or tools the stack skill cannot give the generic agent (for example an interface architect for a

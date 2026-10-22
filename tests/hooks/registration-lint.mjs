@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { LIMITS } from "../../ship/.claude/hooks/syntax_check.mjs";
 
-export const NATIVE_TOOLS = new Set(["Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob", "Bash", "WebFetch", "WebSearch", "TodoWrite", "Task", "Agent"]);
+export const NATIVE_TOOLS = new Set(["Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob", "Bash", "WebFetch", "WebSearch", "TodoWrite", "Task", "Agent", "Skill"]);
 export const MOD_TOOLS = ["mcp__harness-files__read_ranges", "mcp__harness-files__edit_multiple_files", "mcp__harness-files__write_multiple_files"];
 
 // Internal time budget per kit hook script; a registration timeout must exceed it.

@@ -1,6 +1,6 @@
 ---
 name: gsd-forensics
-description: Investigates a failed or stuck GSD run read-only (git history, debug sessions, workflow run records, gate evidence) and writes one dated forensics report. Use when the owner asks what went wrong, why a run or phase failed, for a post-mortem or forensics. Not for fixing the bug (gsd-debug).
+description: "Investigates a failed or stuck GSD run read-only (git history, debug sessions, workflow run records, gate evidence) and writes one dated forensics report. Use when the owner asks what went wrong, why a run or phase failed, for a post-mortem or forensics. Not for fixing the bug (gsd-debug). Trigger on: 'what went wrong', 'post-mortem of the run', 'why did the phase fail', 'sao run bị hỏng', 'chuyện gì đã xảy ra với run', 'mổ xẻ run lỗi'."
 ---
 
 # gsd-forensics

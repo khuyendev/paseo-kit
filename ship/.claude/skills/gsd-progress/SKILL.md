@@ -1,6 +1,6 @@
 ---
 name: gsd-progress
-description: Shows where a GSD project stands (position, recent summaries, decisions, blockers) and routes to the next command; `next` also runs that step. Use when the owner asks for progress, status, what is next, or to continue the project. Read-only except when `next` runs the chosen step.
+description: "Shows where a GSD project stands (position, recent summaries, decisions, blockers) and routes to the next command; `next` also runs that step. Use when the owner asks for progress, status, what is next, or to continue the project. Read-only except when `next` runs the chosen step. Trigger on: 'progress', 'status', 'what is next', 'continue', 'tiến độ sao rồi', 'đang tới đâu', 'tiếp theo làm gì', 'làm tiếp'."
 ---
 
 # gsd-progress

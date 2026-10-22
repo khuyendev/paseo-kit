@@ -1,6 +1,6 @@
 ---
 name: gsd-debug
-description: Debugs one failure with a persistent .planning/debug session and a plain gsd-debugger agent, bounded by turns and minutes, closing only on a verified fresh run. Use when the owner reports a bug, a failing test or gate, or asks to debug, find the root cause, continue or list debug sessions. Not for post-mortems of runs (gsd-forensics).
+description: "Debugs one failure with a persistent .planning/debug session and a plain gsd-debugger agent, bounded by turns and minutes, closing only on a verified fresh run. Use when the owner reports a bug, a failing test or gate, or asks to debug, find the root cause, continue or list debug sessions. Not for post-mortems of runs (gsd-forensics). Trigger on: 'debug this', 'find the root cause', 'why does this test fail', 'debug cái này', 'tìm nguyên nhân lỗi', 'sao test này fail', 'lỗi này do đâu'."
 ---
 
 # gsd-debug

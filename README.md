@@ -146,6 +146,8 @@ Registered from `ship/templates/settings.hooks.json`; hooks never block a tool c
 - `io_guard.mjs`: reminders for unbatched lookups, edits and re-reads (`io_guard` thresholds).
 - `syntax_check.mjs`: runs the adapter's `syntax_checkers` before and after edits and reports newly broken files.
 - `bash_long_command.mjs`: rescues over-long Bash commands on Windows.
+- `skill_usage.mjs`: logs each skill the model invokes to `_workspace/skill-usage.jsonl`; `ph evolve-stats` lists the
+  counts, so a skill whose description never fires shows 0.
 
 ## UI
 

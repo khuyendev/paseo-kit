@@ -1,6 +1,6 @@
 ---
 name: gsd-pause
-description: Pauses GSD work with a handoff file and resumes from it later. Use when the owner says pause, stop for today, hand off, or resume, continue where we left off, pick up the work. Writes .planning/.continue-here.md and a STATE session note; resume reads them back.
+description: "Pauses GSD work with a handoff file and resumes from it later. Use when the owner says pause, stop for today, hand off, or resume, continue where we left off, pick up the work. Writes .planning/.continue-here.md and a STATE session note; resume reads them back. Trigger on: 'pause', 'stop for today', 'pick up where we left off', 'tạm dừng', 'nghỉ hôm nay', 'làm tiếp chỗ hôm qua'."
 ---
 
 # gsd-pause

@@ -1,6 +1,6 @@
 ---
 name: gsd-map-codebase
-description: Maps an existing codebase into the 7 GSD docs of .planning/codebase/ (stack, integrations, architecture, structure, conventions, testing, concerns) with 4 parallel mapper agents. Use when the owner asks to map, analyse or document the codebase, before the harness generates the project adapter, or when planning warns about map drift. Not for a new empty project (use gsd-new-project).
+description: "Maps an existing codebase into the 7 GSD docs of .planning/codebase/ (stack, integrations, architecture, structure, conventions, testing, concerns) with 4 parallel mapper agents. Use when the owner asks to map, analyse or document the codebase, before the harness generates the project adapter, or when planning warns about map drift. Not for a new empty project (use gsd-new-project). Trigger on: 'map the codebase', 'analyse this repo', 'document the code', 'map codebase', 'phân tích codebase', 'đọc hiểu repo này'."
 ---
 
 # gsd-map-codebase

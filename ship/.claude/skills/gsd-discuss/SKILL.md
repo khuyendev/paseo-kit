@@ -1,6 +1,6 @@
 ---
 name: gsd-discuss
-description: Runs the GSD discuss step for one phase in the main session - finds the phase's gray areas, asks the owner numbered questions and writes CONTEXT.md with stable D-NN decisions. Use when the owner wants to discuss, scope or decide a phase before planning, or when gsd-plan stops at stage Discuss. Not for planning itself (gsd-plan).
+description: "Runs the GSD discuss step for one phase in the main session - finds the phase's gray areas, asks the owner numbered questions and writes CONTEXT.md with stable D-NN decisions. Use when the owner wants to discuss, scope or decide a phase before planning, or when gsd-plan stops at stage Discuss. Not for planning itself (gsd-plan). Trigger on: 'discuss phase 3', 'scope this phase', 'what should this phase decide', 'bàn phase 3', 'chốt scope phase', 'thảo luận phase này'."
 ---
 
 # gsd-discuss

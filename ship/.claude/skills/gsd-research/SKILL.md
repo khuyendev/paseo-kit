@@ -1,6 +1,6 @@
 ---
 name: gsd-research
-description: Views, reuses or refreshes the research report of one GSD phase through one gsd-phase-researcher agent. Use when the owner asks to research a phase, look at or refresh its RESEARCH.md, or when gsd-plan stops at stage Research. Standalone: never continues into planning.
+description: "Views, reuses or refreshes the research report of one GSD phase through one gsd-phase-researcher agent. Use when the owner asks to research a phase, look at or refresh its RESEARCH.md, or when gsd-plan stops at stage Research. Standalone: never continues into planning. Trigger on: 'research phase 3', 'refresh the research', 'show RESEARCH.md', 'research phase 3 đi', 'tìm hiểu trước phase', 'nghiên cứu phase này'."
 ---
 
 # gsd-research
