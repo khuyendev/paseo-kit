@@ -164,7 +164,7 @@ test("ADPT-12 granularity and plan limits default conservatively and a whole ent
 });
 
 test("ADPT-13 the gsd section holds exactly the documented keys and ranges are validated", () => {
-  assert.deepEqual(Object.keys(kit().gsd).sort(), ["batch_review", "branching", "commit_policy", "debug", "drift_threshold", "execution_mode", "fixer", "fixer_verifies_itself",
+  assert.deepEqual(Object.keys(kit().gsd).sort(), ["batch_review", "branching", "code_review", "commit_policy", "debug", "drift_threshold", "execution_mode", "fixer", "fixer_verifies_itself",
     "granularity", "isolation", "max_check_iterations", "max_skeleton_passes", "max_verify_rounds", "parallelization", "plan_limits", "plan_review", "protected_branches",
     "requirement_id_regex", "research", "review_depth", "roles", "skeleton_lanes"]);
   const k = kit();

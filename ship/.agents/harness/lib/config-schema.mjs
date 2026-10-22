@@ -132,6 +132,7 @@ export const SCHEMA = obj({
     drift_threshold: int(),
     debug: obj({ max_turns: int(1), minutes: int(1) }),
     fixer: obj({ max_build_attempts: int(1), minutes: int(1) }),
+    code_review: obj({ max_concurrent: int(1), reviewers: arr(obj({ model: str({ nonEmpty: true }), effort: effort() }, ["model", "effort"])) }),
     parallelization: obj({ enabled: bool(), max_concurrent: nullable(int(1)) }),
     review_depth: str({ oneOf: ["quick", "standard", "deep"] }),
   }),

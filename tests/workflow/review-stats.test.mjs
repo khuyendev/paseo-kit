@@ -20,7 +20,7 @@ function project() {
   return s;
 }
 
-test("REVW-01 review-stats reports gate, verifier, resolution, likelihood and classes over every phase", async () => {
+test("RVST-01 review-stats reports gate, verifier, resolution, likelihood and classes over every phase", async () => {
   const s = project();
   const r = await s.ph(["review-stats"]);
   assertExit(r, 0);
@@ -39,7 +39,7 @@ test("REVW-01 review-stats reports gate, verifier, resolution, likelihood and cl
   assert.equal(one.out.some((l) => l.startsWith("phase ")), false);
 });
 
-test("REVW-02 outcome records the later fate of a finding; the report counts it, the last fate wins", async () => {
+test("RVST-02 outcome records the later fate of a finding; the report counts it, the last fate wins", async () => {
   const s = project();
   assertLine(await s.ph(["review-stats", "outcome", "03-01:F-03", "not-hold", "--note", "by design"]), "outcome 03-01:F-03 not-hold");
   assertLine(await s.ph(["review-stats", "outcome", "03-02:F-01", "wont-fix"]), "outcome 03-02:F-01 wont-fix");
@@ -52,7 +52,7 @@ test("REVW-02 outcome records the later fate of a finding; the report counts it,
   assertLine(r, "likelihood possible: 2 findings, judged real 0, judged false 1");
 });
 
-test("REVW-03 outcome refuses an unknown finding or fate; no records report only the summary line", async () => {
+test("RVST-03 outcome refuses an unknown finding or fate; no records report only the summary line", async () => {
   const s = project();
   assertExit(await s.ph(["review-stats", "outcome", "09-01:F-01", "fixed"]), 1);
   assertErrLine(await s.ph(["review-stats", "outcome", "09-01:F-01", "fixed"]), /^usage error: no review finding 09-01:F-01 in \.planning\/phases\/\*\/review/);

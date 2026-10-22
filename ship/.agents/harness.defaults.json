@@ -132,6 +132,7 @@
     "debug": { "max_turns": 16, "minutes": 120 },
     "fixer": { "max_build_attempts": 3, "minutes": 60 },
     "parallelization": { "enabled": true, "max_concurrent": null },
+    "code_review": { "max_concurrent": 1, "reviewers": [] },
     "review_depth": "standard"
   }
 }

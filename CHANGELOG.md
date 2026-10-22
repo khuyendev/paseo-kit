@@ -6,6 +6,19 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- planning-panel targets Paseo 0.12.0 (manifest requirement and `@getpaseo/plugin`), like office: the 0.12.0 daemon
+  refuses a 0.11.2 plugin. PANL-01 pins both plugins to 0.12.0. Measured check: the full offline suite.
+
+- Owner-approved code review switches, 2026-10-22 ("tùy dự án mà chủ quyết định"): gsd-execute reviewed the plans of a
+  wave one after another with one reviewer, and no project setting could change that. New `gsd.code_review`
+  `{max_concurrent, reviewers}`: `max_concurrent` plans are reviewed at once (finding verification and the resolution
+  check included), `reviewers` adds independent reviewers of every plan, each with its own model and effort; their
+  findings are kept apart (ids `R2-`, `R3-`). Review records and `deferred.md` are written one at a time, because
+  review-record renders REVIEW.md from every record. The kit default `{max_concurrent: 1, reviewers: []}` keeps the
+  old behaviour. The review-stats tests are renamed RVST-01..03 (REVW-01..03 already named review-rule tests).
+  Prompt text: kit-adapter.md section 4. Measured check: REVW-07/08 and the full offline suite; not run on a live
+  phase, so the wall-time gain is not measured.
+
 - Owner-approved shipped price table and review measurement, 2026-10-22 ("1 2 luôn", after comparing WildEraV6's
   own tools with the kit): (1) the kit ships `.agents/model-prices.json`, the list prices of every model in
   `paseo/providers.json` plus the fast variants, each with its source page and check date (Claude models compared with
@@ -16,7 +29,7 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
   appends again): findings by severity and gate status, verdicts of gated findings, confirmed findings resolved,
   likelihood against findings judged real or false, defect classes; `ph review-stats outcome PLAN:FINDING
   fixed|not-hold|duplicate|wont-fix` records the later fate of a finding. Prompt text: the ph skill, kit-adapter.md
-  section 11. Measured check: PHCL-14, REVW-01..03, the full offline suite, and a read-only run on the office phase's 12
+  section 11. Measured check: PHCL-14, RVST-01..03, the full offline suite, and a read-only run on the office phase's 12
   records (68 findings, none gated).
 
 - Worktree setup, 2026-10-22 (owner asked for it and approved copy as the default with link as an option: "ok làm

@@ -88,6 +88,9 @@ const cmds = cfg.adapter.commands;
 const execMode = g.execution_mode;
 const worktreeMode = g.isolation === "worktree";
 const limit = g.parallelization.enabled ? Math.min(g.parallelization.max_concurrent ?? cfg.max_subagents, cfg.max_subagents) : 1;
+// gsd.code_review: plans reviewed at once and the independent reviewers of each plan (none = one, per gsd.roles.reviewer).
+const reviewLimit = Math.max(1, Math.min(g.code_review.max_concurrent, cfg.max_subagents));
+const reviewers = g.code_review.reviewers.length ? g.code_review.reviewers : [{}];
 const N = phaseNumber(phaseDir);
 const nn = phaseDir.split("/").pop().split("-")[0];
 const planPath = (id) => `${phaseDir}/${id}-PLAN.md`;
@@ -458,8 +461,12 @@ async function verifyFindings(gated, plan) {
   for (const f of gated) f.verdict = verdicts[f.id] ?? "unverified";
   return {};
 }
+// Review records and deferred.md are written one at a time: review-record renders REVIEW.md from every record, and two
+// renders at once could each miss the other's record.
+let reviewWrites = Promise.resolve();
+const reviewWrite = (fn) => (reviewWrites = reviewWrites.then(fn, fn));
 async function writeRecord(waveId, record) {
-  const wr = await flow(["review-record", phaseDir], { waveId, record });
+  const wr = await reviewWrite(() => flow(["review-record", phaseDir], { waveId, record }));
   return wr.code === 0 ? null : result("failed", { reason: `review record of ${record.plan} refused: ${(wr.json?.errors ?? [wr.json?.error ?? `exit ${wr.code}`]).join("; ")}` });
 }
 async function reviewPlan(t, waveId, codeOnly, scopeOverride) {
@@ -481,14 +488,21 @@ async function reviewPlan(t, waveId, codeOnly, scopeOverride) {
       `Return JSON {findings: [{id, severity (${SEVERITIES.join("|")}), trigger, likelihood, confidence, impact, file, line, description, introduced, class, instances}]}; an empty findings list when nothing needs fixing.`,
       digestLine(`review:${t.plan}`, await digestOf({ files: record.scope })),
     ].join("\n\n");
-    let r = await call(prompt, { label: `review-${t.plan}`, agentType: agentFor("reviewer", "gsd-code-reviewer"), role: "reviewer", readOnly: true, schema: FINDINGS_SCHEMA });
-    if (r.result === null && !fatal(r.reason)) r = await call(prompt, { label: `review-${t.plan}`, agentType: agentFor("reviewer", "gsd-code-reviewer"), role: "reviewer", readOnly: true, schema: FINDINGS_SCHEMA });
-    if (r.result === null) return { stop: owner("Review", `reviewer of ${t.plan} returned nothing${r.reason ? ` (${r.reason})` : ""}`) };
+    // Each reviewer reviews the plan on its own; their findings are kept apart (ids R2-, R3-, ...), not merged.
+    const replies = await parallel(reviewers.map((rv, k) => async () => {
+      const opts = { label: `review-${t.plan}${k ? `-r${k + 1}` : ""}`, agentType: agentFor("reviewer", "gsd-code-reviewer"), role: "reviewer", readOnly: true, schema: FINDINGS_SCHEMA, ...(rv.model ? { model: rv.model } : {}), ...(rv.effort ? { effort: rv.effort } : {}) };
+      const first = await call(prompt, opts);
+      return first.result === null && !fatal(first.reason) ? call(prompt, opts) : first;
+    }));
+    // parallel() turns a thrown call into a null item.
+    const empty = replies.findIndex((r) => !r || r.result === null);
+    if (empty >= 0) return { stop: owner("Review", `reviewer${reviewers.length > 1 ? ` ${empty + 1}` : ""} of ${t.plan} returned nothing${replies[empty]?.reason ? ` (${replies[empty].reason})` : ""}`) };
+    const found = replies.flatMap((r, k) => (r.result.findings ?? []).map((f, i) => ({ ...f, id: `${k ? `R${k + 1}-` : ""}${f.id ?? `${t.plan}-F${i + 1}`}` })));
     // CR-GSF-17: an unknown severity is a named blocking error, never a silent downgrade to non-blocking.
-    const unknown = (r.result.findings ?? []).filter((f) => !SEVERITIES.includes(String(f.severity).toLowerCase()));
+    const unknown = found.filter((f) => !SEVERITIES.includes(String(f.severity).toLowerCase()));
     if (unknown.length) return { stop: owner("Review", `reviewer of ${t.plan} returned unknown severities (${[...new Set(unknown.map((f) => f.severity))].join(", ")}), expected ${SEVERITIES.join("|")}`, { findings: unknown }) };
-    record.findings = (r.result.findings ?? []).map((f, i) => {
-      const kept = { id: f.id ?? `${t.plan}-F${i + 1}`, severity: String(f.severity).toLowerCase(), trigger: f.trigger ?? "", likelihood: f.likelihood ?? "", confidence: Number(f.confidence ?? 0), impact: f.impact ?? "", file: f.file ?? "", line: f.line ?? null, description: f.description ?? "", introduced: typeof f.introduced === "boolean" ? f.introduced : null, class: f.class ?? "", instances: Array.isArray(f.instances) ? f.instances.filter((x) => x && typeof x.file === "string") : [] };
+    record.findings = found.map((f) => {
+      const kept = { id: f.id, severity: String(f.severity).toLowerCase(), trigger: f.trigger ?? "", likelihood: f.likelihood ?? "", confidence: Number(f.confidence ?? 0), impact: f.impact ?? "", file: f.file ?? "", line: f.line ?? null, description: f.description ?? "", introduced: typeof f.introduced === "boolean" ? f.introduced : null, class: f.class ?? "", instances: Array.isArray(f.instances) ? f.instances.filter((x) => x && typeof x.file === "string") : [] };
       return { ...kept, status: preExisting(kept, changed) ? "pre-existing" : gateFinding(f), verdict: null };
     });
     const gated = record.findings.filter((f) => f.status === "gated");
@@ -497,7 +511,7 @@ async function reviewPlan(t, waveId, codeOnly, scopeOverride) {
       if (vf.stop) return vf;
     }
     const deferred = record.findings.filter((f) => f.status !== "gated");
-    if (deferred.length) await flow(["append", `${phaseDir}/deferred.md`], deferred.map((f) => `- ${f.id} (${f.severity}, ${f.status}) plan ${t.plan} ${f.file}${f.line ? `:${f.line}` : ""}: ${f.description} [reason: ${DEFER_REASON[f.status]}]`).join("\n"));
+    if (deferred.length) await reviewWrite(() => flow(["append", `${phaseDir}/deferred.md`], deferred.map((f) => `- ${f.id} (${f.severity}, ${f.status}) plan ${t.plan} ${f.file}${f.line ? `:${f.line}` : ""}: ${f.description} [reason: ${DEFER_REASON[f.status]}]`).join("\n")));
     metrics.deferred += deferred.length;
     metrics.preExisting += deferred.filter((f) => f.status === "pre-existing").length;
   }
@@ -507,13 +521,21 @@ async function reviewPlan(t, waveId, codeOnly, scopeOverride) {
   ev(`review ${waveId} ${t.plan}${codeOnly ? " code-only" : ""}`);
   return { record, confirmed: record.findings.filter((f) => f.verdict === "confirmed"), unverified: record.findings.filter((f) => f.verdict === "unverified" || f.verdict === "uncertain") };
 }
+// Runs fn over items, gsd.code_review.max_concurrent at a time, in order; after the first stop no new item starts.
+async function reviewPool(items, fn) {
+  let stopped = null;
+  const out = await pool(items, reviewLimit, async (item) => {
+    if (stopped) return null;
+    const r = await fn(item);
+    if (r?.stop) stopped ??= r;
+    return r;
+  });
+  return stopped ? { stop: stopped.stop } : { out };
+}
 async function reviewAll(tasks, waveId, codeOnly) {
-  const out = [];
-  for (const t of tasks) {
-    const r = await reviewPlan(t, waveId, codeOnly);
-    if (r.stop) return r;
-    out.push(r);
-  }
+  const done = await reviewPool(tasks, (t) => reviewPlan(t, waveId, codeOnly));
+  if (done.stop) return done;
+  const out = done.out;
   return { reviews: out, confirmed: out.flatMap((r) => r.confirmed), unverified: out.flatMap((r) => r.unverified) };
 }
 async function fixer(label, findings, failures, owns) {
@@ -525,16 +547,17 @@ async function fixer(label, findings, failures, owns) {
 }
 async function resolutionCheck(reviews, waveId) {
   const unresolved = [];
-  for (const rv of reviews) {
+  const done = await reviewPool(reviews, async (rv) => {
     const confirmed = rv.record.findings.filter((f) => f.verdict === "confirmed");
-    if (!confirmed.length) continue;
+    if (!confirmed.length) return null;
     const r = await call([`Resolution check of plan ${rv.record.plan}: decide for each finding below whether the current code resolves it; a finding with instances is resolved only when every instance is. Review only these findings; raise no new ones.`, `Findings (JSON): ${JSON.stringify(confirmed.map(findingBrief))}`, "Return JSON {resolution: [{id, resolved, evidence}]}.", digestLine(`resolve:${rv.record.plan}`, await digestOf({ files: [...new Set([...rv.record.scope, ...findingFiles(confirmed)])] }))].join("\n\n"), { label: `resolve-${rv.record.plan}`, agentType: agentFor("reviewer", "gsd-code-reviewer"), role: "reviewer", readOnly: true, schema: RESOLUTION_SCHEMA });
     if (r.result === null && fatal(r.reason)) return { stop: owner("Review", `resolution check of ${rv.record.plan} failed: ${r.reason}`, { failure: classify(r.reason) }) };
     rv.record.resolution = confirmed.map((f) => r.result?.resolution?.find((x) => x.id === f.id) ?? { id: f.id, resolved: false, evidence: "no answer" });
     for (const x of rv.record.resolution) x.resolved ? metrics.resolved++ : unresolved.push(x);
     const bad = await writeRecord(waveId, rv.record);
-    if (bad) return { stop: bad };
-  }
+    return bad ? { stop: bad } : null;
+  });
+  if (done.stop) return done;
   ev(`resolution ${waveId}`);
   return { unresolved };
 }

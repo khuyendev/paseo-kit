@@ -119,7 +119,9 @@ Code review runs after the wave is green. Only high findings with a trigger, con
 theoretical block, and a `finding-verifier` confirms each one (a second verifier decides what the first left
 uncertain). A finding outside the lines the plan changed that the change did not cause is recorded as pre-existing in
 `deferred.md` and never blocks; one finding names its defect class and every instance, so one fix covers them. The
-code fixer runs at effort `high` unless `gsd.roles.fixer.effort` is set. Counts go to `_workspace/review-metrics.jsonl`. Default research offers refresh for an existing stale or blocked
+code fixer runs at effort `high` unless `gsd.roles.fixer.effort` is set. `gsd.code_review` is the owner's choice per
+project: `max_concurrent` plans reviewed at once (default 1) and `reviewers`, extra independent reviewers of every plan
+with their own model and effort (default none: one reviewer per `gsd.roles.reviewer`). Counts go to `_workspace/review-metrics.jsonl`. Default research offers refresh for an existing stale or blocked
 report rather than silently replacing it. Doctor checks GSD integrity even with a broken project overlay.
 
 ## Adapter
