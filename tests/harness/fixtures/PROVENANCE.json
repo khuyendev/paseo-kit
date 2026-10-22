@@ -90,11 +90,6 @@
       "file": "harness/NOTICE.md",
       "path": "project/.agents/skills/harness/NOTICE.md",
       "sha256": "4e57087bbf37ebb096ccbba7a759352172674e21adb56a917008cbcf7eea53ba"
-    },
-    {
-      "file": "ai-orchestrator/SKILL.md",
-      "path": "project/.agents/skills/ai-orchestrator/SKILL.md",
-      "sha256": "252e43db62dbf3e54dc148e695e910f162fd287a8e7a24e06e8f234620faf0bc"
     }
   ],
   "regions": [
@@ -856,16 +851,6 @@
         "f"
       ],
       "sha256": "f5b55e450cd804b0942be740ba79c135c418cf40c83a0f8a1d085fb799db77f0"
-    },
-    {
-      "file": "ai-orchestrator/SKILL.md",
-      "from": 8,
-      "to": 8,
-      "lines": 1,
-      "categories": [
-        "f"
-      ],
-      "sha256": "41ff1c4f9e20be653ac20b6d1695e5eacc5d5654925e2b2473d6818fe8c544e7"
     }
   ]
 }

@@ -6,6 +6,16 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Owner-approved main-session skill and null counting, 2026-10-22: the owner states `ai-orchestrator` is their own
+  skill, so it is no longer carried as protected method text (D-111): its PROVENANCE entries, source fixture and NOTICE
+  are removed and HARN-17 checks the kit text. Its description now says when to trigger, with English and Vietnamese
+  phrases ('tự lái', 'giao cho agent', 'chạy song song'), and a new section "Accepting an agent's work" (after the
+  Opus 5.5 guide): check each agent's evidence before accepting it, confirm N results for N items, have a different
+  agent confirm a deciding conclusion, an agent that stopped without a reply produced nothing. `ph evolve-stats`
+  counts quota and rate-limit nulls, and an empty reply with no output tokens, as infra: on the office phase the
+  executor's 7 nulls move from 4 agent / 3 infra to 0 agent / 7 infra. Measured check: HARN-17, EVOL-01, the full
+  offline suite; the skill change is not yet observed in a live session.
+
 - Owner-approved skill fixes, 2026-10-22 (owner request after the Claude Code team's skills write-up: "làm ngay sửa
   bug", "trigger cả tiếng anh các tiếng việt luôn"): the gsd-research description held an unquoted "Standalone: never",
   so its front matter was not YAML and Claude Code listed the skill without a description; it is quoted, and SKIL-01

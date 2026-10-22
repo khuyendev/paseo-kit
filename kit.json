@@ -429,7 +429,6 @@
     ".claude/plugins/harness-files/hooks/hooks.json",
     ".claude/plugins/harness-files/hooks/register.ts",
     ".claude/plugins/harness-files/scripts/discover.mjs",
-    ".claude/skills/ai-orchestrator/NOTICE.md",
     ".claude/skills/ai-orchestrator/SKILL.md",
     ".claude/skills/gsd-debug/SKILL.md",
     ".claude/skills/gsd-discuss/SKILL.md",

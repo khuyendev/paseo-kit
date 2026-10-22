@@ -153,16 +153,17 @@ test("HARN-16 harness skills ship the Apache-2.0 LICENSE and a NOTICE naming ups
   assert.match(lf(path.join(SKILLS, "harness", "NOTICE.md")), /Translated from Korean to English/);
 });
 
-test("HARN-17 ai-orchestrator ships its method text with the config-read agent limit and no Backlog", () => {
+// The owner's own skill (owner decision 2026-10-22): kit text, no longer carried as protected method text.
+test("HARN-17 ai-orchestrator, the main session's skill: triggers, the agent limit, the evidence rule, waiting", () => {
   const text = lf(path.join(SKILLS, "ai-orchestrator", "SKILL.md"));
   assert.match(text, /^name: ai-orchestrator$/m);
-  assert.ok(text.includes("Definition of Done") && text.includes("## Waiting for agents"));
-  assert.ok(text.includes("`max_subagents`"));
-  assert.doesNotMatch(text, /\b20\b/);
-  assert.doesNotMatch(text, /backlog/i);
-  checkFile("ai-orchestrator/SKILL.md");
-  const notice = lf(path.join(SKILLS, "ai-orchestrator", "NOTICE.md"));
-  for (const r of PROV.regions.filter((x) => x.file.startsWith("ai-orchestrator/"))) {
-    assert.ok(notice.includes(`\`SKILL.md\` lines ${r.from}-${r.to} -> ${r.lines} line(s)`));
-  }
+  assert.ok(!PROV.files.some((f) => f.file.startsWith("ai-orchestrator/")) && !fs.existsSync(path.join(SKILLS, "ai-orchestrator", "NOTICE.md")), "not method text");
+  const desc = JSON.parse(/^description: (.*)$/m.exec(text)[1]);
+  for (const t of ["Use when", "'delegate this'", "'tự lái'", "'giao cho agent'", "'chạy song song'"]) assert.ok(desc.includes(t), t);
+  assert.ok(text.includes("`max_subagents`") && text.includes("Definition of Done") && text.includes("## Waiting for agents"));
+  assert.ok(text.includes("## Accepting an agent's work"));
+  assert.match(text, /check that evidence before you accept the result/);
+  assert.match(text, /confirm N results came back/);
+  assert.match(text, /have a different agent confirm it/);
+  assert.doesNotMatch(text, /\b20\b|backlog/i);
 });

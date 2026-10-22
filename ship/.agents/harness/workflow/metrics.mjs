@@ -15,13 +15,17 @@ const CAUSES = [
   ["schema", /did not match the schema/],
   ["timeout", /^no reply within/],
   ["empty", /^finished without a reply/],
-  ["infra", /daemon|^runner error|live agent cap|usage tracking|model readback|worktree .* is gone|^agent error:|waiting for a permission|^agent status/],
+  ["infra", /daemon|^runner error|live agent cap|usage tracking|model readback|worktree .* is gone|^agent error:|waiting for a permission|^agent status|quota|rate limit|\b429\b|too many requests|RESOURCE_EXHAUSTED/i],
 ];
 export const AGENT_CAUSES = Object.freeze(["schema", "timeout", "empty"]);
 
-export function nullCause(reason) {
+// outputTokens: the call's output. An empty reply that produced no output at all is the provider's doing (2026-10-21:
+// four executors ended that way in 37 s, minutes before the account hit its 429 quota), so it counts as infra.
+export function nullCause(reason, outputTokens = null) {
   const text = String(reason ?? "");
-  return CAUSES.find(([, re]) => re.test(text))?.[0] ?? "other";
+  if (/quota|rate limit|\b429\b|too many requests|RESOURCE_EXHAUSTED/i.test(text)) return "infra";
+  const cause = CAUSES.find(([, re]) => re.test(text))?.[0] ?? "other";
+  return cause === "empty" && outputTokens === 0 ? "infra" : cause;
 }
 
 // The agent of a journal entry: its definition, else `label:` and the label's role part without numbered suffixes
@@ -49,7 +53,7 @@ export function runRecord(runId, info, journal, result) {
     if (e.status === "ok") s.ok++;
     else {
       s.nulls++;
-      const c = nullCause(e.reason);
+      const c = nullCause(e.reason, typeof e.usage?.output === "number" ? e.usage.output : typeof e.tokens === "number" ? e.tokens : null);
       s.causes[c] = (s.causes[c] ?? 0) + 1;
     }
     if (typeof e.duration_s === "number") s.secs.push(e.duration_s);

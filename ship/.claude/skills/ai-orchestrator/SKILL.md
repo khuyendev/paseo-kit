@@ -1,6 +1,6 @@
 ---
 name: ai-orchestrator
-description: Coordinate AI agents when asked to delegate work or complete a task using multiple agents.
+description: "Runs the main session's work through Paseo agents: delegates parts of a task, checks each agent's evidence before accepting it, and verifies the integrated result. Use when the owner asks to delegate work, use agents, run things in parallel, or let the session drive the task on its own. Trigger on: 'delegate this', 'use agents', 'run it in parallel', 'drive it yourself', 'tự lái', 'tự chốt', 'giao cho agent', 'chạy song song', 'dùng nhiều agent'."
 ---
 
 # AI Orchestration
@@ -10,6 +10,14 @@ You may use up to `max_subagents` agents at once (the effective value is shown b
 Derive a verifiable Definition of Done (DoD) from the request before execution.
 
 You are responsible for ensuring the final integrated result passes verification against the DoD before declaring completion; use failed checks to guide corrections within the affected scope.
+
+## Accepting an agent's work
+
+An agent's "done" is a claim, not a result. Ask each agent for evidence you can check (the files and lines it changed or read, the commands it ran and their output) and check that evidence before you accept the result: open the cited lines, rerun the deciding command or read its log.
+
+- When the task names N items, confirm N results came back, not a summary of most of them.
+- When one conclusion decides the outcome (a bug is real, a test proves the fix), have a different agent confirm it; an agent judging its own work tends to approve it.
+- An agent that stopped without a reply produced nothing: rerun it or report the gap.
 
 ## Waiting for agents
 
