@@ -10,9 +10,9 @@ import { KIT_DIR, makeTempDir } from "../helpers/temp.mjs";
 const PLUGINS = path.join(KIT_DIR, "plugins");
 const IDS = ["planning-panel", "office"];
 const SOURCE_DIRS = ["client", "server", "shared"];
-// Paseo version each plugin is pinned to (manifest requirement and @getpaseo/plugin): office targets the 0.12.0 daemon, which
-// refuses a 0.11.2 plugin; planning-panel stays on the tested CLI version.
-const PASEO_PIN = { "planning-panel": TESTED_PASEO_CLI, office: "0.12.0" };
+// Paseo version each plugin is pinned to (manifest requirement and @getpaseo/plugin): both target the 0.12.0 daemon, which
+// refuses a 0.11.2 plugin.
+const PASEO_PIN = { "planning-panel": "0.12.0", office: "0.12.0" };
 
 function sources(id, dirs = SOURCE_DIRS) {
   const root = path.join(PLUGINS, id);
