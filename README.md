@@ -69,7 +69,13 @@ the `kit-init` user skill into each Claude config dir. `check` reports the same 
 4. `gsd-new-project` (PROJECT, REQUIREMENTS, roadmap draft approved by the owner and installed by
    `ph gsd roadmap install-draft`), then per phase `gsd-discuss`, `gsd-research`, `gsd-plan`, `gsd-execute`,
    `gsd-verify`. `gsd-progress`, `gsd-pause`, `gsd-quick`, `gsd-undo`, `gsd-forensics` and `gsd-debug` cover the rest.
-5. `harness-evolve` records lessons and updates the adapter.
+5. `harness-evolve` records lessons and updates the adapter, measured with `ph evolve-stats` (per agent version, per
+   workflow with stop reasons and a suggested `--budget`, and the model's skill calls).
+
+The main session works under the kit block of `AGENTS.md` (report to the owner under Blocked on me / Changed /
+Found and mark what is unconfirmed; fix the product, not the fixture; clean up only what you created) and, when it
+delegates, the `ai-orchestrator` skill: GSD skills for `.planning/` work, otherwise the execution modes, team patterns
+and workflow recipes of the harness skill, and each agent's evidence checked before its result is accepted.
 
 ## ph
 
@@ -78,13 +84,14 @@ the `kit-init` user skill into each Claude config dir. `check` reports the same 
 Non-blocking commands end with a `next:` line naming the command to wait with.
 
 - Agents: `spawn`, `fanout` (`--collect DIR` waits), `send`, `watch`, `result`, `team`, `context`, `stop`,
-  `archive`, `compact-self`. Every agent is created as a subagent of the caller (`PASEO_AGENT_ID`) on the worker
+  `archive` (`--run RUNID [--reason TEXT]` stops a workflow run and records why), `compact-self`. Every agent is created as a subagent of the caller (`PASEO_AGENT_ID`) on the worker
   provider, with the kit prompt notes and a model resolved from tiers, aliases, roles and `allowed_models`.
 - Coordination: `task` (shared task list), `freeze` (sha256 of phase files), `worktrees`.
 - Workflows: `workflow --script F | --name N [--args JSON] [--resume RUNID] [--budget N] [--detach]`, `watch-run`,
   `run-stats`, `evolve-stats`, `runs`. Scripts use `agent`, `parallel`, `pipeline`, `phase`, `log`, `budget`, `workflow`, `shell`
   and the `runId` global; runs live in `_workspace/_runs/<runId>/` with a journal for resume and a model-time
-  watchdog. Every ended run also appends one line to `_workspace/harness-metrics.jsonl` (kept when runs are pruned);
+  watchdog (shipped: a nudge at 45 min and a stop at 90 min of model time, warnings for loops, rereads and long
+  reading without a write, interruption of a hung tool call). Every ended run also appends one line to `_workspace/harness-metrics.jsonl` (kept when runs are pruned);
   `evolve-stats` prints it per agent version and per workflow for `harness-evolve`. Running a workflow needs the
   owner's consent (ph skill).
 - `config` (effective config with provenance), `doctor`, `gsd <verb>`, `harness lint [--all]`.
@@ -103,7 +110,13 @@ change of shared PROJECT/STATE/ROADMAP/REQUIREMENTS goes through `ph gsd` (singl
 Execution resumes incomplete gates/reviews/commits even when SUMMARY already exists. Worktree agents read
 immutable planning inputs; later batch waves receive hash-checked accepted dependency output before dispatch.
 Pre-existing owned dirty files are refused rather than overwritten. Missing review replies, failed required
-commits and invalid/stale evidence stop execution. Default research offers refresh for an existing stale or blocked
+commits and invalid/stale evidence stop execution.
+
+Code review runs after the wave is green. Only high findings with a trigger, confidence >= 80 and a likelihood above
+theoretical block, and a `finding-verifier` confirms each one (a second verifier decides what the first left
+uncertain). A finding outside the lines the plan changed that the change did not cause is recorded as pre-existing in
+`deferred.md` and never blocks; one finding names its defect class and every instance, so one fix covers them. The
+code fixer runs at effort `high` unless `gsd.roles.fixer.effort` is set. Counts go to `_workspace/review-metrics.jsonl`. Default research offers refresh for an existing stale or blocked
 report rather than silently replacing it. Doctor checks GSD integrity even with a broken project overlay.
 
 ## Adapter
@@ -153,7 +166,8 @@ Registered from `ship/templates/settings.hooks.json`; hooks never block a tool c
 
 Two read-only Paseo plugins in `plugins/` (installed by `machine apply --enable-paseo-plugins`, never into
 projects): `office` (a pixel-art building of the Paseo projects, workspaces and agents of this host, drawn from the
-official Paseo API only, art ported from habblaud under MIT per `NOTICE.md`, desktop app only) and `planning-panel`
+official Paseo API only, art ported from habblaud under MIT per `NOTICE.md`, needs Paseo 0.12.0; tested in the desktop
+app, its narrow phone layout covered by offline tests only) and `planning-panel`
 (a workspace's `.planning/` on the GSD status ladder). Their tests need `npm install --ignore-scripts` once in each
 plugin folder.
 
