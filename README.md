@@ -88,11 +88,14 @@ Non-blocking commands end with a `next:` line naming the command to wait with.
   provider, with the kit prompt notes and a model resolved from tiers, aliases, roles and `allowed_models`.
 - Coordination: `task` (shared task list), `freeze` (sha256 of phase files), `worktrees`.
 - Workflows: `workflow --script F | --name N [--args JSON] [--resume RUNID] [--budget N] [--detach]`, `watch-run`,
-  `run-stats`, `evolve-stats`, `runs`. Scripts use `agent`, `parallel`, `pipeline`, `phase`, `log`, `budget`, `workflow`, `shell`
+  `run-stats`, `evolve-stats`, `review-stats`, `runs`. Scripts use `agent`, `parallel`, `pipeline`, `phase`, `log`, `budget`, `workflow`, `shell`
   and the `runId` global; runs live in `_workspace/_runs/<runId>/` with a journal for resume and a model-time
   watchdog (shipped: a nudge at 45 min and a stop at 90 min of model time, warnings for loops, rereads and long
   reading without a write, interruption of a hung tool call). Every ended run also appends one line to `_workspace/harness-metrics.jsonl` (kept when runs are pruned);
-  `evolve-stats` prints it per agent version and per workflow for `harness-evolve`. Running a workflow needs the
+  `evolve-stats` prints it per agent version and per workflow for `harness-evolve`; `review-stats` measures the code
+  review from each phase's review records and the fates recorded with `review-stats outcome`. `ph run-stats`,
+  `ph result --json` and `evolve-stats` price tokens with the shipped list-price table `.agents/model-prices.json`
+  (the models of `paseo/providers.json`, each with its source page and check date). Running a workflow needs the
   owner's consent (ph skill).
 - `config` (effective config with provenance), `doctor`, `gsd <verb>`, `harness lint [--all]`.
 
@@ -124,7 +127,8 @@ report rather than silently replacing it. Doctor checks GSD integrity even with 
 The `adapter` section of `.agents/harness.config.json` is everything project-specific: `commands` (build, test,
 gates, verify runners), `verify_vocabulary`, `ownership`, `review_lenses`, `syntax_checkers`, `instructions`,
 `envelope`, `stack_skill`, `agents` (role -> project agent), `mutex`, `startup_globs`, `hook_timeout_s`,
-`attribution`; the `gsd` section holds roles, granularity, plan limits, execution mode, isolation and the loop
+`attribution`, `worktree_setup` (git-ignored paths such as `node_modules` copied or linked into each new harness
+worktree, which `git worktree add` leaves out); the `gsd` section holds roles, granularity, plan limits, execution mode, isolation and the loop
 bounds. Adapter scripts (parsers, resolvers, evidence parsers, attribution) speak one JSON request/response on
 stdin/stdout (ADPT-15), with closed shapes and exactly one nonblank response line. The kit ships a neutral
 adapter; `ph doctor` and `ph harness lint` check it. Null build/test commands are `not_configured`, never green.

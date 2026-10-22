@@ -51,7 +51,7 @@ or config error (nothing done), 2 done with failed items or problems.
 | `ph task add\|update\|list\|get --ws D ...` | the team's shared task list `<ws>/tasks.json` (see below). |
 | `ph freeze --ws D --phase P [--check]` | sha256 record of `<ws>/P_*` files; `--check` reports `modified`, `missing`, `new` (exit 2). |
 | `ph worktrees [--prune] [--runs-dir D]` | harness git worktrees and their state; `--prune` removes only merged-and-clean ones and registrations whose directory is gone. |
-| `ph workflow`, `ph watch-run`, `ph run-stats`, `ph evolve-stats`, `ph runs` | workflow scripts (see the workflow section). |
+| `ph workflow`, `ph watch-run`, `ph run-stats`, `ph evolve-stats`, `ph review-stats`, `ph runs` | workflow scripts (see the workflow section). |
 | `ph gsd <verb>` | GSD state verbs used by the GSD skills. |
 
 Options are `--key value` only; a value may itself start with `--`. Prompts: exactly one of `--prompt` and
@@ -83,7 +83,8 @@ Options are `--key value` only; a value may itself start with `--`. Prompts: exa
   (`fanout --collect` does). A role that must write named artifacts is not read-only.
 - `--cwd D` gives the agent a working directory (as an instruction in its prompt and as the daemon cwd).
   `--worktree` (spawn only) creates `<repo>/.claude/worktrees/<name>-<stamp>` on branch `harness/<name>-<stamp>`; the
-  agent edits only there. Worktrees are kept for you to merge; `ph worktrees --prune` cleans up afterwards.
+  agent edits only there. The adapter's `worktree_setup` paths (git-ignored dependency folders) are copied or linked in
+  before the agent starts. Worktrees are kept for you to merge; `ph worktrees --prune` cleans up afterwards.
 
 ## What every first prompt carries
 
@@ -134,6 +135,11 @@ until dry, budget-aware loop, custom type + schema + effort, tier choice).
   skill with the times the model invoked it (`_workspace/skill-usage.jsonl`); `--import [--runs-dir D]` first adds ended
   runs that are not in it yet. `harness-evolve`
   reads it (harness skill, `references/kit-adapter.md` section 11).
+- `ph review-stats [--phase NN]` reports how the gsd-execute code review performed, from the phases'
+  `review/*.json` records: findings by severity and gate status, verifier verdicts of gated findings, confirmed
+  findings resolved at the resolution check, likelihood against findings judged real or false, and the later fate of
+  non-blocking findings. Record that fate when a deferred finding is settled: `ph review-stats outcome PLAN:FINDING
+  fixed|not-hold|duplicate|wont-fix [--note T]` (`_workspace/review-outcomes.jsonl`; the ids of `deferred.md`).
 
 Authoring rules:
 - Guard `null` per stage (an `agent()` call returns `null` with a journaled reason when it fails) and

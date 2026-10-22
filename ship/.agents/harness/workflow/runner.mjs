@@ -197,7 +197,7 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
           if (!fs.existsSync(prior.worktree.path)) throw new Error(`session worktree ${prior.worktree.path} is gone`);
           worktree = prior.worktree;
         } else {
-          worktree = runtime.createWorktree(root, cfg, `${runId}-${n}`, opts.worktreeSeed);
+          worktree = await runtime.createWorktree(root, cfg, `${runId}-${n}`, opts.worktreeSeed);
           newWorktree = true;
         }
       }

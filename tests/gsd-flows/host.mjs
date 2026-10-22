@@ -88,7 +88,7 @@ export async function runScript(name, opts) {
     // FLOW-27 stand-in: a real git worktree per agent that asks for isolation.
     if (o.isolation === "worktree" && !call.worktree) {
       call.worktree = `.claude/worktrees/${runId}-${call.n}`;
-      createWorktree(root, configMod.loadConfig(root), `${runId}-${call.n}`, { seed: o.worktreeSeed });
+      await createWorktree(root, configMod.loadConfig(root), `${runId}-${call.n}`, { seed: o.worktreeSeed });
       if (o.session !== undefined) sessions.get(o.session).worktree = call.worktree;
     }
     let value;

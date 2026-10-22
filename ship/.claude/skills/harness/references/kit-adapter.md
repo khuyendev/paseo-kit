@@ -66,6 +66,7 @@ array run without a shell from the code root (`["npm", "test"]`, never `"npm tes
 | `adapter.stack_skill`, `adapter.agents` | ADPT-09 | the stack skill's folder name; GSD role -> project agent type, only for roles a project agent replaces (`architect` enables the wiring stage) |
 | `adapter.mutex` | ADPT-10 | optional machine-wide lock name for heavy commands (one build at a time across worktrees) |
 | `adapter.startup_globs`, `adapter.hook_timeout_s`, `adapter.attribution` | ADPT-13 | files whose change needs a cold-start smoke test; adapter script timeout; optional failure-attribution script |
+| `adapter.worktree_setup` | ADPT-13 | `{copy: [path], link: [path]}`: git-ignored paths (dependency folders such as `node_modules`, `.venv` or `vendor`, local generated files) that every new harness worktree gets from the checkout before its agent starts, because `git worktree add` checks out tracked files only. `copy` gives each worktree its own copy (slow for a large folder); `link` takes directories only and makes a junction (a symlink on POSIX) to the checkout's folder: fast, but an install inside the worktree changes the checkout. Set it when `gsd.isolation` is `worktree` (or agents use `--worktree`) and the build or tests need such a path; each path must exist in the checkout and be git-ignored |
 | `gsd.roles` | ADPT-11 | `{<role>: {model, effort, reason}}` for the roles whose model or effort differs from the agent definition; a non-empty `reason` on every entry |
 | `gsd.granularity`, `gsd.plan_limits` | ADPT-12 | plan size for this codebase; split plans for real reasons (overlapping owns in one wave, an ordering coupling, a gating spike, a plan too big for one coder context) |
 | other `gsd` keys | ADPT-13 | `execution_mode`, `isolation`, `commit_policy`, `branching`, `protected_branches`, `requirement_id_regex`, `research`, `plan_review`, `skeleton_lanes`, loop bounds, `debug`, `fixer`, `parallelization`, `review_depth`: set only what the project needs to differ |
@@ -240,7 +241,8 @@ It fails (exit 2, one line per finding) on: an adapter that fails closed validat
 script that does not exist; skill front matter without `name` or a `description` with a "use when" trigger; a
 SKILL.md over 500 lines; a reference over 300 lines without a contents list; a README, CHANGELOG or INSTALLATION
 file in a skill folder; a generated file under `.claude/commands/`; agent front matter without `name` or
-`description` or with other keys; a concrete model id in an agent file; a role entry without `reason`; operational
+`description` or with other keys; a concrete model id in an agent file; a role entry without `reason`; a
+`worktree_setup` path that is malformed, overlapping, missing from the checkout, a link or not git-ignored; operational
 use of in-session primitives (`Agent(`, `Workflow(`, `SendMessage(`, `Task*`, `TeamCreate`, `TeamDelete`, team
 flags); workflow scripts with `Date.now()`, `Math.random()` or a non-literal `meta`, `phase()` titles missing from
 `meta.phases`; orchestrator skills without an execution mode at the top, an unlabelled stage of a mixed one, or no
@@ -294,8 +296,9 @@ history rows) are in English whatever language the owner uses.
 
 `harness-evolve` evolves the adapter the same way the method evolves a harness. Its sources in this kit:
 `.agents/harness-history.md`; `git log` of `.agents/`, `.claude/`, `AGENTS.md` and `CLAUDE.md`; run records
-`_workspace/_runs/*/run.json` and the `null` reasons in `journal.jsonl`; `_workspace/review-metrics.jsonl` (review
-findings per run); and each phase's `.planning/phases/<NN>-<slug>/deferred.md`. Map each lesson to the adapter part
+`_workspace/_runs/*/run.json` and the `null` reasons in `journal.jsonl`; `ph review-stats` (the code review measured from
+each phase's `review/*.json` records and the fates recorded with `ph review-stats outcome`); and each phase's
+`.planning/phases/<NN>-<slug>/deferred.md`. Map each lesson to the adapter part
 it touches (a verify kind that keeps failing to resolve -> its resolver; repeated review findings of one kind -> a
 review lens or the stack skill; a gate that is slow -> `commands` timeouts or `mutex`). Apply one change at a time,
 run lint, re-run at least 3 + 3 trigger requests when a skill description changed, and append a history row.
@@ -307,7 +310,9 @@ model, effort: calls, ok, `null` split into agent, infra and other causes, media
 of its runs) and one line per workflow (results such as `passed`/`gaps_found`, gaps, wall time, cost per run, and a
 suggested `ph workflow --budget` of 4 x the median output tokens of a run: a cap that stops a runaway run, not a
 normal one; tighten it once there are real numbers), with the stopped runs counted by their `ph archive --run
---reason`; stops without a reason are counted too and teach nothing.
+--reason`; stops without a reason are counted too and teach nothing. A review lens or review rule change is measured
+with `ph review-stats`: the share of gated findings the verifier confirms and of deferred findings later judged real,
+per likelihood; record the fate of a deferred finding when it is settled, or the deferred side measures nothing.
 - Sort every failure by cause before editing anything; a lesson is a cause shared by several failures, not one
   failure. Infra `null`s (daemon, provider, caps, permissions) and a grader or check that contradicts its own task are
   fixed in the runtime, the check or the task, never in role text.

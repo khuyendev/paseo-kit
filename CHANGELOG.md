@@ -6,6 +6,31 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Owner-approved shipped price table and review measurement, 2026-10-22 ("1 2 luôn", after comparing WildEraV6's
+  own tools with the kit): (1) the kit ships `.agents/model-prices.json`, the list prices of every model in
+  `paseo/providers.json` plus the fast variants, each with its source page and check date (Claude models compared with
+  the official pricing page on 2026-10-22, the others taken from the 2026-10-19 check of a live project). Prices belong
+  to the providers, not to a project; without a table every `costUsd` was null, and the daemon's own estimate is wrong
+  through the proxy. The file is kit-owned: `update` refreshes it unless the project edited it. (2) `ph review-stats
+  [--phase NN]` reads every phase's `review/*.json` records (not `_workspace/review-metrics.jsonl`, which a resumed run
+  appends again): findings by severity and gate status, verdicts of gated findings, confirmed findings resolved,
+  likelihood against findings judged real or false, defect classes; `ph review-stats outcome PLAN:FINDING
+  fixed|not-hold|duplicate|wont-fix` records the later fate of a finding. Prompt text: the ph skill, kit-adapter.md
+  section 11. Measured check: PHCL-14, REVW-01..03, the full offline suite, and a read-only run on the office phase's 12
+  records (68 findings, none gated).
+
+- Worktree setup, 2026-10-22 (owner asked for it and approved copy as the default with link as an option: "ok làm
+  đi"): `git worktree add` checks out tracked files only, so on the office phase executors in harness worktrees had no
+  `plugins/office/node_modules` and could not typecheck or test; a `paseo.json` worktree setup never ran (Paseo does
+  not create these worktrees) and a hand-run watcher copied the folder in. New adapter entry
+  `adapter.worktree_setup` `{copy, link}` (default empty): every new worktree of `ph spawn --worktree` and workflow
+  isolation gets these git-ignored paths from the checkout before its agent starts; any problem (malformed or
+  overlapping path, missing in the checkout, a link, not git-ignored) removes the worktree and fails the start.
+  `link` makes a directory junction (symlink on POSIX); removal through the kit drops the links first (git 2.55 on
+  Windows also leaves the target alone, checked by hand). `ph doctor` and `ph harness lint` report the same
+  problems. Prompt text: kit-adapter.md (section 4 row, section 8 lint list) and the ph skill. Measured check: the
+  new PHCL-31/PHCL-04/HARN-07 tests and the full offline suite; not yet run on a live phase.
+
 - Owner-approved watchdog thresholds, 2026-10-22 ("mở các ngưỡng lên"): both live projects had loosened or disabled
   the watchdog (one disabled it entirely on 2026-10-16; the office project raised the nudge to 45 min, piecemeal to 40,
   reread to 6), and 39 % of one project's piecemeal warnings hit read-only reviewers. Shipped defaults now:

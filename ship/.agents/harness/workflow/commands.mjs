@@ -1,9 +1,10 @@
-// ph commands of the workflow module (M6): workflow, watch-run, run-stats, evolve-stats, runs.
+// ph commands of the workflow module (M6): workflow, watch-run, run-stats, evolve-stats, review-stats, runs.
 import { WORKFLOW_OPTIONS, WORKFLOW_USAGE, workflowCommand } from "./cmd-workflow.mjs";
 import { WATCH_OPTIONS, watchRunCommand } from "./cmd-watch-run.mjs";
 import { RUN_STATS_OPTIONS, runStatsCommand } from "./cmd-run-stats.mjs";
 import { RUNS_OPTIONS, runsCommand } from "./cmd-runs.mjs";
 import { EVOLVE_STATS_OPTIONS, EVOLVE_STATS_USAGE, evolveStatsCommand } from "./cmd-evolve-stats.mjs";
+import { REVIEW_STATS_OPTIONS, REVIEW_STATS_USAGE, reviewStatsCommand } from "./cmd-review-stats.mjs";
 
 export const commands = [
   {
@@ -37,6 +38,14 @@ export const commands = [
     options: EVOLVE_STATS_OPTIONS,
     config: "none",
     run: (ctx) => evolveStatsCommand(ctx),
+  },
+  {
+    name: "review-stats",
+    summary: "how the gsd-execute code review performed (gate, verifier, resolution, later fates) from the phases' review records; outcome records a finding's fate",
+    usage: REVIEW_STATS_USAGE,
+    options: REVIEW_STATS_OPTIONS,
+    config: "none",
+    run: (ctx) => reviewStatsCommand(ctx),
   },
   {
     name: "runs",

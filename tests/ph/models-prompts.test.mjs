@@ -173,10 +173,20 @@ test("PHCL-14 list-price cost from the project table", () => {
   assert.equal(costUsd(prices, "unknown", { input: 1 }), null);
   assert.equal(costUsd({ x: { input: 1 } }, "x", { input: 1 }), null);
   assert.equal(costUsd({}, "m-a", { input: 1 }), null);
-  const shipped = [];
-  const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).forEach((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : shipped.push(e.name)));
-  walk(SHIP_DIR);
-  assert.ok(!shipped.includes("model-prices.json"));
+});
+
+test("PHCL-14 the shipped price table prices every model of paseo/providers.json, each entry with its source", () => {
+  const table = JSON.parse(fs.readFileSync(path.join(SHIP_DIR, ".agents", "model-prices.json"), "utf8"));
+  const providers = fs.readFileSync(path.join(SHIP_DIR, "..", "paseo", "providers.json"), "utf8");
+  const models = new Set([...providers.matchAll(/"id":\s*"([^"]+)"/g)].map((m) => m[1]).filter((id) => !/^(off|low|medium|high|xhigh|max)$/.test(id)));
+  assert.ok(models.size > 0);
+  for (const id of models) assert.notEqual(costUsd(table.models, `circle/${id}`, { input: 1e6, output: 1e6 }), null, id);
+  for (const [k, v] of Object.entries(table.models)) {
+    for (const key of ["input", "output"]) assert.equal(typeof v[key], "number", `${k}.${key}`);
+    assert.match(v.source, /^https:\/\//, k);
+    assert.match(v.checkedAt, /^\d{4}-\d{2}-\d{2}$/, k);
+  }
+  assert.equal(table.checkedAt, Object.values(table.models).map((v) => v.checkedAt).sort()[0]);
 });
 
 test("PHCL-26 flow-list include: quoted items keep spaces, ' # ', commas and apostrophes; a trailing comment is dropped", () => {

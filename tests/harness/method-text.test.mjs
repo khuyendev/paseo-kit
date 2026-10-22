@@ -138,7 +138,7 @@ test("HARN-12 harness-evolve reads the run records and names the kit pull form",
   assert.match(evolve, /kit\.mjs pull <project> <files> --kit <kit dir>/);
   assert.match(evolve, /\| Date \| Change \| Scope \| Reason \| Supersedes \|/);
   const overlay = lf(path.join(SKILLS, "harness", "references", "kit-adapter.md"));
-  for (const s of ["_workspace/review-metrics.jsonl", "deferred.md", "3 + 3 trigger"]) assert.ok(overlay.includes(s), `overlay evolve section names ${s}`);
+  for (const s of ["ph review-stats", "deferred.md", "3 + 3 trigger"]) assert.ok(overlay.includes(s), `overlay evolve section names ${s}`);
 });
 
 test("HARN-16 harness skills ship the Apache-2.0 LICENSE and a NOTICE naming upstream and the kit edits", () => {

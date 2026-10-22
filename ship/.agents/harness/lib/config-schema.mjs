@@ -109,6 +109,7 @@ export const SCHEMA = obj({
     startup_globs: strs(),
     hook_timeout_s: int(1),
     attribution: nullable(str({ nonEmpty: true })),
+    worktree_setup: obj({ copy: strs(), link: strs() }),
   }),
   gsd: obj({
     roles: map(obj({ model: str({ nonEmpty: true }), effort: effort(), reason: str() }, ["model", "effort", "reason"])),

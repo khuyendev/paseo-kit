@@ -10,6 +10,7 @@ import { readJsonIf } from "../lib/io.mjs";
 import { isInside, safeName } from "../lib/paths.mjs";
 import { pidAlive } from "../lib/proc.mjs";
 import { seedWorktree } from "./worktree-seed.mjs";
+import { applyWorktreeSetup, removeSetupLinks } from "./worktree-setup.mjs";
 
 export function runGit(cwd, args) {
   const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8", windowsHide: true });
@@ -39,7 +40,7 @@ export function worktreeBase(top, cfg) {
   return path.join(top, cfg.worktree_dir);
 }
 
-export function createWorktree(root, cfg, name, { git = runGit, seed } = {}) {
+export async function createWorktree(root, cfg, name, { git = runGit, seed } = {}) {
   const top = repoTop(root, { git });
   if (!top) throw new UsageError("isolation 'worktree' needs a git repository");
   const safe = safeName(name);
@@ -49,6 +50,7 @@ export function createWorktree(root, cfg, name, { git = runGit, seed } = {}) {
   const wt = { top, path: dir, branch, name: safe };
   try {
     seedWorktree(root, wt, seed, git);
+    await applyWorktreeSetup(root, wt, cfg.adapter.worktree_setup, git);
     return wt;
   } catch (e) {
     discardWorktree(wt, { git });
@@ -58,6 +60,7 @@ export function createWorktree(root, cfg, name, { git = runGit, seed } = {}) {
 
 // Undo a worktree whose agent could not be created: the directory and the new branch go, nothing else.
 export function discardWorktree(wt, { git = runGit } = {}) {
+  removeSetupLinks(wt.path, git);
   git(wt.top, ["worktree", "remove", "--force", wt.path]);
   git(wt.top, ["branch", "-D", wt.branch]);
 }
@@ -118,6 +121,7 @@ export function classify(top, wt, { runsDir, agentLive = new Map(), git = runGit
 
 /** Removes one removable worktree, then its branch when git agrees it is merged. Returns {ok, line}. */
 export function removeWorktree(top, wt, { git = runGit } = {}) {
+  if (!wt.missing) removeSetupLinks(wt.path, git);
   // `worktree remove --force <path>` drops only this entry's registration when its directory is gone.
   const removed = git(top, wt.missing ? ["worktree", "remove", "--force", wt.path] : ["worktree", "remove", wt.path]);
   if (removed.code !== 0) {

@@ -1,0 +1,179 @@
+{
+  "_note": "List API prices, USD per 1M tokens, of the models in the kit's paseo/providers.json and their fast variants. Keys are the model id after the provider prefix (circle/<id>, circle-agent/<id>; a [1m] suffix is dropped). longContext: the higher rate once a request passes thresholdTokens. These are public list prices from each provider's official page (source); a proxy's bill can differ. Kit-owned: kit.mjs update replaces this file unless the project edited it. checkedAt (top: the oldest entry) says when each entry was last compared with its source. Refresh in the kit: check every source page, update the numbers, checkedAt and the CHANGELOG.",
+  "checkedAt": "2026-10-19",
+  "currency": "USD",
+  "unit": "per 1M tokens",
+  "models": {
+    "claude-haiku-4-5": {
+      "checkedAt": "2026-10-22",
+      "input": 1,
+      "cachedInput": 0.1,
+      "cacheWrite": 1.25,
+      "output": 5,
+      "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "notes": "5m cache write $1.25, 1h cache write $2.00, cache read $0.10."
+    },
+    "claude-haiku-5-5": {
+      "checkedAt": "2026-10-22",
+      "input": 0.1,
+      "cachedInput": 0.01,
+      "cacheWrite": 0.125,
+      "output": 0.5,
+      "longContext": {
+        "thresholdTokens": 100000,
+        "input": 0.5,
+        "output": 2.5
+      },
+      "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "notes": "Prompts <=100k tokens: $0.10 input, $0.50 output, $0.125 5m cache write, $0.01 cache read. Prompts >100k tokens: $0.50 input, $2.50 output, $0.625 5m cache write, $0.05 cache read. 1h cache writes are 2x base ($0.20 <=100k, $1.00 >100k)."
+    },
+    "claude-opus-5-5": {
+      "checkedAt": "2026-10-22",
+      "input": 4,
+      "cachedInput": 0.2,
+      "cacheWrite": 5,
+      "output": 20,
+      "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "notes": "Standard pricing across full 1M context window. 5m cache write is 1.25x ($5.00), 1h cache write is 2x ($8.00), cache read is 0.05x ($0.20). Fast mode available at $8.00 input, $40.00 output."
+    },
+    "claude-opus-5-5-fast": {
+      "checkedAt": "2026-10-22",
+      "input": 8,
+      "cachedInput": 0.4,
+      "cacheWrite": 10,
+      "output": 40,
+      "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "notes": "Fast mode provides faster output at 2x base rates across full context window. Caching multipliers apply on top: 5m cache write 1.25x ($10.00), cache read 0.05x ($0.40)."
+    },
+    "claude-sonnet-5-5": {
+      "checkedAt": "2026-10-22",
+      "input": 2,
+      "cachedInput": 0.1,
+      "cacheWrite": 2.5,
+      "output": 10,
+      "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "notes": "Standard pricing across full 1M context window. 5m cache write is 1.25x ($2.50), 1h cache write is 2x ($4.00), cache read is 0.05x ($0.10)."
+    },
+    "gemini-3.8-flash-high": {
+      "checkedAt": "2026-10-19",
+      "input": 0.75,
+      "cachedInput": 0.075,
+      "cacheWrite": null,
+      "output": 3.75,
+      "source": "https://ai.google.dev/pricing",
+      "notes": "Official model ID is 'gemini-3.8-flash' (no '-high' variant listed on official page; thinking tokens are included in standard output price of $3.75). Standard pricing through Dec 31, 2026: input $0.75, cached input $0.075, output $3.75 (rises to $1.50/$0.15/$7.50 on Jan 1, 2027). No cache write fee; cache storage is $0.50/1M tokens/hour. Priority tier is available at $1.35 input, $0.135 cached input, $6.75 output."
+    },
+    "gpt-6-astra": {
+      "checkedAt": "2026-10-19",
+      "input": 10,
+      "cachedInput": 1,
+      "cacheWrite": 12.5,
+      "output": 50,
+      "longContext": {
+        "thresholdTokens": 272000,
+        "input": 20,
+        "output": 75
+      },
+      "source": "https://developers.openai.com/api/docs/pricing",
+      "notes": "Short context (<=272k): input $10.00, cached input $1.00, cache write $12.50, output $50.00. Long context (>272k): input $20.00, cached input $2.00, cache write $25.00, output $75.00."
+    },
+    "gpt-6-astra-fast": {
+      "checkedAt": "2026-10-19",
+      "input": 20,
+      "cachedInput": 2,
+      "cacheWrite": 25,
+      "output": 100,
+      "longContext": {
+        "thresholdTokens": 272000,
+        "input": 40,
+        "output": 150
+      },
+      "source": "https://developers.openai.com/api/docs/pricing",
+      "notes": "Fast tier (priority). Short context (<=272k): input $20.00, cached input $2.00, cache write $25.00, output $100.00. Long context (>272k): input $40.00, cached input $4.00, cache write $50.00, output $150.00."
+    },
+    "gpt-6-luna": {
+      "checkedAt": "2026-10-19",
+      "input": 0.1,
+      "cachedInput": 0.01,
+      "cacheWrite": 0.125,
+      "output": 0.5,
+      "longContext": {
+        "thresholdTokens": 272000,
+        "input": 0.2,
+        "output": 0.75
+      },
+      "source": "https://developers.openai.com/api/docs/pricing",
+      "notes": "Short context (<=272k): input $0.10, cached input $0.01, cache write $0.125, output $0.50. Long context (>272k): input $0.20, cached input $0.02, cache write $0.25, output $0.75."
+    },
+    "gpt-6-luna-fast": {
+      "checkedAt": "2026-10-19",
+      "input": 0.2,
+      "cachedInput": 0.02,
+      "cacheWrite": 0.25,
+      "output": 1,
+      "longContext": {
+        "thresholdTokens": 272000,
+        "input": 0.4,
+        "output": 1.5
+      },
+      "source": "https://developers.openai.com/api/docs/pricing",
+      "notes": "Fast tier. Short context (<=272k): input $0.20, cached input $0.02, cache write $0.25, output $1.00. Long context (>272k): input $0.40, cached input $0.04, cache write $0.50, output $1.50."
+    },
+    "gpt-6.1-sol": {
+      "checkedAt": "2026-10-19",
+      "input": 2,
+      "cachedInput": 0.1,
+      "cacheWrite": 2.5,
+      "output": 10,
+      "longContext": {
+        "thresholdTokens": 272000,
+        "input": 4,
+        "output": 15
+      },
+      "source": "https://developers.openai.com/api/docs/pricing",
+      "notes": "Short context (<=272k): input $2.00, cached input $0.10, cache write $2.50, output $10.00. Long context (>272k): input $4.00, cached input $0.20, cache write $5.00, output $15.00."
+    },
+    "gpt-6.1-sol-fast": {
+      "checkedAt": "2026-10-19",
+      "input": 4,
+      "cachedInput": 0.2,
+      "cacheWrite": 5,
+      "output": 20,
+      "longContext": {
+        "thresholdTokens": 272000,
+        "input": 8,
+        "output": 30
+      },
+      "source": "https://developers.openai.com/api/docs/pricing",
+      "notes": "Fast tier (formerly priority processing, renamed July 30, 2026). Short context (<=272k): input $4.00, cached input $0.20, cache write $5.00, output $20.00. Long context (>272k): input $8.00, cached input $0.40, cache write $10.00, output $30.00."
+    },
+    "grok-4.7": {
+      "checkedAt": "2026-10-19",
+      "input": 2,
+      "cachedInput": 0.5,
+      "cacheWrite": null,
+      "output": 6,
+      "longContext": {
+        "thresholdTokens": 200000,
+        "input": 4,
+        "output": 12
+      },
+      "source": "https://docs.x.ai/developers/pricing",
+      "notes": "Prompts <200k: input $2.00, cached input $0.50, output $6.00. Prompts >=200k: input $4.00, cached input $1.00, output $12.00. Cache write price not listed. Priority processing is 2x standard rate."
+    },
+    "grok-4.7-build-fast": {
+      "checkedAt": "2026-10-19",
+      "input": 4,
+      "cachedInput": 1,
+      "cacheWrite": null,
+      "output": 12,
+      "longContext": {
+        "thresholdTokens": 200000,
+        "input": 6,
+        "output": 18
+      },
+      "source": "https://docs.x.ai/developers/pricing",
+      "notes": "Listed on pricing page under 'Grok 4.7 Fast pricing (Cursor and Grok Build only)': <200k input $4.00, cached input $1.00, output $12.00; >200k input $6.00, cached input $1.50, output $18.00. Note states it is available only in Cursor and Grok Build, billed through plans there, and not available on the public xAI API."
+    }
+  }
+}

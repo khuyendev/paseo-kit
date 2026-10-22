@@ -107,7 +107,8 @@
     "mutex": null,
     "startup_globs": [],
     "hook_timeout_s": 30,
-    "attribution": null
+    "attribution": null,
+    "worktree_setup": { "copy": [], "link": [] }
   },
   "gsd": {
     "roles": {},

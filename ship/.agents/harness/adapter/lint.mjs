@@ -6,6 +6,8 @@ import { GSD_ROLES, OVERLAY_REL, loadConfigLenient } from "../config.mjs";
 import { readJson, readText } from "../lib/io.mjs";
 import { errText } from "../lib/cli.mjs";
 import { toSlash } from "../lib/paths.mjs";
+import { runGit } from "../runtime/worktrees.mjs";
+import { setupProblems } from "../runtime/worktree-setup.mjs";
 import { isBuiltinRunnerKind } from "./contract.mjs";
 import { isWorkflowScript, lintAgentFile, lintSkillFolder, lintTextFile, walkFiles } from "./lint-assets.mjs";
 import { lintWorkflowScript } from "./lint-scripts.mjs";
@@ -54,6 +56,7 @@ function lintAdapter(root, cfg) {
   }
   for (const { where, rel } of adapterArgvScripts(a)) if (!exists(rel)) fail(`${where}: script ${rel} does not exist`);
   for (const rel of a.instructions) if (!exists(rel)) fail(`adapter.instructions: ${rel} does not exist`);
+  for (const p of setupProblems(root, a.worktree_setup, runGit)) fail(p);
   for (const [role, entry] of Object.entries(cfg.gsd.roles)) {
     if (!entry.reason?.trim()) fail(`gsd.roles.${role}: no reason (every role entry states why)`);
   }

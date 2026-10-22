@@ -1,5 +1,6 @@
-// List-price cost from the project's price table `.agents/model-prices.json` (PHCL-14). The kit ships no prices
-// (D-110). The daemon's own estimate is kept only as reportedCostUsd: through a proxy Claude Code prices every model
+// List-price cost from the price table `.agents/model-prices.json` (PHCL-14). The kit ships the list prices of the
+// models of its paseo/providers.json (owner decision 2026-10-22: prices belong to the providers, not to a project, and
+// without a table every cost was null); a project may edit its copy. The daemon's own estimate is kept only as reportedCostUsd: through a proxy Claude Code prices every model
 // at its own rates (2026-10-19: an agent reported $1.13 where its list price was $0.23).
 import path from "node:path";
 import { readJsonIf } from "../lib/io.mjs";

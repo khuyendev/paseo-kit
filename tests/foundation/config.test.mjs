@@ -274,6 +274,7 @@ const GOLDEN = {
     startup_globs: [],
     hook_timeout_s: 30,
     attribution: null,
+    worktree_setup: { copy: [], link: [] },
   },
   gsd: {
     roles: {},

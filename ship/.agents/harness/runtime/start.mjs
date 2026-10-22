@@ -64,7 +64,7 @@ export async function prepareCreate(ctx) {
  * A worktree is created for the agent and removed again when the agent cannot be created.
  */
 export async function startAgent(ctx, session, spec) {
-  const wt = spec.worktree ? createWorktree(ctx.root, ctx.cfg, `${spec.name}-${stamp(ctx.clock.now())}`) : null;
+  const wt = spec.worktree ? await createWorktree(ctx.root, ctx.cfg, `${spec.name}-${stamp(ctx.clock.now())}`) : null;
   try {
     const readOnly = Boolean(spec.readOnly || spec.def?.readOnly);
     const prompt = composePrompt({

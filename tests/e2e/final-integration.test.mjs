@@ -95,7 +95,7 @@ test("FLOW-27 the real workflow runner seeds a new worktree before fake worker d
   assert.equal(s.project.readJson("_workspace/_runs/wf_seed/result.json").result, "seed observed");
 });
 
-test("GSDF-94 seeded worktrees exclude unchanged dependencies but reject their edits or restoration", () => {
+test("GSDF-94 seeded worktrees exclude unchanged dependencies but reject their edits or restoration", async () => {
   const s = setup({ git: true, files: { "src/dependency": "old", "src/deleted": "old" } });
   const p = s.project;
   const pd = ".planning/phases/01-core";
@@ -103,7 +103,7 @@ test("GSDF-94 seeded worktrees exclude unchanged dependencies but reject their e
   p.write("src/dependency", "accepted");
   fs.rmSync(p.path("src/deleted"));
   const seed = { head: p.git("rev-parse", "HEAD").trim(), files: [{ path: "src/dependency", sha256: sha256("accepted") }, { path: "src/deleted", deleted: true }] };
-  const wt = createWorktree(p.root, loadConfig(p.root), "seeded", { seed });
+  const wt = await createWorktree(p.root, loadConfig(p.root), "seeded", { seed });
   try {
     assert.equal(fs.readFileSync(path.join(wt.path, "src/dependency"), "utf8"), "accepted");
     assert.equal(fs.existsSync(path.join(wt.path, "src/deleted")), false);
@@ -116,6 +116,6 @@ test("GSDF-94 seeded worktrees exclude unchanged dependencies but reject their e
     assert.equal(p.read("src/dependency"), "accepted");
   } finally { discardWorktree(wt); }
   p.write("src/dependency", "changed after approval");
-  assert.throws(() => createWorktree(p.root, loadConfig(p.root), "bad-seed", { seed }), /seed changed/);
+  await assert.rejects(createWorktree(p.root, loadConfig(p.root), "bad-seed", { seed }), /seed changed/);
   assert.doesNotMatch(p.git("worktree", "list", "--porcelain"), /bad-seed/);
 });

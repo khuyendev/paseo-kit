@@ -13,6 +13,8 @@ import { FILE_PLUGIN_ID, MIN_CLAUDE_VERSION, NODE_REQUIREMENT, claudeVersion, no
 import { checkTarget } from "../gsd/upstream.mjs";
 import { AGENTS_DIR, listAgentTypes } from "./agents.mjs";
 import { resolveModel } from "./models.mjs";
+import { runGit } from "./worktrees.mjs";
+import { setupEntries, setupProblems } from "./worktree-setup.mjs";
 
 const MB_PER_AGENT = 350;
 
@@ -100,6 +102,11 @@ function adapterLines(ctx, line) {
   const missing = files.filter(([rel]) => !fs.existsSync(path.resolve(ctx.root, rel)));
   for (const [rel, key] of missing) line("problem", `adapter file missing: ${rel} (${key})`);
   if (!missing.length) line("ok", `adapter and gsd sections present; ${files.length} named file(s) exist`);
+  const setup = ctx.cfg.adapter.worktree_setup;
+  if (!setupEntries(setup).length) return;
+  const problems = setupProblems(ctx.root, setup, runGit);
+  for (const p of problems) line("problem", p);
+  if (!problems.length) line("ok", `worktree setup: ${setup.copy.length} copy, ${setup.link.length} link path(s) present and git-ignored`);
 }
 
 // Integrity is independent of the project overlay so doctor can report both faults (CONF-08).
