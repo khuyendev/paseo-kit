@@ -17,7 +17,8 @@ Never add `--force` and never run `pull` without the owner's decision.
 ## 1. Git
 
 - `git -C <project> rev-parse --show-toplevel`:
-  - fails: not a repository. Ask the owner before `git init` (the folder may be meant as part of another repository).
+  - fails: not a repository. Ask the owner before `git init` (the folder may be meant as part of another repository),
+    unless the owner asked for a new project in a new folder: that request covers `git init`.
     After `git init` do not commit unless asked.
   - prints a parent folder: the project sits inside another repository. Tell the owner and ask whether to continue
     there or create a separate repository.
@@ -39,6 +40,14 @@ Never add `--force` and never run `pull` without the owner's decision.
   `~/.claude-circle`): the mod's marketplace is registered in that user configuration.
 - Exit code 2 means conflicts (kit files changed in the project): report each `conflict` line and stop for the owner.
   Never add `--force` and never run `node <kit>/kit.mjs pull` without the owner's decision.
+- `failed: mod activation: marketplace paseo-harness-kit is already registered from <path>`: one Claude config folder
+  holds one `paseo-harness-kit` marketplace, and another project (often one on the old kit) owns it. The files are
+  copied but no manifest is written. Stop and give the owner, in plain message text before any question, what the mod
+  is (the batch file tools `read_ranges`, `edit_multiple_files`, `write_multiple_files`; without it agents use plain
+  Edit/Write), which projects use the registered one (`installed_plugins.json` in the config folder), and the choices:
+  install without `--enable-plugin` (touches no other project; enable later with `update <project> --enable-plugin`),
+  or `claude plugin marketplace remove paseo-harness-kit` and install again (those projects lose the mod until they
+  are updated to this kit). Never remove the marketplace without the owner's decision.
 
 ## 4. Status and doctor
 
