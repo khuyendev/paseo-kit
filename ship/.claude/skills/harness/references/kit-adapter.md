@@ -46,7 +46,10 @@ helpers a composition needs as globals (`flow`, `gsd`, `call`, `loadCfg`, `sha`,
 list is in the kit's docs/INTERFACES.md section 13); a script does not copy them. Prompt texts that are a contract with
 a verb or a schema are kit templates (`.agents/workflows/prompts/<name>.md`); the project's own prompts go to
 `.agents/workflows/prompts/project/<name>.md` and are rendered with `renderPrompt("project/<name>", {vars})`, which fails
-on a missing variable.
+on a missing variable; `{{#flag}}...{{/flag}}` and `{{^flag}}...{{/flag}}` mark optional parts. The default
+`gsd-execute.js` takes its agent prompts from kit templates (`executor`, `fixer`, `code-review`, ...) and its decisions
+from the `exec-*` flow verbs; what it keeps is the step order, the stops and their answers, the policies and the retry
+counts, which is what a project evolves.
 
 ## 2. When to run
 
