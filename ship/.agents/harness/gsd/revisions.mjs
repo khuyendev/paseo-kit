@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { writeJsonAtomic, readJsonIf } from "../lib/io.mjs";
+import { decisionsOf } from "../lib/owner-answers.mjs";
 import { sha256, textDigest } from "../lib/hash.mjs";
 import { markerDigest } from "./validation-strategy.mjs";
 import { done, fail, none, nowIso, readIf, rel, withFileLock } from "./common.mjs";
@@ -78,7 +79,13 @@ export function keyFiles(g, phase, key) {
     const file = inPhase(`${phase.padded}-RESEARCH.md`);
     return { label: file.label, text: reportContent(readIf(file.abs)) };
   };
-  const inputs = () => [...research(), report()];
+  // Kit feedback 99 F1: the owner's decisions (`ph gsd decide`) are no research input. The outline ones join the inputs key (so the
+  // outline and, through freeze, the plans), a plan's own ones its plan key only; no part without a decision, so old records hold.
+  const decided = (part, pick) => {
+    const list = decisionsOf(phase.dir).filter(pick).map(({ decision, plans, outline, text }) => ({ decision, plans, outline, text }));
+    return list.length ? [{ label: `decisions:${part}`, text: JSON.stringify(list) }] : [];
+  };
+  const inputs = () => [...research(), report(), ...decided("outline", (d) => d.outline)];
   // Kit feedback 70: the strategy file the flow rendered, as the research digest it was rendered from; a hand-written file or a
   // later edit by validate-phase is no input. Only the checker's verdict (8e) depends on it, so it joins the plan keys, not inputs.
   const validation = () => {
@@ -105,7 +112,7 @@ export function keyFiles(g, phase, key) {
   if (key === "plans" || key === "checked" || key === "handoff") return allPlans();
   if (key === "checkedbody") return [...freeze(), ...planIds(phase).map((id) => ({ label: rel(g.codeRoot, planPath(phase, id)), text: planContent(phase, id) }))];
   const m = /^plan:(.+)$/.exec(key);
-  if (m) return [...freeze(), code(rel(g.codeRoot, planPath(phase, m[1])))];
+  if (m) return [...freeze(), code(rel(g.codeRoot, planPath(phase, m[1]))), ...decided(m[1], (d) => d.plans.includes(m[1]))];
   throw fail(`unknown revisions key ${key} (research, inputs, freeze, skeleton, plan:<id>, plans, checked, checkedbody, handoff)`);
 }
 

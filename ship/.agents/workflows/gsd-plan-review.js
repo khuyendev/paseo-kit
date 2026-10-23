@@ -49,8 +49,8 @@ const plansJudges = async (ids) => ({ files: ids.map(planPath), owns: (await Pro
 // G039: the medium and low notes of the converged review, read by gsd-execute into the brief of their plan.
 const notesPath = `${phaseDir}/plan-review-notes.json`;
 // The owner's answer to an earlier needs-owner stop (gsd-plan reviewGuidance) and CONTEXT.md are locked decisions for every
-// review prompt, so the finder, verifier, judge and editor all work from them.
-const lockedDecisions = [`Locked user decisions: ${phaseDir}/${N}-CONTEXT.md. A plan that follows them is not an issue; never revise a plan against them.`, ...(guidance ? [`<owner_guidance>\n${guidance.trim()}\n</owner_guidance>`] : [])];
+// review prompt, so the finder, verifier, judge and editor all work from them; so are the owner's `ph gsd decide` decisions (kit feedback 99).
+const lockedDecisions = [`Locked user decisions: ${phaseDir}/${N}-CONTEXT.md, and the owner's decisions (entries of kind decision, the newest of each id; they hold where they differ from CONTEXT) in ${phaseDir}/owner-answers.json when it has any. A plan that follows them is not an issue; never revise a plan against them.`, ...(guidance ? [`<owner_guidance>\n${guidance.trim()}\n</owner_guidance>`] : [])];
 const policy = policyBlock(a.researchPath ?? null);
 const roles = a.roles ?? {};
 const ro = (role) => ({ role, ...(roles[role]?.model ? { model: roles[role].model } : {}), ...(roles[role]?.effort ? { effort: roles[role].effort } : {}) });

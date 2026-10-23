@@ -7,6 +7,7 @@ import { done, fail, idList, lf, none, readIf, rel } from "./common.mjs";
 import { producesOf, producesProblems, resolveEdge } from "./contracts.mjs";
 import { balancedGlob, classify, covers, filesUnder, hasGlob, ownsPath, sharedPaths } from "./adapter-hooks.mjs";
 import { normPlanId, phaseFile, planIds, planPath, readPlans, summaryPath } from "./planning.mjs";
+import { inheritedTests } from "./inherited-tests.mjs";
 import { filesPerPlanLines, ownershipProblems, waveOverlaps } from "./plan-checks.mjs";
 import { loadRequirements } from "./requirements.mjs";
 import { loadRoadmap, roadmapPhase } from "./roadmap.mjs";
@@ -76,8 +77,9 @@ export function outlineParseVerb(g, phase) {
 }
 
 // filesPerPlan: "error" (default) holds a plan whose owns reach the blocker line as an error; "warn" reports it as a warning (an outline
-// that was reviewed and has plans is not reopened by this check, kit feedback 69).
-export async function outlineCheck(g, phase, { tracer = true, plansPerPhase, wavesPerPhase, filesPerPlan = "error" } = {}) {
+// that was reviewed and has plans is not reopened by this check, kit feedback 69); inheritedTests the same for a test file a verify
+// command runs that no plan of the phase owns (kit feedback 101).
+export async function outlineCheck(g, phase, { tracer = true, plansPerPhase, wavesPerPhase, filesPerPlan = "error", inheritedTests: inheritedMode = "error" } = {}) {
   const errors = [];
   const warnings = [];
   const o = readOutline(phase);
@@ -116,6 +118,7 @@ export async function outlineCheck(g, phase, { tracer = true, plansPerPhase, wav
   if (waves.length > limits.waves_per_phase) errors.push(`${waves.length} waves > waves_per_phase ${limits.waves_per_phase}`);
   const crossPlan = [];
   let filesLines = null;
+  let inherited = [];
   if (o.manifestError) errors.push(o.manifestError);
   else {
     // G014: a repeated id is refused, and every entry (not one per id) feeds the owns, shared and overlap checks.
@@ -171,6 +174,9 @@ export async function outlineCheck(g, phase, { tracer = true, plansPerPhase, wav
     for (const [id, paths] of ownedOf) for (const p of paths) if ([...shared].some((s) => s === p || covers(p, s))) errors.push(`${id}: owns ${p} covers a shared path`);
     const asPlans = o.rows.filter((r) => mplans.has(r.id)).map((r) => ({ id: r.id, wave: r.wave, filesModified: [] }));
     for (const pr of waveOverlaps(asPlans, (p) => ownedOf.get(p.id) ?? [])) if (pr.kind === "overlapping-owns") errors.push(pr.message);
+    const it = await inheritedTests(g, o.manifest.plans, ownedOf);
+    (inheritedMode === "warn" ? warnings : errors).push(...it.problems);
+    inherited = it.tests;
     // Kit feedback 69: the checker's Files/plan lines, applied to the allocation while it can still change. A directory in owns counts 1.
     const counts = new Map([...ownedOf].map(([id, paths]) => [id, [...new Set(paths)]]));
     filesLines = filesPerPlanLines(g, [...counts].map(([, files]) => ({ filesModified: files })), limits.plans_per_phase);
@@ -192,7 +198,7 @@ export async function outlineCheck(g, phase, { tracer = true, plansPerPhase, wav
       }
     }
   }
-  const json = { passed: errors.length === 0, errors, warnings, crossPlan, needsWiring: crossPlan.length > 0, waves, rows: o.rows, limits, files_per_plan: filesLines };
+  const json = { passed: errors.length === 0, errors, warnings, crossPlan, needsWiring: crossPlan.length > 0, waves, rows: o.rows, limits, files_per_plan: filesLines, inheritedTests: inherited };
   return done(json, errors.length ? 1 : 0);
 }
 

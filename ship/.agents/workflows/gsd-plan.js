@@ -10,11 +10,12 @@ export const meta = {
 // Prompt texts are kit templates (prompts/plan-*.md, verb plan-prompt); bookkeeping is in flow verbs (lib/flow-plan.mjs, flow-plan-state.mjs).
 
 // Kit feedback 87 (B3): every needs-owner stop names its answer, the one owner action after which the next run goes on (`verb`,
-// with the `args` to set when the answer is an argument); `options` keep the alternatives. A rerun reads the run's args file.
+// with the `args` to set when the answer is an argument); `options` keep the alternatives. A rerun reads the run's args file. Kit feedback
+// 99 F1: an owner decision is `ph gsd decide` (scope: a plan id, "outline", its own flags or null), never a CONTEXT edit, so research stays approved.
 const RERUN = "node .agents/harness/ph.mjs workflow --name gsd-plan --args-file _workspace/args/gsd-plan.json";
 const answers = {
   rerun: (what) => ({ verb: "rerun", command: `${what ? `${what}, then ` : ""}${RERUN} (same args)` }),
-  context: (what) => ({ verb: "context", command: `record the owner's decision on ${what} in the phase's CONTEXT.md (a locked decision), then ${RERUN} (same args)` }),
+  decide: (what, scope = null) => ({ verb: "decide", command: `record the owner's decision on ${what} with node .agents/harness/ph.mjs gsd decide ${N} --text "<the decision>" ${scope === "outline" ? "--outline" : scope?.startsWith("--") ? scope : scope ? `--plans ${scope} (only ${scope} is planned again; add --outline when the outline must change)` : "--plans <the plans it changes> (only those are planned again) or --outline (the outline and every plan)"}, then ${RERUN} (same args)` }),
   args: (args, what) => ({ verb: "args", args, command: `${what}: set ${JSON.stringify(args)} in the args file, then ${RERUN}` }),
   forceProceed: (issues) => ({ verb: "forceProceed", args: { forceProceed: { reason: "<why the owner accepts them>", issues } }, command: `if the owner accepts these issues, set forceProceed {reason, issues} in the args file, then ${RERUN}` }),
   guidance: () => ({ verb: "reviewGuidance", args: { reviewGuidance: "<the owner's answer to the issues>" }, command: `set reviewGuidance (the owner's answer) in the args file, then ${RERUN}` }),
@@ -22,7 +23,7 @@ const answers = {
   workflow: (name, what) => ({ verb: "workflow", command: `${what}: run ${name}, then ${RERUN} (same args)` }),
   contracts: (changes) => ({ verb: "contracts-change", changes, command: `if the owner accepts the planner's contract changes, apply each with node .agents/harness/ph.mjs gsd contracts change ${N} (stdin JSON {plan, symbol, old, new, reason}; the next contract gate revises the consumers), then ${RERUN} (same args)` }),
 };
-const GUIDE = ["give guidance and rerun", "adjust CONTEXT", "abandon"];
+const GUIDE = ["give guidance and rerun", "record an owner decision (ph gsd decide --outline) and rerun", "abandon"];
 const REVIEW_OPTIONS = ["give reviewGuidance and rerun", "record the decision in CONTEXT and rerun", "disable plan review (planReview false) and rerun"];
 
 const rawCall = call;
@@ -74,8 +75,9 @@ let [flowReport, streamed, handEdits, validationReport, recheckReport, manifestF
 const result = (status, extra = {}) => ({ status, phaseDir, mode, warnings, advisories, ...(flowReport ?? {}), ...(handEdits ? { handEdits } : {}), ...(validationReport ? { validation: validationReport } : {}), ...(reallocated.length ? { reallocated } : {}), ...(recheckReport ? { recheck: recheckReport } : {}), ...(contractReport.checks ? { contracts: contractReport } : {}), ...extra });
 const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reason, ...extra });
 const failedCall = (what, reason) => result("failed", { reason: `${what}${reason ? `: ${reason}` : " returned nothing"}` });
-// Kit feedback 98 F3, 101 F3: a conflict with the planner's contract_changes answers `contracts change`; one about plans `ids` adds replanPlans.
-const ownerStop = (stage, r, ids = null) => owner(stage, `planner returned ${ownerMarker(r)}`, { marker: ownerMarker(r), question: r?.question ?? r?.summary ?? null, summary: r?.summary ?? null, plans: r?.plans ?? null, conflict: r?.conflict ?? null, options: ["answer and rerun with the same args", "adjust CONTEXT and rerun", "abandon"], answer: isConflict(r) && !r.conflict?.rejected && r.contract_changes?.length ? answers.contracts(r.contract_changes.map((c) => ({ plan: ids?.[0], ...c }))) : { ...answers.context(`the planner's ${ownerMarker(r)} (its question, conflict or proposal)`), ...(isConflict(r) && ids?.length && inputsAt ? { args: { replanPlans: { plans: ids, inputs: inputsAt } } } : {}) } });
+// Kit feedback 98 F3, 99 F1, 101 F3: a conflict with the planner's contract_changes answers `contracts change`; any other marker answers
+// `ph gsd decide` (scope: "outline", a plan id or plan ids), and a conflict about plans adds replanPlans to the rerun's args.
+const ownerStop = (stage, r, scope = null, ids = Array.isArray(scope) ? scope : scope && scope !== "outline" ? [scope] : null) => owner(stage, `planner returned ${ownerMarker(r)}`, { marker: ownerMarker(r), question: r?.question ?? r?.summary ?? null, summary: r?.summary ?? null, plans: r?.plans ?? null, conflict: r?.conflict ?? null, options: ["record the owner's decision (ph gsd decide) and rerun with the same args", "change CONTEXT with gsd-discuss and rerun", "abandon"], answer: isConflict(r) && !r.conflict?.rejected && r.contract_changes?.length ? answers.contracts(r.contract_changes.map((c) => ({ plan: ids?.[0], ...c }))) : { ...answers.decide(`the planner's ${ownerMarker(r)} (its question, conflict or proposal)`, ids ? ids.join(",") : scope), ...(isConflict(r) && ids?.length && inputsAt ? { args: { replanPlans: { plans: ids, inputs: inputsAt } } } : {}) } });
 // G017: the settings each revision key hashes (plan-args): a changed lane, role or limit reruns the judgments it decides.
 const settingsDigest = {};
 for (const [key, value] of Object.entries(A.settings)) settingsDigest[key] = await sha(JSON.stringify(value));
@@ -289,13 +291,13 @@ if (vs.log) log(vs.log);
 if (vs.commit) await commitDocs(`docs(phase-${N}): add validation strategy`, [vs.commit]);
 if (mode === "gaps") return await gapMode();
 
-// ---- outline (GSDF-19) ----
+// ---- outline (GSDF-19); kit feedback 99 F2: research Open Questions that ask for a scope decision go to the owner before it is written ----
 phase("Outline");
 // The writer runs the same check the gate runs (G027). Kit feedback 69: the check holds a plan whose owns reach the Files/plan blocker
 // line as an error; an outline reused from an earlier run was reviewed and may have plans, so this run's first check only warns.
 const outlineCheckArgs = ["outline", "check", N, ...(tracer ? [] : ["--tracer", "false"])];
 let outlineFilesMode = "error";
-const outlineCheck = async () => gsd([...outlineCheckArgs, ...(outlineFilesMode === "warn" ? ["--files-per-plan", "warn"] : [])]);
+const outlineCheck = async () => gsd([...outlineCheckArgs, ...(outlineFilesMode === "warn" ? ["--files-per-plan", "warn", "--inherited-tests", "warn"] : [])]);
 // Kit feedback 98 F1, F2: the prose may not reshape a symbol the manifest still freezes since `base` (verb plan-contract-drift, as errors).
 const outlineText = async () => ({ outline: (await flow(["read", OUTLINE])).json?.text ?? "", manifest: (await flow(["read", MANIFEST])).json?.text ?? "" });
 const driftCheck = async (base) => { const c = await outlineCheck(); const d = base && contractsOn ? (await flow(["plan-contract-drift"], { before: base, after: await outlineText() })).json : null; return d?.errors?.length ? { code: 1, json: { ...c.json, errors: [...(c.json?.errors ?? []), ...d.errors] }, drift: d.drift, driftOnly: c.code === 0 } : c; };
@@ -305,7 +307,7 @@ async function fixOutline(turns, stage, base = null) {
     const errors = check.json?.errors ?? [check.json?.error ?? `outline check exit ${check.code}`];
     const { result: r, reason } = await plannerCall("planner:outline", "outline-fix", "outline-fix", { errors, digest: await hashOf("inputs") }, { judges: await outlineJudges() });
     if (fatal(reason)) return { stop: failedCall("outline fixer", reason) };
-    if (ownerMarker(r)) return { stop: ownerStop(stage, r) };
+    if (ownerMarker(r)) return { stop: ownerStop(stage, r, "outline") };
     check = await driftCheck(base);
   }
   if (check.driftOnly) return { stop: owner(stage, `the outline revision reshaped ${check.drift.map((d) => d.symbol).join(", ")} in the prose but not in the manifest contract`, { drift: check.drift, answer: answers.fix(`make each named ${MANIFEST} produces signature the shape the outline gives it (or the outline's code span the manifest signature)`) }) };
@@ -331,10 +333,12 @@ const outlineReused = Boolean(parsed.json?.complete && inputsSame && !a.replan);
 if (outlineReused) log("outline reused: marker present and inputs unchanged");
 else if (keepOwnOutline) log("outline kept: this run wrote it for the same inputs before it stopped");
 else {
+  const q = approvedResearch ? await gsd(["research", "questions", N]) : null;
+  if (q?.code === 1 && q.json?.open?.length) return owner("Discuss", `the research Open Questions ask the owner for a scope decision before the outline: ${q.json.open.map((x) => `${x.n}. ${x.title}`).join("; ")}`, { questions: q.json.open, answer: answers.decide("each question", `--question <n> (one decision per question: ${q.json.open.map((x) => x.n).join(", ")})`) });
   const beforeSha = await fileSha(OUTLINE);
   const { result: r, reason } = await plannerCall("planner:outline", "outline", "outline", { checkArgs: outlineCheckArgs, digest: await hashOf("inputs") }, { judges: await outlineJudges() });
   if (fatal(reason)) return failedCall("outline planner", reason);
-  if (ownerMarker(r)) return ownerStop("Outline", r);
+  if (ownerMarker(r)) return ownerStop("Outline", r, "outline");
   const after = await gsd(["outline", "parse", N]);
   const afterSha = await fileSha(OUTLINE);
   // An old marker never acknowledges new inputs: a regeneration must change the outline.
@@ -362,7 +366,7 @@ async function runArchitect(label, why) {
   // An existing WIRING.md never stands in for the reply (G011).
   const { result: r, reason } = await callTwice(prompt, { label, agentType: architect, schema: S.architect, judges: await outlineJudges(), ...roles.architect });
   if (fatal(reason)) return { stop: failedCall("architect", reason) };
-  if (r?.status === "conflict") return { stop: owner("Wiring", "architect reported a conflict", { conflict: r.conflicts ?? [], options: ["decide and rerun", "abandon"], answer: answers.context("the architect's conflicts") }) };
+  if (r?.status === "conflict") return { stop: owner("Wiring", "architect reported a conflict", { conflict: r.conflicts ?? [], options: ["decide and rerun", "abandon"], answer: answers.decide("the architect's conflicts", "outline") }) };
   if (r?.status !== "complete") return { stop: result("failed", { reason: `architect ${r ? `ended with status ${r.status}` : "returned nothing"}${reason ? ` (${reason})` : ""}` }) };
   if (!(await wiringExists())) return { stop: result("failed", { reason: `architect wrote no ${WIRING}${reason ? ` (${reason})` : ""}` }) };
   sharedChanges.push(...(r?.sharedChanges ?? []));
@@ -391,12 +395,9 @@ async function skel(op, data = {}) {
   advisories.push(...r.json.advisories);
   return r.json;
 }
-async function snapshotList() {
-  const paths = [OUTLINE, MANIFEST, P("CONTEXT.md"), ".planning/REQUIREMENTS.md", ".planning/ROADMAP.md"];
-  return (await wiringExists()) ? [...paths, WIRING] : paths;
-}
+const snapshotList = async () => [OUTLINE, MANIFEST, P("CONTEXT.md"), ".planning/REQUIREMENTS.md", ".planning/ROADMAP.md", ...((await wiringExists()) ? [WIRING] : [])];
 const laneOpts = async (label, schema, lane) => ({ label, agentType: agents.skeleton_lane, readOnly: true, schema, judges: await outlineJudges(), ...lane.opts });
-const reviewLane = async (lane) => callTwice(await promptFor("skeleton-lane", { lens: lane.text, files: await snapshotList(), warnings: outline?.warnings ?? [], edges: outline?.crossPlan ?? [], focus: skeletonFocus, digest: await hashOf(...FREEZE()) }), await laneOpts(`skeleton-${lane.id}`, S.issues, lane));
+const reviewLane = async (lane) => callTwice(await promptFor("skeleton-lane", { lens: lane.text, files: await snapshotList(), warnings: outline?.warnings ?? [], edges: outline?.crossPlan ?? [], tests: outline?.inheritedTests ?? [], focus: skeletonFocus, digest: await hashOf(...FREEZE()) }), await laneOpts(`skeleton-${lane.id}`, S.issues, lane));
 const resolutionCheck = async (lane, open) => call(await promptFor("skeleton-resolve", { lens: lane.text, files: await snapshotList(), open, digest: await hashOf(...FREEZE()) }), await laneOpts(`resolve-${lane.id}`, S.resolution, lane));
 async function skeletonGate() {
   const base = await outlineText();
@@ -432,10 +433,10 @@ async function skeletonGate() {
     // A resolution check that returned nothing judged none of its issues: a failed call, not a stalled skeleton.
     s = await skel("resolve", { checks });
     if (s.unjudged) return { status: "failed", stop: result("failed", s.unjudged) };
-    if (s.blockers >= startBlockers) return { status: "needs-owner", stop: owner("Skeleton review", `stalled: ${s.blockers} open blockers at pass ${pass} (was ${startBlockers})`, { issues: s.open, options: GUIDE, answer: answers.context("the open skeleton blockers") }) };
+    if (s.blockers >= startBlockers) return { status: "needs-owner", stop: owner("Skeleton review", `stalled: ${s.blockers} open blockers at pass ${pass} (was ${startBlockers})`, { issues: s.open, options: GUIDE, answer: answers.decide("the open skeleton blockers", "outline") }) };
   }
   const end = await skel("end");
-  if (end.blockers.length) return { status: "needs-owner", stop: owner("Skeleton review", `${end.blockers.length} open blockers after ${end.passes} passes`, { issues: end.blockers, options: GUIDE, answer: answers.context("the open skeleton blockers") }) };
+  if (end.blockers.length) return { status: "needs-owner", stop: owner("Skeleton review", `${end.blockers.length} open blockers after ${end.passes} passes`, { issues: end.blockers, options: GUIDE, answer: answers.decide("the open skeleton blockers", "outline") }) };
   warnings.push(...end.warnings);
   return { status: "passed" };
 }
@@ -645,7 +646,7 @@ async function structureFix(id, session) {
   if (st.code === 0) return null;
   const { result: r, reason } = await plannerCall(session, `fix-${id}`, "fix", { id, errors: st.json?.errors ?? [st.json?.error ?? `exit ${st.code}`], digest: freezeHash }, { judges: await plansJudges([id]) });
   if (fatal(reason)) return failedCall(`structure fixer ${id}`, reason);
-  if (ownerMarker(r)) return ownerStop("Plan", r);
+  if (ownerMarker(r)) return ownerStop("Plan", r, id);
   st = await verify();
   return st.code === 0 ? null : result("failed", { reason: `plan ${id} still fails verify plan-structure`, errors: st.json?.errors ?? [] });
 }
