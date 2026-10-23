@@ -138,6 +138,11 @@ const listSuperseded = (phase) => {
 
 export const RESEARCH_SECTIONS = ["Summary", "Standard Stack", "Architecture Patterns", "Don't Hand-Roll", "Common Pitfalls", "Sources"];
 const HEX64 = /^[0-9a-f]{64}$/;
+// One blocker per list item (or line) inside <research_blockers>; the owner gets the items, not the block.
+const researchBlockers = (body) => (/<research_blockers>([\s\S]*?)<\/research_blockers>/.exec(body)?.[1] ?? "")
+  .split(/\r?\n/)
+  .map((line) => line.trim().replace(/^(?:[-*]|\d+[.)])\s+/, ""))
+  .filter(Boolean);
 
 export function researchStatus(g, phase) {
   const file = phaseFile(phase, "RESEARCH.md");
@@ -173,9 +178,9 @@ export function researchStatus(g, phase) {
   if (fm.input_digest !== current) return done({ ...out, status: "stale" }, 1);
   const attempt = readAttempt(phase, "research");
   if (attempt && attempt.inputDigest === current && attempt.key !== fm.attempt_key) {
-    if (attempt.result?.status === "blocked") return done({ ...out, status: "blocked", attempt: attempt.key }, 1);
+    if (attempt.result?.status === "blocked") return done({ ...out, status: "blocked", attempt: attempt.key, blockers: researchBlockers(body) }, 1);
     if (!attempt.done) return done({ ...out, status: "incomplete", attempt: attempt.key }, 1);
   }
-  if (fm.status === "blocked") return done({ ...out, status: "blocked" }, 1);
+  if (fm.status === "blocked") return done({ ...out, status: "blocked", blockers: researchBlockers(body) }, 1);
   return done({ ...out, status: "complete" });
 }

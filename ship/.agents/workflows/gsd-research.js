@@ -113,7 +113,7 @@ const rendered = (await gsd(["research", "prompt", phaseDir])).json;
 if (!rendered?.prompt) return { status: "failed", reason: "research prompt could not be rendered" };
 const prompt = [
   rendered.prompt,
-  `<kit_research_contract>\nWrite only ${report}. Its frontmatter carries status (complete or blocked), input_digest: ${inputDigest} and attempt_key: ${attempt.key}; a complete report ends with the line <!-- gsd:research-complete ${attempt.key} -->; a blocked one has <research_blockers>.\n${a.refresh ? `Refresh: keep findings of the existing report that are still valid${a.focus ? `; focus on: ${a.focus}` : ""}.` : ""}\nDo not build, test, install or commit anything. Keep provenance tags on every claim. The package audit is not installed: never report it as OK.\nReturn JSON {"status": "complete" | "blocked", "path": "${report}"}.\n</kit_research_contract>`,
+  `<kit_research_contract>\nWrite only ${report}. Its frontmatter carries status (complete or blocked), input_digest: ${inputDigest} and attempt_key: ${attempt.key}; a complete report ends with the line <!-- gsd:research-complete ${attempt.key} -->; a blocked one has <research_blockers>.\nBefore your final reply, run \`node .agents/harness/ph.mjs gsd research status ${phaseDir}\` (read-only). It lists the \`problems\` of the report; fix every listed problem and run it again until the status is complete, or blocked with its blockers listed.\n${a.refresh ? `Refresh: keep findings of the existing report that are still valid${a.focus ? `; focus on: ${a.focus}` : ""}.` : ""}\nDo not build, test, install or commit anything. Keep provenance tags on every claim. The package audit is not installed: never report it as OK.\nReturn JSON {"status": "complete" | "blocked", "path": "${report}"}.\n</kit_research_contract>`,
   digestLine("research", inputDigest),
 ].join("\n\n");
 const schema = { type: "object", properties: { status: { type: "string", enum: ["complete", "blocked"] }, path: { type: "string" } }, required: ["status"] };
@@ -125,4 +125,6 @@ if (decided) return decided;
 const { st } = await readback();
 if (fatal(reason)) return { status: "failed", reason: `researcher failed: ${reason}` };
 if (st.code === 66) return { status: "failed", reason: `researcher wrote no report${reason ? ` (${reason})` : ""}` };
-return { status: "failed", reason: `report ${report} is not this attempt's (status ${st.json?.status ?? st.code}; attempt key or input digest differs)` };
+// The researcher's reason and the report's problems (or blockers) are the only clue to what failed; keep both.
+const problems = st.json?.problems ?? st.json?.blockers ?? [];
+return { status: "failed", reason: `report ${report} is not this attempt's (status ${st.json?.status ?? st.code}; attempt key or input digest differs)${reason ? `; researcher: ${reason}` : ""}`, problems };
