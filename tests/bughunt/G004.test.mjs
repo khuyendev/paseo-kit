@@ -63,6 +63,7 @@ function quickRun(checks) {
   const w = makeWorld({ files: { ".planning/ROADMAP.md": "# Roadmap\n" } });
   let n = 0;
   const agent = (p, o) => {
+    if (o.label === "quick-research") { w.write(`${Q}/${ID}-RESEARCH.md`, "research\n"); return "researched"; }
     if (o.label === "quick-plan") { w.write(`${Q}/${ID}-PLAN.md`, planText("01-01")); return { marker: "PLANNING COMPLETE" }; }
     if (o.label.startsWith("quick-check")) return { issues: checks[Math.min(n++, checks.length - 1)] };
     if (o.label.startsWith("quick-revise")) return { marker: "REVISION COMPLETE" };

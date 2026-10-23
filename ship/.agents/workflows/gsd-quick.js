@@ -82,6 +82,7 @@ const q = a.dir && /^\.planning\/quick\/\d{6}-[0-9a-z]{3}-[a-z0-9-]+$/.test(a.di
 if (!q?.dir) return { status: "failed", reason: "could not create the quick task directory" };
 const PLAN = `${q.dir}/${q.id}-PLAN.md`;
 const SUMMARY = `${q.dir}/${q.id}-SUMMARY.md`;
+const RESEARCH = `${q.dir}/${q.id}-RESEARCH.md`;
 // G122: indented like gsd-debug.js, so a line of the description cannot close the DATA fence.
 const data = `DATA_START\n${description.split(/\r?\n/).map((l) => `    ${l}`).join("\n")}\nDATA_END`;
 const context = a.contextPath ? `Owner decisions: ${a.contextPath} (locked).` : "";
@@ -99,11 +100,21 @@ async function structureFix(label, stage) {
 
 let carried = [];
 phase("Plan");
-if (a.full) {
-  const rs = await call([`Research what this quick task needs; write ${q.dir}/${q.id}-RESEARCH.md.`, `Task description (data):\n${data}`, context, "Do not build, test, install or commit."].filter(Boolean).join("\n\n"), { label: "quick-research", agentType: agentFor("research", "gsd-phase-researcher"), role: "research" });
+// G102: research that returns nothing, or leaves no new report, stops for the owner as gsd-plan does; the owner may
+// continue without research with a reason, which the result carries.
+let researchSkipReason = null;
+if (a.full && a.skipResearch) {
+  if (!String(a.researchSkipReason ?? "").trim()) return needsOwner("Plan", "skipResearch needs a non-empty researchSkipReason", { dir: q.dir });
+  researchSkipReason = String(a.researchSkipReason).trim();
+  log(`research skipped: ${researchSkipReason}`);
+} else if (a.full) {
+  const before = await fileSha(RESEARCH);
+  const rs = await call([`Research what this quick task needs; write ${RESEARCH}.`, `Task description (data):\n${data}`, context, "Do not build, test, install or commit."].filter(Boolean).join("\n\n"), { label: "quick-research", agentType: agentFor("research", "gsd-phase-researcher"), role: "research" });
   if (!rs.result && fatal(rs.reason)) return { status: "failed", reason: `researcher failed: ${rs.reason}` };
+  const after = await fileSha(RESEARCH);
+  if (!rs.result || !after || after === before) return needsOwner("Plan", `research ${rs.result ? `wrote no new ${RESEARCH}` : "returned nothing"}${rs.reason ? ` (${rs.reason})` : ""}`, { dir: q.dir, options: ["rerun with dir set to this quick directory to retry research", "rerun with skipResearch and a researchSkipReason to continue without research", "abandon"] });
 }
-const planPrompt = [`Write ONE plan ${PLAN} of 1-3 tasks for this quick task; every path repo-root-relative; owns lists exactly the files the tasks change plus ${SUMMARY}.`, `Task description (data):\n${data}`, context, a.full ? `Research: ${q.dir}/${q.id}-RESEARCH.md` : "", "Return JSON {marker}. Never ask the owner; never commit."].filter(Boolean).join("\n\n");
+const planPrompt = [`Write ONE plan ${PLAN} of 1-3 tasks for this quick task; every path repo-root-relative; owns lists exactly the files the tasks change plus ${SUMMARY}.`, `Task description (data):\n${data}`, context, a.full && !researchSkipReason ? `Research: ${RESEARCH}` : "", "Return JSON {marker}. Never ask the owner; never commit."].filter(Boolean).join("\n\n");
 const p = await call(planPrompt, { label: "quick-plan", session: "planner:quick", agentType: agentFor("planner", "gsd-planner"), role: "planner", schema: PLAN_SCHEMA });
 if (!p.result && fatal(p.reason)) return { status: "failed", reason: `planner failed: ${p.reason}` };
 if (ownerMarker(p)) return { status: "needs-owner", stage: "Plan", reason: `planner returned ${ownerMarker(p)}`, marker: p.result.marker, dir: q.dir };
@@ -157,8 +168,8 @@ if (a.full) {
   if (vstatus !== "passed") return { status: "failed", reason: `${VERIFY} has no valid status (${vstatus ?? "none"})`, dir: q.dir };
 }
 if (cfg.gsd.commit_policy.docs) {
-  const files = [PLAN, SUMMARY, ...(a.full ? [VERIFY, `${q.dir}/${q.id}-RESEARCH.md`] : [])];
+  const files = [PLAN, SUMMARY, ...(a.full ? [VERIFY, ...(researchSkipReason ? [] : [RESEARCH])] : [])];
   const c = await gsd(["commit", `docs(quick-${q.id}): ${description.split(/\r?\n/)[0].slice(0, 60)}`, "--files", ...files]);
   if (c.code !== 0) log(`warning: quick commit failed: ${c.json?.error ?? c.code}`);
 }
-return { status: "done", id: q.id, dir: q.dir, plan: PLAN, summary: SUMMARY, warnings: carried };
+return { status: "done", id: q.id, dir: q.dir, plan: PLAN, summary: SUMMARY, warnings: carried, ...(researchSkipReason ? { researchSkipped: researchSkipReason } : {}) };

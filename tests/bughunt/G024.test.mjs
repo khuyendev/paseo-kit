@@ -46,6 +46,7 @@ async function everyWorkflow(overlay) {
     const agent = (p, o) => {
       const plan = /Write ONE plan (\S+)/.exec(p)?.[1];
       if (plan) { w.write(plan, planText("q")); return { marker: "PLANNING COMPLETE" }; }
+      if (o.label === "quick-research") { w.write(/write (\S+RESEARCH\.md)/.exec(p)[1], "research\n"); return "researched"; }
       if (o.label === "quick-exec") { w.write(/SUMMARY to exactly: (\S+)/.exec(p)[1], "done\n"); return { taskResults: [{ task: "1", status: "implemented" }] }; }
       return { issues: [] };
     };

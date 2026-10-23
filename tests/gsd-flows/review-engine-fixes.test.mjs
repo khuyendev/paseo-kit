@@ -79,7 +79,7 @@ function quickAgent(w, override) {
   return (prompt, opts) => {
     const v = override?.(prompt, opts);
     if (v !== undefined) return v;
-    if (opts.label === "quick-research") return "researched";
+    if (opts.label === "quick-research") { w.write(`${Q}/${ID}-RESEARCH.md`, "research\n"); return "researched"; }
     if (opts.label === "quick-plan") { w.write(`${Q}/${ID}-PLAN.md`, planText("01-01")); return { marker: "PLANNING COMPLETE" }; }
     if (opts.label.startsWith("quick-check")) return { issues: [] };
     if (opts.label === "quick-exec") { w.write(`${Q}/${ID}-SUMMARY.md`, "summary\n"); return { taskResults: [] }; }

@@ -9,6 +9,7 @@ const DIR = ".planning/quick/260101-abc-fix";
 const PLAN = `${DIR}/260101-abc-PLAN.md`;
 const SUMMARY = `${DIR}/260101-abc-SUMMARY.md`;
 const VERIFY = `${DIR}/260101-abc-VERIFICATION.md`;
+const RESEARCH = `${DIR}/260101-abc-RESEARCH.md`;
 const ERR = "Task 1 (t): missing <action>";
 
 // The planner writes the plan; a fixer turn rewrites it clean when `fixClean`; the checker reports one blocker
@@ -21,6 +22,7 @@ function agentFor(w, { fixClean = true } = {}) {
     if (o.label === "quick-check-1") return { issues: [{ severity: "blocker", description: "x" }] };
     if (o.label.startsWith("quick-check")) return { issues: [] };
     if (o.label.startsWith("quick-revise")) { w.write(PLAN, planText("q")); return { marker: "REVISION COMPLETE" }; }
+    if (o.label === "quick-research") { w.write(RESEARCH, "research\n"); return "researched"; }
     if (o.label === "quick-exec") { w.write(SUMMARY, "done\n"); return { taskResults: [{ task: "1", status: "implemented" }] }; }
     if (o.label === "quick-verify") {
       const fp = quickVerification(w.root, DIR, "fingerprint");
