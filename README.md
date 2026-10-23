@@ -168,7 +168,7 @@ session-bound. `read_limits` in the config bounds reads.
 
 ## Hooks
 
-Registered from `ship/templates/settings.hooks.json`; hooks never block a tool call.
+Registered from `ship/templates/settings.hooks.json`; no hook blocks a tool call except the self-repair guard.
 
 - `context_guard.mjs`: reminds the main session to `ph compact-self` at `context_guard` bands.
 - `io_guard.mjs`: reminders for unbatched lookups, edits and re-reads (`io_guard` thresholds).
@@ -178,6 +178,12 @@ Registered from `ship/templates/settings.hooks.json`; hooks never block a tool c
 - `bash_long_command.mjs`: rescues over-long Bash commands on Windows.
 - `skill_usage.mjs`: logs each skill the model invokes to `_workspace/skill-usage.jsonl`; `ph evolve-stats` lists the
   counts, so a skill whose description never fires shows 0.
+- `self_repair_guard.mjs` (kit feedback 87): an agent started by a workflow run may not edit `.agents/`, `.claude/`,
+  `AGENTS.md` or `CLAUDE.md` (the runtime marks those agents with `PASEO_HARNESS_RUN`), and no session may edit a
+  composition script `.agents/workflows/*.js` or `.agents/harness.config.json` while a workflow run of the project is
+  live (a tier-only overlay edit still passes, for live retier). Both are denied with the reason and the way on; the
+  harness changes between runs through `harness-evolve`. The owner scopes it with `self_repair` in the overlay. Shell
+  writes are not covered.
 
 ## UI
 
