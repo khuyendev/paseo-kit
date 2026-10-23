@@ -47,6 +47,16 @@ function takeLock(file, agentId) {
   throw new UsageError(`compact lock ${file} could not be taken`);
 }
 
+// The watcher takes the lock over from its armer. The armer may have been killed after spawning the watcher and before
+// recording the watcher's pid, which leaves the dead armer pid in the lock; a lock that names neither is not ours.
+export function claimCompact(env, agentId, owner) {
+  const { lock } = compactFiles(env, agentId);
+  const holder = lockPid(lock);
+  if (holder !== owner && holder !== process.pid) return false;
+  fs.writeFileSync(lock, String(process.pid));
+  return true;
+}
+
 export function spawnWatcher({ root, env, args, log }) {
   const fd = fs.openSync(log, "w");
   try {
@@ -68,7 +78,7 @@ export async function armCompact(ctx, session, target, { start = spawnWatcher } 
   takeLock(lock, target);
   let pid;
   try {
-    pid = start({ root: ctx.root, env: ctx.env, log, args: [target, "--focus", ctx.opts.focus ?? "", "--resume", resume] });
+    pid = start({ root: ctx.root, env: ctx.env, log, args: [target, "--focus", ctx.opts.focus ?? "", "--resume", resume, "--owner", String(process.pid)] });
     if (!pid) throw new Error("the watcher process did not start");
     fs.writeFileSync(lock, String(pid));
   } catch (e) {
@@ -148,7 +158,11 @@ async function compactSelf(ctx) {
 
 async function compactRun(ctx) {
   const [target] = ctx.args;
-  if (!target || ctx.opts.resume === undefined) throw new UsageError(`${WATCHER_COMMAND} <agent id> --focus F --resume R (started by compact-self)`);
+  if (!target || ctx.opts.resume === undefined || ctx.opts.owner === undefined) throw new UsageError(`${WATCHER_COMMAND} <agent id> --focus F --resume R --owner PID (started by compact-self)`);
+  if (!claimCompact(ctx.env, target, Number.parseInt(ctx.opts.owner, 10))) {
+    ctx.out(`${hhmmss(ctx.clock.now())} compact lock was taken over before the watcher started; not watching`);
+    return 2;
+  }
   return runCompactWatcher(ctx, await ctx.paseo(), { target, focus: ctx.opts.focus, resume: ctx.opts.resume });
 }
 
@@ -164,8 +178,8 @@ export const compactCommands = [
   {
     name: WATCHER_COMMAND,
     summary: "internal: the detached compact-self watcher",
-    usage: `ph ${WATCHER_COMMAND} <agent id> --focus F --resume R`,
-    options: { focus: "string", resume: "string" },
+    usage: `ph ${WATCHER_COMMAND} <agent id> --focus F --resume R --owner PID`,
+    options: { focus: "string", resume: "string", owner: "string" },
     config: "required",
     hidden: true,
     run: compactRun,

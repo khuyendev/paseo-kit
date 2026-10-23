@@ -50,10 +50,10 @@ test("PHCL-17 the resume text comes from --resume or config compact_resume; no a
   let args;
   const { ctx } = ctxFor(s);
   await armCompact(ctx, session, CALLER, { start: (spec) => ((args = spec.args), 999999) });
-  assert.deepEqual(args, [CALLER, "--focus", "", "--resume", "Go on."]);
+  assert.deepEqual(args, [CALLER, "--focus", "", "--resume", "Go on.", "--owner", String(process.pid)]);
   fs.rmSync(compactFiles(s.env, CALLER).lock);
   await armCompact(ctxFor(s, { resume: "R", focus: "F" }).ctx, session, CALLER, { start: (spec) => ((args = spec.args), 999999) });
-  assert.deepEqual(args, [CALLER, "--focus", "F", "--resume", "R"]);
+  assert.deepEqual(args, [CALLER, "--focus", "F", "--resume", "R", "--owner", String(process.pid)]);
   const source = fs.readFileSync(path.join(SHIP_DIR, ".agents", "harness", "runtime", "compact.mjs"), "utf8");
   assert.ok(!/autoCompact|autocompact/i.test(source.replace(/Native autocompact is never touched/, "")));
 });
