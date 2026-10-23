@@ -10,6 +10,7 @@ import { debugBudget, debugCheckpoint, debugClose, debugCreate, debugExtend, deb
 import { commitVerb, evaluationScope, selectRevertCommits } from "./gitverbs.mjs";
 import { grantPath } from "./grants.mjs";
 import { haltClear } from "./halts.mjs";
+import { requestClear, sharedClear } from "./owner-answers.mjs";
 import { handoff, outlineCheck, outlineParseVerb, wavesVerb } from "./outline.mjs";
 import { checkDependencies, checkOwns, checkSmokeBuilds, coverage, decisionCoverage, failureDirections, planStructure, verifyCommandPaths } from "./plan-checks.mjs";
 import { findPhaseVerb, phaseAdd, phaseComplete, phaseInsert, phaseRemove, planIndex, requirementsVerb, roadmapVerb, uatPassed } from "./phases.mjs";
@@ -120,6 +121,8 @@ export const verbHandlers = {
   "phase.list-artifacts": { usage: "ph gsd phase.list-artifacts <phase> [--type <kind>]", options: { type: "string" }, run: (g, a, o) => listArtifacts(g, phaseOf(g, a), o.type) },
   "phase-plan-index": { usage: "ph gsd phase-plan-index <phase>", options: {}, run: (g, a) => planIndex(g, phaseOf(g, a)) },
   "halt.clear": { usage: "ph gsd halt.clear <phase> [--plan <NN-MM>] [--reason <text>] [--resume]", options: { plan: "string", reason: "string", resume: "bool" }, run: (g, a, o) => haltClear(g, phaseOf(g, a), o.plan, o.reason, o.resume === true) },
+  "shared.clear": { usage: "ph gsd shared.clear <phase> <wave> [--path <file>] --reason <text>", options: { path: "string", reason: "string" }, run: (g, a, o) => sharedClear(g, phaseOf(g, a), a[1], o) },
+  "request.clear": { usage: "ph gsd request.clear <phase> --plan <NN-MM> --path <file> --reason <text>", options: { plan: "string", path: "string", reason: "string" }, run: (g, a, o) => requestClear(g, phaseOf(g, a), o.plan, o) },
   grant: { usage: "ph gsd grant <phase> --path <file> [--plan <NN-MM>]", options: { path: "string", plan: "string" }, run: (g, a, o) => grantPath(g, phaseOf(g, a), o.path, o.plan) },
   "verify.plan-structure": {
     usage: "ph gsd verify.plan-structure <phase | path/NN-MM-PLAN.md> [--plans <ids>]",

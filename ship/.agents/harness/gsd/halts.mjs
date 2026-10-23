@@ -10,6 +10,7 @@ import path from "node:path";
 import { readJsonIf, writeJsonAtomic } from "../lib/io.mjs";
 import { done, fail, none, rel } from "./common.mjs";
 import { normPlanId } from "./planning.mjs";
+import { appendAnswer } from "./owner-answers.mjs";
 import { guardWriter } from "./state.mjs";
 
 export const HALT_ANSWERS = "halt-answers.json";
@@ -33,5 +34,6 @@ export function haltClear(g, phase, planRef, answer, resume = false) {
   list.push({ plan: id, halt: halt?.reason ?? null, haltRunId: halt?.runId ?? null, ...(halt?.worktree ? { haltWorktree: halt.worktree } : {}), ...(resume ? { resume: true } : {}), answer: String(answer).trim(), at: new Date().toISOString() });
   writeJsonAtomic(answersFile, list);
   fs.rmSync(file);
+  appendAnswer(phase, { kind: "halt", plan: id, reason: String(answer).trim() });
   return done({ cleared: id, halt: halt?.reason ?? null, answer: String(answer).trim(), ...(resume ? { resume: true, worktree: halt.worktree } : {}), answers: rel(g.codeRoot, answersFile) });
 }
