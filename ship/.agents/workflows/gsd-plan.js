@@ -142,7 +142,9 @@ let flowReport = null;
 let streamed = null;
 // O67: what the dependent streams did, returned with the streams flow's results.
 const dependents = [];
-const result = (status, extra = {}) => ({ status, phaseDir, mode, warnings, advisories, ...(flowReport ?? {}), ...extra });
+// Kit feedback 70: what the validation strategy step did ({status, path}), returned with every result once it ran.
+let validationReport = null;
+const result = (status, extra = {}) => ({ status, phaseDir, mode, warnings, advisories, ...(flowReport ?? {}), ...(validationReport ? { validation: validationReport } : {}), ...extra });
 const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reason, ...extra });
 // G017: the effective settings each gated judgment reads, hashed into its revision key (`--settings`). A changed lane,
 // role or limit reruns the judgments it decides; each key takes only the settings its own judgments read. The inputs
@@ -227,6 +229,7 @@ const planningContext = (planMode) => [
   "WALKING_SKELETON: false",
   `Granularity: ${g.granularity}`,
   `Plan limits: ${g.plan_limits.tasks_per_plan} tasks per plan, ${g.plan_limits.plans_per_phase} plans per phase, ${g.plan_limits.waves_per_phase} waves per phase`,
+  ...(validationNote ? [validationNote] : []),
   "</planning_context>",
 ].join("\n");
 // GSDF-17: no SPEC sections exist in the kit, so every plan-mode prompt carries the specless block.
@@ -294,6 +297,33 @@ const sharedChanges = [];
 const plansPlanned = new Set();
 // Digest line of plan and checker prompts: the freeze hash, or the verification report in gap mode.
 let freezeHash = "none";
+
+// ---- validation strategy (Kit feedback 70) ----
+// Upstream plan-phase step 5.5: `<NN>-VALIDATION.md` from the template and the research's Validation Architecture section; the
+// checker's check 8e blocks without it. The verb renders it (no agent, an existing file is kept) and the checker is told in the
+// planning context whether Dimension 8 applies or is skipped, and why.
+let validationNote = null;
+{
+  const skipped = (why) => { validationNote = `Nyquist validation (checker Dimension 8): SKIPPED, ${why}. The checker reports "Dimension 8: SKIPPED (nyquist_validation disabled or not applicable)" and runs no check 8a-8e.`; };
+  if (!g.validation_strategy) skipped("gsd.validation_strategy is off");
+  else if (!approvedResearch) skipped("no approved research in this run");
+  else {
+    const v = await flow(["validation-strategy", phaseDir]);
+    if (v.code !== 0 || !v.json?.status) return result("failed", { reason: `validation strategy: ${v.json?.error ?? v.stderr ?? `exit ${v.code}`}` });
+    validationReport = { status: v.json.status, ...(v.json.path ? { path: v.json.path } : {}) };
+    if (["no-research", "no-section"].includes(v.json.status)) {
+      warnings.push(`validation: ${approvedResearch} has no Validation Architecture section; no VALIDATION.md was written and Dimension 8 is skipped`);
+      skipped("the approved research has no Validation Architecture section");
+    } else {
+      validationNote = `Nyquist validation (checker Dimension 8): applies; ${v.json.path} exists, so check 8e passes; run checks 8a-8d.`;
+      if (v.json.stale) warnings.push(`validation: ${v.json.path} was rendered from an older ${approvedResearch}; it is already validated or edited, so it was kept (update it by hand or delete it to render again)`);
+      if (["written", "refreshed"].includes(v.json.status)) {
+        log(`validation strategy ${v.json.status}: ${v.json.path}`);
+        await commitDocs(`docs(phase-${N}): add validation strategy`, [v.json.path]);
+      } else log(`validation strategy kept: ${v.json.path}`);
+    }
+  }
+}
 if (mode === "gaps") return await gapMode();
 
 // ---- outline (GSDF-19) ----

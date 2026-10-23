@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { writeJsonAtomic, readJsonIf } from "../lib/io.mjs";
 import { sha256, textDigest } from "../lib/hash.mjs";
+import { markerDigest } from "./validation-strategy.mjs";
 import { done, fail, none, nowIso, readIf, rel, withFileLock } from "./common.mjs";
 import { loadAgentDef } from "../runtime/agents.mjs";
 import { isInside } from "../lib/paths.mjs";
@@ -67,11 +68,18 @@ export function keyFiles(g, phase, key) {
     return { label: file.label, text: reportContent(readIf(file.abs)) };
   };
   const inputs = () => [...research(), report()];
+  // Kit feedback 70: the strategy file the flow rendered, as the research digest it was rendered from; a hand-written file or a
+  // later edit by validate-phase is no input. Only the checker's verdict (8e) depends on it, so it joins the plan keys, not inputs.
+  const validation = () => {
+    const file = inPhase(`${phase.padded}-VALIDATION.md`);
+    const source = markerDigest(readIf(file.abs));
+    return source ? [{ label: file.label, text: `validation-source ${source}` }] : [];
+  };
   const freeze = () => [...inputs(), inPhase(`${phase.padded}-PLAN-OUTLINE.md`), inPhase(`${phase.padded}-PLAN-OUTLINE.manifest.json`), inPhase(`${phase.padded}-WIRING.md`)];
   // G009: the skeleton lanes (lens, model, effort, lens texts) are written by gsd-plan beside the outline; the reviewer
   // definition is hashed here, since the freeze key covers the outline and wiring only.
   const skeleton = () => [inPhase(`${phase.padded}-SKELETON-LANES.json`), ...roleFiles(g, g.cfg.adapter.agents?.skeleton_lane ?? "gsd-skeleton-reviewer").map((p) => harness(p))];
-  const allPlans = () => [...freeze(), ...planIds(phase).map((id) => code(rel(g.codeRoot, planPath(phase, id))))];
+  const allPlans = () => [...freeze(), ...validation(), ...planIds(phase).map((id) => code(rel(g.codeRoot, planPath(phase, id))))];
   if (key === "research") return research();
   if (key === "inputs") return inputs();
   if (key === "freeze") return freeze();
