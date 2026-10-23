@@ -9,7 +9,7 @@ import { isInside, resolveInside, safeName, toSlash } from "../../harness/lib/pa
 import { runArgv } from "../../harness/lib/proc.mjs";
 import { invokeHook } from "../../harness/adapter/hooks.mjs";
 import { withMutex } from "../../harness/adapter/mutex.mjs";
-import { evidenceVerdict, requiredSteps, executionProblem, gateStepName, obligationStepName } from "../../harness/adapter/evidence.mjs";
+import { evidenceVerdict, requiredSteps, executionProblem, gateStepName, obligationStepNames } from "../../harness/adapter/evidence.mjs";
 import { gateObligation } from "../../harness/adapter/contract.mjs";
 import { sha256 } from "../../harness/lib/hash.mjs";
 import { producedCheck } from "../../harness/gsd/contracts.mjs";
@@ -262,8 +262,8 @@ export async function gate(root, phaseDir, input) {
       steps.push({ name: `contract-${c.plan}`, argv: [], outcome: c.ok ? "passed" : "failed", exitCode: c.ok ? 0 : 1, executed: { ...NOT_RUN }, log: toSlash(path.relative(root, log)), text, plan: c.plan, task: null, kind: "contract" });
       for (const n of c.notes) notes.push(`contract ${c.plan}: ${n}`);
     }
-    for (const p of input.plans ?? []) for (const ob of p.verify ?? []) {
-      const name = obligationStepName(p.id, ob.task, ob.kind);
+    for (const p of input.plans ?? []) for (const [i, name] of obligationStepNames(p.id, p.verify).entries()) {
+      const ob = p.verify[i];
       const meta = { plan: p.id, task: ob.task, kind: ob.kind };
       if (gateRed || input.skipObligations) { steps.push(noRun(root, logDir, name, "unavailable", gateRed ? "not executed: an earlier gate failed" : "not executed: skipped", meta)); continue; }
       const o = await gateObligation(cfg, { codeRoot: root, phaseDir, ...ob });
@@ -351,6 +351,8 @@ export async function evidenceCheck(root, rel, plans = []) {
   const v = evidenceVerdict(abs, { codeRoot: root, requested, inputs: { head: ev.inputs.head ?? null, files: now.files } });
   if (v.verdict === "green" && ev.inputs.config !== now.config) return { valid: false, status: "stale", reason: "adapter configuration differs from the gate inputs", code: 1 };
   if (v.verdict === "green") return { valid: true, status: "current", code: 0 };
-  return { valid: false, status: v.verdict, reason: v.reasons.slice(0, 5).join("; "), code: 1 };
+  // Kit feedback 97: partial = proof of every step but the stale ones (a command changed since the gate ran).
+  const stale = v.staleSteps ? { stale: v.staleSteps.map((x) => x.name) } : {};
+  return { valid: false, status: v.verdict, reason: v.reasons.slice(0, 5).join("; "), ...stale, code: 1 };
 }
 

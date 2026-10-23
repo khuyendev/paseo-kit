@@ -228,11 +228,12 @@ test("ADPT-17 the validator rejects empty, partial, contradictory, logless and m
     p.writeJson("ev.json", { v: 1, waveId: "w1", at: "2026-10-20T00:00:00Z", inputs: ins, steps });
     return evidenceVerdict(p.path("ev.json"), { codeRoot: p.root, requested, inputs });
   };
-  // The obligation step carries the command the plan asks for now (G063: a changed command is stale evidence).
+  // The obligation step carries the command the plan asks for now (G063: a changed command is stale evidence; kit
+  // feedback 97: only that obligation is stale, the evidence is partial).
   const obArgv = requested.find((s) => s.name === "01-1-cmd").argv;
   const all = [step("build"), step("test"), step("01-1-cmd", { argv: obArgv })];
   assert.equal(verdict(all).verdict, "green");
-  assert.deepEqual(verdict([step("build"), step("test"), step("01-1-cmd")]), { verdict: "stale", reasons: ["01-1-cmd: command changed since the gate ran"] });
+  assert.deepEqual(verdict([step("build"), step("test"), step("01-1-cmd")]), { verdict: "partial", reasons: ["01-1-cmd: command changed since the gate ran"], staleSteps: [{ name: "01-1-cmd", reason: "command changed since the gate ran" }] });
   assert.equal(verdict([]).verdict, "incomplete");
   assert.equal(verdict([step("build"), step("01-1-cmd", { argv: obArgv })]).verdict, "incomplete");
   assert.equal(verdict([step("build", { exitCode: 1 }), step("test"), step("01-1-cmd", { argv: obArgv })]).verdict, "invalid");

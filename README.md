@@ -43,8 +43,10 @@ node kit.mjs help
   once, and records every kit part with its digest in `.agents/harness-kit.json`.
 - `update` takes kit changes and keeps local edits (listed, exit 2) unless `--force`; after the copy it runs the gsd
   workflows' argument checks on the merged overlay (a refused value is `problem`, exit 2) and names the overlay keys
-  the CHANGELOG mentions since the installed version (`warning`) and the verb check of the workflow compositions (an
-  unknown verb is `problem`, exit 2); `status` is read-only; `pull` copies locally edited parts back into the kit.
+  the CHANGELOG mentions since the installed version (`warning`), the `adapter.*`/`gsd.*` keys the kit defaults gained
+  since the project's adapter was last written that the overlay leaves at their default (`warning adapter key`, repeated
+  until the overlay sets them; the manifest's `adapter` record holds the baseline) and the verb check of the workflow
+  compositions (an unknown verb is `problem`, exit 2); `status` is read-only; `pull` copies locally edited parts back into the kit.
 - Composition parts (kit.json `composition`: the `gsd-*.js` workflow scripts). The manifest records the digest and kit
   version each was seeded from. `update` takes a new kit default only for a copy the project never edited; an edited
   copy stays, also with `--force`, with a `composition kept:` line (when the kit default changed too: since which
