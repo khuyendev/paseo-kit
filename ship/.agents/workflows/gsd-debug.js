@@ -52,7 +52,7 @@ const TURN_SCHEMA = {
   type: "object",
   properties: {
     status: { type: "string", enum: ["continue", "checkpoint", "resolved", "diagnosed"] },
-    checkpoint: { type: "object", properties: { id: { type: "string" }, type: { type: "string" }, question: { type: "string" }, options: { type: "array" } } },
+    checkpoint: { type: "object", properties: { id: { type: "string", maxLength: 64, description: "one token: letters, digits, . _ : - (no spaces or newlines)" }, type: { type: "string", maxLength: 64, description: "one token: letters, digits, . _ : - (no spaces or newlines)" }, question: { type: "string" }, options: { type: "array" } } },
     verify: { type: "object", properties: { kind: { type: "string" }, command: { type: "string" }, target: { type: "string" } } },
     summary: { type: "string" },
   },
@@ -123,7 +123,8 @@ async function debugSession() {
     const r = d?.result;
     if (!r) { if (fatal(d?.reason)) return { status: "failed", reason: `debugger failed: ${d.reason}` }; next = "Your last turn returned nothing usable. Continue from the session file."; continue; }
     if (r.status === "checkpoint" && r.checkpoint?.type !== "human-verify") {
-      await gsd(["debug", "checkpoint", slug], r.checkpoint ?? {});
+      const stored = await gsd(["debug", "checkpoint", slug], r.checkpoint ?? {});
+      if (stored.code !== 0) return { status: "failed", reason: `checkpoint not recorded: ${stored.json?.error ?? "debug checkpoint failed"}` };
       return { status: "needs-owner", ...(r.checkpoint ?? {}), summary: r.summary ?? null };
     }
     if (r.status === "diagnosed") {

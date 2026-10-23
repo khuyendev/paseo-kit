@@ -12,6 +12,8 @@ import { frontmatter } from "./yaml.mjs";
 export const DEBUG_TEMPLATE = fileURLToPath(new URL("../../gsd/upstream/gsd-core/templates/DEBUG.md", import.meta.url));
 const SYMPTOM_KEYS = ["expected", "actual", "errors", "reproduction", "started"];
 const GOALS = new Set(["find_and_fix", "find_root_cause_only"]);
+// A checkpoint id and type are written on one line of the Checkpoints entry; one token keeps a newline from splitting it.
+const CHECKPOINT_TOKEN = /^[A-Za-z0-9._:-]{1,64}$/;
 const VAGUE = /^(|-|tbd|todo|none|null|n\/a|continue|continue investigating|investigate|investigate further|keep going|keep investigating|debug|look into it|\[.*\])\.?$/i;
 
 const debugDir = (root) => path.join(planningDir(root), "debug");
@@ -218,14 +220,17 @@ export function debugCheckpoint(g, slug, input) {
   const fm = { ...s.fm, updated: nowIso() };
   const lines = [`- at: ${nowIso()}`];
   if (input.answered !== undefined) {
-    if (fm.pending_checkpoint?.id !== input.answered) throw fail(`no pending checkpoint ${input.answered} in ${slug}`);
+    if (!CHECKPOINT_TOKEN.test(String(input.answered)) || fm.pending_checkpoint?.id !== input.answered) throw fail(`no pending checkpoint ${input.answered} in ${slug}`);
     lines.push(`  answered: ${input.answered}`, "  response:", dataBlock(input.response));
     fm.pending_checkpoint = null;
   } else if (input.id !== undefined) {
     if (!input.question) throw fail("a checkpoint needs {id, type, question, options}");
-    lines.push(`  checkpoint: ${input.id} (${input.type ?? "decision"})`, "  question:", dataBlock(input.question));
+    const id = String(input.id);
+    const type = String(input.type ?? "decision");
+    if (!CHECKPOINT_TOKEN.test(id) || !CHECKPOINT_TOKEN.test(type)) throw fail(`checkpoint id and type must be one token of 1-64 letters, digits, . _ : - (got ${JSON.stringify(id)}, ${JSON.stringify(type)})`);
+    lines.push(`  checkpoint: ${id} (${type})`, "  question:", dataBlock(input.question));
     if (Array.isArray(input.options) && input.options.length) lines.push("  options:", dataBlock(input.options.map(String).join("\n")));
-    fm.pending_checkpoint = { id: String(input.id), type: String(input.type ?? "decision"), question: String(input.question), options: (input.options ?? []).map(String) };
+    fm.pending_checkpoint = { id, type, question: String(input.question), options: (input.options ?? []).map(String) };
   } else {
     if (input.question !== undefined) lines.push("  question:", dataBlock(input.question));
     if (input.answer !== undefined) lines.push("  answer:", dataBlock(input.answer));
