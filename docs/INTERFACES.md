@@ -521,7 +521,11 @@ Composition helpers (THIN.md stage 1): the workflow engine provides the helpers 
 opts)` (`agent` with `detail: true` -> `{result, reason, model, effort}`), `sha(text)`, `fileSha(path)`,
 `discussOpen(phaseDir, nn)`, `renderPrompt(name, vars)`, `fatal(reason)`, `needsOwner(stage, reason, extra)`,
 `leaseText(r, what)`, `phaseNumber(dir)`, `digestLine(key, hash)`, `policyBlock(path)`, `lastJson(text)` and the constants
-`PH`, `FLOW`, `PHASE_DIR_RE`, `NEVER_RETRY`, `VERB_TAIL_CHARS`. A script's own top-level definition of a name wins (a
+`PH`, `FLOW`, `PHASE_DIR_RE`, `NEVER_RETRY`, `VERB_TAIL_CHARS`; and the runtime helpers of concurrent steps (THIN.md stage 2):
+`pool(items, n, fn)` (at most n at a time, results in item order), `slots(n)` (a gate: at most n calls at once, the others
+wait in order), `serialize()` (calls one at a time, in order; a failed call does not stop the next) and `turnLock()`
+(`{shared(fn), exclusive(fn)}`: shared holders run together, an exclusive one alone, a waiting request is served before later
+ones). A script's own top-level definition of a name wins (a
 project script that still carries the old block keeps working, and resumes replay the same agent calls either way: the
 journal keys a call by its prompt and options, not by script text); the kit's helpers keep calling each other, so a
 script that replaces only `run` does not change `flow`. Reassigning a global (`call = ...`, as gsd-execute and gsd-plan
@@ -533,7 +537,12 @@ Prompt templates (THIN.md item 2): a prompt that is a contract with a verb or a 
 always reads the kit file. `{{var}}` is replaced in one pass by a string, number or boolean; a missing variable fails
 (flow verb `prompt` exits 1 naming every missing one; `renderPrompt` throws it, which fails the run unless the script
 catches it). The text is read with LF line ends; a leading `<!-- ... -->` (the template's contract notes) and one final
-line break are not part of the prompt. Kit templates: `debug-turn` (gsd-debug).
+line break are not part of the prompt. Optional parts: `{{#name}}...{{/name}}` is kept when the value is true, a non-empty
+string or a non-zero number, `{{^name}}...{{/name}}` when it is not (the section variable is required; a variable only a
+dropped section names is not); a tag alone on its line takes its line break with it; sections do not nest. Kit templates:
+`debug-turn` (gsd-debug); `executor`, `executor-fix`, `fixer`, `integration-fix`, `shared-changes`, `code-review`,
+`finding-verifier`, `resolution-check`, `request-resolver` (gsd-execute, THIN.md stage 2: the agent prompts of a phase
+execution, byte-identical to the inline prompts they replace, so the journal keys of a resumed run do not change).
 
 Rule: a verb is renamed or changes the shape of its input, output or record only with a CHANGELOG line that names the
 old and the new form and a compatibility alias for one release (the old name or shape is still accepted). A new verb
@@ -610,6 +619,22 @@ error, `{status: "error", error}`); `ph gsd` verbs exit 0, 1, 66 (nothing matche
 | `plan-outline` | `<phaseDir>`, `{run, inputs, sha}` | `{status}` | `plan-progress.json` |
 | `plan-checker`, `plan-contracts`, `plan-realloc`, `plan-recheck` | `<phaseDir>`, `{run, part, step, ops}` | `{status, log}` | `plan-progress.json` (op log per part) |
 | `prompt` | `<name>` (`<kit name>` or `project/<name>`), `{<var>: string\|number\|boolean}` | `{name, path, text, unused}`; exit 1 on a bad name, a missing template, a missing variable or a bad value | none (reads the template) |
+| `exec-args` | `{args}` (the gsd-execute arguments) | `{status: ok, phaseDir, plans, wave, stopAfterWave, gapsOnly, files?}`; exit 1 `{status: failed, reason}` (GSDF-93) | none |
+| `exec-setup` | `{cfg, args, pending}` | `{N, nn, prefix, mode, worktreeMode, metricsOn, stackSkill, generated, schemas: {exec, fixer, findings, verdict, resolution, shared}}`: the settings of an execute run and the agent reply schemas | none |
+| `exec-defect` | `<phaseDir>`, `{runId, log, kind, extra, reply?, defects?}` | `{log, defects, warning?}`: one plan-defect event (kit feedback 64; `kind` null only reads this run's record) | `prereview/execute-<runId>.json` |
+| `exec-handoff` | `<phaseDir>`, `{prefix}` | `{waves, manifest: {exists, value}}`; exit 1 naming a malformed wave file (G098) | none |
+| `exec-records` | `<phaseDir>`, `{runId, plan?, summary?, worktrees?, worktreeDir?}` | `{grants, ownerAnswers, answers?, notes?, discard?, resume?, resumeNote?}`: the grants, owner answers, halt answers, plan-review notes and cleared-halt worktrees a run reads | none |
+| `exec-select` | `<phaseDir>`, `{prefix, handoff, manifest, plans, state, filter, verification?}` | `{status: ok\|stop\|verification, stop?: {status, extra}, warnings}`: handoff checks (G075), wave and plan selection, the nothing-to-run route | none |
+| `exec-branch` | `<phaseDir>` | `{switched, branch, base?}`; exit 1 `{status: failed, reason}`: the phase branch from origin/<default> (GSDF-54) | the git branch |
+| `exec-route` | `{from, reply, plans}` | `{notes, routes: [{plan, q}], asked}`: the requests and kit notes of a reply (G072, G089, kit feedback 79) | none |
+| `exec-verdict` | `{reply, plan, requests, shared, pending, hasSummary?, taskCount?, summary?}` | `{decision, pending, halt?: {why, decision?}}`: the verdict on an executor reply (kit feedback 79, G058) | none |
+| `exec-fixers` | `{gate, plans, worktreeMode, trees}` | `{plans: [{id, kind, failures}], placed, files, fileless}`: who fixes a red gate (G064) | none |
+| `exec-round-end` | `{decisions, soft, gate, done, stall}` | `{logs, stuck?, still?, stall, stalled}`: the end of a fix round (kit-feedback 51, G066, the stall rule) | none |
+| `exec-verdicts` | `{seen, ids, reply?, second?, metrics, final?}` | `{seen}` or with final `{findings: [{verdict, verdictEvidence, planCatchable?, catchReason?}]}` (G081) | none |
+| `exec-review` | `<phaseDir>`, `{waveId, plan, planHash, summarySha, files, filterExplicit, summary, evaluation, lenses, reviewers, codeOnly}` | `{log, record, replay?, prior?, openAt?, changed?, changedText?, lensText?}`: scope, lenses and the reuse of a review record (G080) | none |
+| `exec-findings` | `{plan, replies, changed}` | `{unknown, unknownSeverities?, expected?}` or `{findings, deferredLines, counts}` (CR-GSF-17, G056, pre-existing) | none |
+| `exec-pause` | `{by, nextWave, stopAfterWave, stop, run, waves, state}` | `{reason, pausedAt, answer}` (kit feedback 88) | none |
+| `exec-groups` | `{tasks: [{plan, files}]}` | `{groups, defects}`: plans sharing a files_modified entry run apart (GSDF-40) | none |
 | `stop-requested` | `[runId]` (default: the current run, `PASEO_HARNESS_WORKFLOW_RUN` / `_RUN_DIR`, which `ph workflow` sets) | `{stop, runId, at?, requestedAt?, reason?}`: whether `ph workflow stop` asked the run to stop at its next wave boundary (`stop: false, runId: null` outside a run) | none (reads `<runDir>/stop.json`) |
 
 ### `ph gsd` verbs

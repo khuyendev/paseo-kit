@@ -238,13 +238,9 @@ test("G080 findings still unresolved after the first fix get one more fixer pass
   assert.doesNotMatch(extra.prompt, /"id":"F1"/);
 });
 
-test("G056 the findings schema needs trigger, likelihood, confidence and file, so the runner re-asks for them", () => {
-  const text = fs.readFileSync(path.join(SHIP_DIR, ".agents/workflows/gsd-execute.js"), "utf8");
-  const pick = (name) => new Function("SEVERITIES", "INSTANCE_SCHEMA", `return ${/const NAME = (\{.*\});/.source.replace("NAME", name)}`);
-  const sev = ["critical", "high", "medium", "low", "info"];
-  const inst = eval(`(${/const INSTANCE_SCHEMA = (\{.*\});/.exec(text)[1]})`);
-  const schema = new Function("SEVERITIES", "INSTANCE_SCHEMA", `return ${/const FINDINGS_SCHEMA = (\{.*\});/.exec(text)[1]}`)(sev, inst);
-  assert.ok(pick);
+test("G056 the findings schema needs trigger, likelihood, confidence and file, so the runner re-asks for them", async () => {
+  // The schema is the kit's since THIN stage 2 (flow verb exec-setup hands it to gsd-execute).
+  const { FINDINGS_SCHEMA: schema } = await import(lib("flow-exec.mjs"));
   const reply = (f) => JSON.stringify({ findings: [f] });
   assert.ok(parseReply(reply({ severity: "high", description: "d", likelihood: "likely", confidence: 90, file: "a.js" }), schema).errors.some((e) => /trigger/.test(e)));
   assert.equal(parseReply(reply(finding("F1")), schema).errors.length, 0);

@@ -110,11 +110,11 @@ return { obj: Object.getPrototypeOf(ex.json) === Object.prototype, needsObj: nee
   assert.deepEqual((await runEngine(root, newScript(body))).result, { obj: true, needsObj: true, arr: true });
 });
 
-test("TI KIT_HELPER_NAMES lists every name of the old copied block, plus renderPrompt", () => {
+test("TI KIT_HELPER_NAMES lists every name of the old copied block, plus renderPrompt and the runtime helpers of stage 2", () => {
   const declared = [...OLD_BLOCK.matchAll(/^(?:const|async function|function)\s+([A-Za-z_$][\w$]*)/gm)].map((m) => m[1]);
   assert.ok(declared.length >= 19, declared.join(","));
-  assert.deepEqual([...KIT_HELPER_NAMES].sort(), [...declared, "renderPrompt"].sort());
-  assert.deepEqual(Object.keys(kitHelpers({ shell: null, agent: null })), [...KIT_HELPER_NAMES]);
+  assert.deepEqual([...KIT_HELPER_NAMES].sort(), [...declared, "renderPrompt", "pool", "slots", "serialize", "turnLock"].sort());
+  assert.deepEqual(Object.keys(kitHelpers({ shell: null, agent: null, parallel: null })), [...KIT_HELPER_NAMES]);
   assert.ok(META.startsWith("export const meta"));
 });
 

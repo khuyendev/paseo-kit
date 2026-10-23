@@ -106,7 +106,7 @@ export function parseScript(source) {
 // function's source inside each script context on top of `shell` and `agent`, so it may use only its parameters and
 // JavaScript built-ins, and its values belong to the script's realm. A script's own definition of a name wins (the body
 // is a function scope); the kit's helpers keep calling each other, not a script's replacement.
-export function kitHelpers({ shell, agent }) {
+export function kitHelpers({ shell, agent, parallel }) {
   const PH = ".agents/harness/ph.mjs";
   const FLOW = ".agents/workflows/lib/gsd-flow.mjs";
   const PHASE_DIR_RE = /^\.planning\/phases\/\d+(\.\d+)?-[a-z0-9-]+$/;
@@ -155,10 +155,59 @@ export function kitHelpers({ shell, agent }) {
     if (r.code !== 0 || typeof r.json?.text !== "string") throw new Error(r.json?.error ?? `prompt ${name}: gsd-flow exited ${r.code}`);
     return r.json.text;
   }
-  return { PH, FLOW, PHASE_DIR_RE, lastJson, VERB_TAIL_CHARS, run, loadCfg, gsd, flow, phaseNumber, digestLine, policyBlock, NEVER_RETRY, call, fatal, needsOwner, leaseText, discussOpen, sha, fileSha, renderPrompt };
+  // Runtime of concurrent steps (THIN stage 2): a bounded pool over items (at most n at a time, results in item order),
+  // n slots (at most n calls at once, the others wait in order), a serializer (calls one at a time, in order; a failed
+  // call does not stop the next) and a turn lock: `shared` holders run together, an `exclusive` one runs alone, and a
+  // waiting request is served before later ones, so neither kind starves.
+  async function pool(items, n, fn) {
+    const out = new Array(items.length);
+    let next = 0;
+    await parallel(Array.from({ length: Math.min(n, items.length) }, () => async () => {
+      while (next < items.length) { const i = next++; out[i] = await fn(items[i], i); }
+    }));
+    return out;
+  }
+  function slots(n) {
+    let free = n;
+    const waiting = [];
+    return async (fn) => {
+      if (free > 0) free--;
+      else await new Promise((go) => waiting.push(go));
+      try { return await fn(); } finally { const next = waiting.shift(); if (next) next(); else free++; }
+    };
+  }
+  const serialize = () => {
+    let last = Promise.resolve();
+    return (fn) => {
+      const run = last.then(() => fn());
+      last = run.catch(() => {});
+      return run;
+    };
+  };
+  function turnLock() {
+    const lock = { kind: null, n: 0, queue: [] };
+    const pump = () => {
+      while (lock.queue.length && (lock.n === 0 || (lock.kind === "shared" && lock.queue[0].kind === "shared"))) {
+        const next = lock.queue.shift();
+        lock.kind = next.kind;
+        lock.n++;
+        next.go();
+      }
+    };
+    async function turn(kind, fn) {
+      if (lock.queue.length || (lock.n && !(lock.kind === "shared" && kind === "shared"))) await new Promise((go) => lock.queue.push({ kind, go }));
+      else { lock.kind = kind; lock.n++; }
+      try { return await fn(); } finally {
+        if (--lock.n === 0) lock.kind = null;
+        pump();
+      }
+    }
+    return { shared: (fn) => turn("shared", fn), exclusive: (fn) => turn("exclusive", fn) };
+  }
+  return { PH, FLOW, PHASE_DIR_RE, lastJson, VERB_TAIL_CHARS, run, loadCfg, gsd, flow, phaseNumber, digestLine, policyBlock, NEVER_RETRY, call, fatal, needsOwner, leaseText, discussOpen, sha, fileSha, renderPrompt, pool, slots, serialize, turnLock };
 }
 
-export const KIT_HELPER_NAMES = Object.freeze(Object.keys(kitHelpers({ shell: null, agent: null })));
+export const KIT_HELPER_NAMES = Object.freeze(Object.keys(kitHelpers({ shell: null, agent: null, parallel: null })));
 
 // Runs inside the script context: defines the globals on top of the host bridge `__host` (values cross as JSON), then
 // the kit helpers on top of `shell` and `agent` (writable: a script may wrap `call`).
@@ -229,7 +278,7 @@ globalThis.workflow = async (ref, a) => {
   return r === undefined ? undefined : JSON.parse(r);
 };
 globalThis.shell = async (cmd, opts) => JSON.parse(await __h.shell(JSON.stringify(cmd), opts === undefined ? undefined : JSON.stringify(opts)));
-` + `Object.assign(globalThis, (${kitHelpers})({ shell: globalThis.shell, agent: globalThis.agent }));\n`;
+` + `Object.assign(globalThis, (${kitHelpers})({ shell: globalThis.shell, agent: globalThis.agent, parallel: globalThis.parallel }));\n`;
 
 // Run a parsed body in a fresh context; `host` is the bridge the prelude wraps. Resolves the JSON-cloned return value.
 export async function runBody(body, scriptPath, host) {

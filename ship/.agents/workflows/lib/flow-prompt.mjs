@@ -32,16 +32,33 @@ export function templateText(raw) {
   return t.endsWith("\n") ? t.slice(0, -1) : t;
 }
 
-// `{{name}}` -> the value, in one pass (a value is never expanded again). Every variable the text names needs a string,
-// number or boolean value; lists and objects are formatted by the composition.
+// Optional parts (THIN stage 2): `{{#name}}...{{/name}}` is kept when the value of name is true, a non-empty string or a
+// non-zero number, `{{^name}}...{{/name}}` when it is not; a tag alone on its line takes its line break with it. Sections
+// do not nest.
+const BLOCK = /^\{\{([#^])([A-Za-z_][A-Za-z0-9_]*)\}\}\n([\s\S]*?)^\{\{\/\2\}\}(?:\n|$)/gm;
+const INLINE = /\{\{([#^])([A-Za-z_][A-Za-z0-9_]*)\}\}([\s\S]*?)\{\{\/\2\}\}/g;
+const given = (vars, n) => Object.hasOwn(vars, n) && vars[n] !== null && vars[n] !== undefined;
+
+// `{{name}}` -> the value, in one pass (a value is never expanded again). Every variable the text names (sections first:
+// a variable only a dropped section names needs no value) needs a string, number or boolean value; lists and objects
+// are formatted by the composition.
 export function fillTemplate(text, vars) {
   if (vars === null || typeof vars !== "object" || Array.isArray(vars)) throw new Error("prompt variables must be a JSON object");
-  const names = [...new Set([...text.matchAll(VAR)].map((m) => m[1]))];
-  const missing = names.filter((n) => !Object.hasOwn(vars, n) || vars[n] === null || vars[n] === undefined);
+  const flags = [...new Set([...text.matchAll(BLOCK), ...text.matchAll(INLINE)].map((m) => m[2]))];
+  const noFlag = flags.filter((n) => !given(vars, n));
+  if (noFlag.length) throw new Error(`no value for ${noFlag.map((n) => `{{#${n}}}`).join(", ")}`);
+  const badFlag = flags.filter((n) => !VALUE_TYPES.includes(typeof vars[n]));
+  if (badFlag.length) throw new Error(`${badFlag.map((n) => `{{#${n}}}`).join(", ")} must be a string, number or boolean`);
+  const on = (n) => vars[n] === true || (typeof vars[n] === "string" && vars[n] !== "") || (typeof vars[n] === "number" && vars[n] !== 0);
+  const keep = (_, op, n, inner) => (on(n) === (op === "#") ? inner : "");
+  const shaped = text.replace(BLOCK, keep).replace(INLINE, keep);
+  const names = [...new Set([...shaped.matchAll(VAR)].map((m) => m[1]))];
+  const missing = names.filter((n) => !given(vars, n));
   if (missing.length) throw new Error(`no value for ${missing.map((n) => `{{${n}}}`).join(", ")}`);
   const bad = names.filter((n) => !VALUE_TYPES.includes(typeof vars[n]));
   if (bad.length) throw new Error(`${bad.map((n) => `{{${n}}}`).join(", ")} must be a string, number or boolean`);
-  return { text: text.replace(VAR, (_, n) => String(vars[n])), used: names, unused: Object.keys(vars).filter((k) => !names.includes(k)).sort() };
+  const used = [...new Set([...flags, ...names])];
+  return { text: shaped.replace(VAR, (_, n) => String(vars[n])), used, unused: Object.keys(vars).filter((k) => !used.includes(k)).sort() };
 }
 
 // Flow verb `prompt <name>` {vars} -> {name, path, text, unused}.

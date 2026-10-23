@@ -150,7 +150,7 @@ export async function runScript(name, opts) {
       console: { log: (m) => logs.push(`log ${m}`), warn: (m) => logs.push(`log ${m}`), error: (m) => logs.push(`log ${m}`), info: (m) => logs.push(`log ${m}`) },
       Date: g.Date, Math: g.Math,
       // As the engine: the kit helpers are globals (THIN.md item 1), built on this host's shell and agent.
-      ...kitHelpers({ shell, agent }),
+      ...kitHelpers({ shell, agent, parallel }),
     };
     // As the engine: the body is a function scope inside the globals, so a script's own helper definitions win.
     const fn = new Function(...Object.keys(globals), `return (async () => {\n${body}\n})();`);

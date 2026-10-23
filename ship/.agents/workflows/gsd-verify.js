@@ -26,16 +26,6 @@ let unitStates = null;
 let dispatched = 0;
 const tagged = (r) => ({ ...r, mode, ...(fallback ? { fallback } : {}), ...(unitStates ? { criteria: unitStates, dispatched } : {}) });
 
-// Bounded pool, as gsd-execute: at most `n` verifiers at a time.
-async function pool(items, n, fn) {
-  const out = new Array(items.length);
-  let next = 0;
-  await parallel(Array.from({ length: Math.min(n, items.length) }, () => async () => {
-    while (next < items.length) { const i = next++; out[i] = await fn(items[i], i); }
-  }));
-  return out;
-}
-
 // GSDF-64 (per phase): one verification of a phase at a time, from its attempt record through readback and routing. The
 // lock is per phase, not the root writer lock: a verify of one phase must not block plan or execute of the root.
 const lease = await flow(["lock", `verify-${nn}`, runId, "gsd-verify"]);
