@@ -38,7 +38,13 @@ async function everyWorkflow(overlay) {
   }
   {
     const w = makeWorld({ overlay, files: { ".planning/PROJECT.md": "# P\n" } });
-    runs.push(await runScript("gsd-new-project", { root: w.root, gsd: w.gsd, args: { stage: "research" }, agent: (p, o) => (o.label === "synthesizer" ? "# Project Research Summary\n" : { written: [] }) }));
+    runs.push(await runScript("gsd-new-project", { root: w.root, gsd: w.gsd, args: { stage: "research" }, agent: (p, o) => {
+      if (o.label === "synthesizer") return "# Project Research Summary\n";
+      // G121: a researcher counts only when it wrote its report in this run and named it.
+      const report = /write (\.planning\/research\/\S+\.md)\./.exec(p)?.[1];
+      if (report) { w.write(report, "report\n"); return { written: [report] }; }
+      return { written: [] };
+    } }));
     runs.push(await runScript("gsd-new-project", { root: w.root, gsd: w.gsd, args: { stage: "roadmap" }, agent: () => ({ written: [] }) }));
   }
   {
