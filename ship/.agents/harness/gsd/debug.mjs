@@ -104,7 +104,7 @@ function renderBody(tpl, symptoms) {
 }
 
 function renderFm(fm) {
-  // Objects (budget_used, budget_extension, pending_checkpoint) are written as JSON flow maps the YAML subset reads.
+  // Objects (budget_used, budget_reserved, budget_extension, pending_checkpoint) are written as JSON flow maps the YAML subset reads.
   const value = (v) => (Array.isArray(v) ? `[${v.map((x) => JSON.stringify(String(x))).join(", ")}]` : v === null ? "null" : typeof v === "object" ? JSON.stringify(v) : JSON.stringify(String(v)));
   const lines = Object.entries(fm).map(([k, v]) => `${k}: ${value(v)}`);
   return `---\n${lines.join("\n")}\n---\n`;
@@ -291,6 +291,7 @@ export function debugCheckpoint(g, slug, input) {
 }
 
 // GSDF-67: the used turns and minutes are persisted after every turn; an owner answer never refills them.
+// A reserve is a turn about to start: it stays open until a charge settles it, so an interrupted run still counts.
 export function debugBudget(g, slug, input) {
   const s = sessionFile(g, slug);
   const add = (k) => {
@@ -299,9 +300,11 @@ export function debugBudget(g, slug, input) {
     return n;
   };
   const used = s.fm.budget_used ?? { turns: 0, minutes: 0 };
-  const budget_used = { turns: (Number(used.turns) || 0) + add("turns"), minutes: (Number(used.minutes) || 0) + add("minutes") };
-  write(s.file, { ...s.fm, updated: nowIso(), budget_used }, s.body);
-  return done({ slug, budget_used, budget_extension: s.fm.budget_extension ?? null });
+  const turns = add("turns");
+  const budget_used = { turns: (Number(used.turns) || 0) + turns, minutes: (Number(used.minutes) || 0) + add("minutes") };
+  const budget_reserved = { turns: Math.max(0, (Number(s.fm.budget_reserved?.turns) || 0) + add("reserve") - turns) };
+  write(s.file, { ...s.fm, updated: nowIso(), budget_used, budget_reserved }, s.body);
+  return done({ slug, budget_used, budget_reserved, budget_extension: s.fm.budget_extension ?? null });
 }
 
 // GSDF-67: the owner's extension adds turns and minutes to budget_extension; the reason is kept under ## Checkpoints.

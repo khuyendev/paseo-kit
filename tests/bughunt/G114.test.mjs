@@ -16,7 +16,7 @@ function debugWorld() {
   w.gsd.on("debug status", () => ({ status: "investigating", path: s.path, frontmatter: s.frontmatter }));
   w.gsd.on("debug budget", (argv, input) => {
     const d = JSON.parse(input);
-    s.frontmatter.budget_used = { turns: s.frontmatter.budget_used.turns + d.turns, minutes: s.frontmatter.budget_used.minutes + d.minutes };
+    s.frontmatter.budget_used = { turns: s.frontmatter.budget_used.turns + (d.turns ?? 0), minutes: s.frontmatter.budget_used.minutes + (d.minutes ?? 0) };
     return { budget_used: s.frontmatter.budget_used };
   });
   return w;

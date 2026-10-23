@@ -44,6 +44,7 @@ function debugWorld() {
   const s = { path: ".planning/debug/login-fails.md", frontmatter: { goal: "find_and_fix", owns: ["Path:src/login/"], budget_used: { turns: 0, minutes: 0 } } };
   w.session = s;
   w.gsd.on("debug status", () => ({ status: "investigating", path: s.path, frontmatter: s.frontmatter }));
+  w.gsd.on("debug budget", () => ({ budget_used: s.frontmatter.budget_used }));
   w.gsd.on("debug checkpoint", () => ({ code: 1, json: { status: "error", error: "checkpoint id must be one token" } }));
   return w;
 }

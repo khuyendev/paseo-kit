@@ -88,10 +88,18 @@ async function gitState() {
   if (tree.code !== 0) return null;
   return tree.stdout + (await shell(["git", "rev-parse", "HEAD"])).stdout + (await shell(["git", "stash", "list"])).stdout;
 }
+// An open reservation is a turn that started and was never charged (interrupted, or its charge failed): it counts as
+// spent. `charged` leaves it out because the prompt shows it, and a resumed turn must keep the prompt it had.
 function left(fm) {
   const used = fm.budget_used ?? { turns: 0, minutes: 0 };
   const ext = fm.budget_extension ?? { turns: 0, minutes: 0 };
-  return { turns: limits.max_turns + (ext.turns ?? 0) - (used.turns ?? 0), minutes: limits.minutes + (ext.minutes ?? 0) - (used.minutes ?? 0), used };
+  const open = fm.budget_reserved?.turns ?? 0;
+  const charged = limits.max_turns + (ext.turns ?? 0) - (used.turns ?? 0);
+  return { turns: charged - open, charged, minutes: limits.minutes + (ext.minutes ?? 0) - (used.minutes ?? 0), used };
+}
+// The budget file could not be written: the session stops with the owner, never on a budget that was not recorded.
+function budgetNotSaved(r) {
+  return { status: "needs-owner", type: "budget-not-saved", reason: `debug budget not saved: ${r.json?.error ?? r.code}`, options: ["fix the session file so it can be written, then rerun", "stop"] };
 }
 async function debugSession() {
   const st = await status();
@@ -120,15 +128,20 @@ async function debugSession() {
       `Edit scope (owns): ${JSON.stringify(fm.owns ?? [])}; never a shared file; remove instrumentation before closing.`,
       // The gate reads owns, so the session file is granted here instead of being added to owns.
       `Session file: ${st.json.path}, the one file you may write outside owns (Current Focus, Evidence, Eliminated, Resolution and frontmatter; never Symptoms or Checkpoints; product edits stay inside owns).`,
-      `Budget left: ${now.turns} turns, ${Math.floor(now.minutes)} minutes.`,
+      `Budget left: ${now.charged} turns, ${Math.floor(now.minutes)} minutes.`,
       "Never ask the owner: return a checkpoint {id, type, question, options} instead. Never commit, stage or stash.",
       "A completed fix returns status checkpoint type human-verify with the verify obligation {kind, command, target} that reproduces the failure.",
       "</runtime_adapter>",
       next,
       "Return JSON {status: continue|checkpoint|resolved|diagnosed, checkpoint?, verify?, summary}.",
     ].join("\n");
+    // The turn is reserved before the debugger starts, and the session stops when either budget write fails: no turn runs
+    // on a budget that was not recorded.
+    const reserved = await gsd(["debug", "budget", slug], { reserve: 1 });
+    if (reserved.code !== 0) return budgetNotSaved(reserved);
     const d = await agent(prompt, { label: `debugger-${slug}`, session: `debugger:${slug}`, agentType: agentFor("debugger", "gsd-debugger"), role: "debugger", schema: TURN_SCHEMA, timeoutS: Math.max(60, Math.floor(now.minutes * 60)), detail: true });
-    await gsd(["debug", "budget", slug], { turns: 1, minutes: Math.ceil((d?.durationS ?? 0) / 60) });
+    const settled = await gsd(["debug", "budget", slug], { turns: 1, minutes: Math.ceil((d?.durationS ?? 0) / 60) });
+    if (settled.code !== 0) return budgetNotSaved(settled);
     const gitAfter = await gitState();
     if (gitAfter !== gitBefore) return { status: "failed", reason: "the debugger staged, committed or stashed changes (git index, HEAD or stash list changed)" };
     const r = d?.result;

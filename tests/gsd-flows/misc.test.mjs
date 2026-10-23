@@ -92,7 +92,7 @@ function debugWorld(fm = {}) {
   const s = { path: ".planning/debug/login-fails.md", frontmatter: { goal: "find_and_fix", owns: ["Path:src/login/"], budget_used: { turns: 0, minutes: 0 }, ...fm } };
   w.session = s;
   w.gsd.on("debug status", () => ({ status: "investigating", path: s.path, frontmatter: s.frontmatter }));
-  w.gsd.on("debug budget", (argv, input) => { const d = JSON.parse(input); s.frontmatter.budget_used = { turns: s.frontmatter.budget_used.turns + d.turns, minutes: s.frontmatter.budget_used.minutes + d.minutes }; return { budget_used: s.frontmatter.budget_used }; });
+  w.gsd.on("debug budget", (argv, input) => { const d = JSON.parse(input); s.frontmatter.budget_used = { turns: s.frontmatter.budget_used.turns + (d.turns ?? 0), minutes: s.frontmatter.budget_used.minutes + (d.minutes ?? 0) }; s.frontmatter.budget_reserved = { turns: Math.max(0, (s.frontmatter.budget_reserved?.turns ?? 0) + (d.reserve ?? 0) - (d.turns ?? 0)) }; return { budget_used: s.frontmatter.budget_used }; });
   w.gsd.on("debug checkpoint", (argv, input) => { const d = JSON.parse(input); if (d.answered) delete s.frontmatter.pending_checkpoint; else s.frontmatter.pending_checkpoint = d; return { ok: true }; });
   w.gsd.on("debug close", (argv) => { w.events.push(`close ${argv.join(" ")}`); return { closed: true }; });
   return w;
