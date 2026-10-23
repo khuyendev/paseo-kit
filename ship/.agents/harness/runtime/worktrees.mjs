@@ -12,8 +12,9 @@ import { pidAlive } from "../lib/proc.mjs";
 import { seedWorktree } from "./worktree-seed.mjs";
 import { applyWorktreeSetup, removeSetupLinks } from "./worktree-setup.mjs";
 
-export function runGit(cwd, args) {
-  const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8", windowsHide: true });
+// timeoutMs bounds the call: spawnSync blocks the whole ph process while git runs, so a hung git must end on its own (G146).
+export function runGit(cwd, args, { timeoutMs } = {}) {
+  const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8", windowsHide: true, timeout: timeoutMs });
   return { code: r.error ? null : r.status, stdout: (r.stdout ?? "").trim(), stderr: (r.stderr ?? String(r.error ?? "")).trim() };
 }
 
@@ -53,8 +54,11 @@ export function releaseLease(wt) {
   if (wt?.lease) fs.rmSync(wt.lease, { force: true });
 }
 
-export async function createWorktree(root, cfg, name, { git = runGit, seed, lease = false } = {}) {
-  const top = repoTop(root, { git });
+// timeoutMs: the time the call has left when the step starts; each git call gets what is left of it (G146). Discarding stays unbounded.
+export async function createWorktree(root, cfg, name, { git = runGit, seed, lease = false, timeoutMs } = {}) {
+  const until = timeoutMs === undefined ? null : Date.now() + timeoutMs;
+  const bounded = (cwd, args) => git(cwd, args, { timeoutMs: until === null ? undefined : Math.max(1, until - Date.now()) });
+  const top = repoTop(root, { git: bounded });
   if (!top) throw new UsageError("isolation 'worktree' needs a git repository");
   const safe = safeName(name);
   const dir = path.join(worktreeBase(top, cfg), safe);
@@ -62,14 +66,14 @@ export async function createWorktree(root, cfg, name, { git = runGit, seed, leas
   const wt = { top, path: dir, branch, name: safe, lease: lease ? leasePath(worktreeBase(top, cfg), safe) : null };
   if (wt.lease) writeJsonAtomic(wt.lease, { pid: process.pid });
   try {
-    must(git, top, ["worktree", "add", dir, "-b", branch]);
+    must(bounded, top, ["worktree", "add", dir, "-b", branch]);
   } catch (e) {
     releaseLease(wt);
     throw e;
   }
   try {
-    seedWorktree(root, wt, seed, git);
-    await applyWorktreeSetup(root, wt, cfg.adapter.worktree_setup, git);
+    seedWorktree(root, wt, seed, bounded);
+    await applyWorktreeSetup(root, wt, cfg.adapter.worktree_setup, bounded);
     return wt;
   } catch (e) {
     discardWorktree(wt, { git });

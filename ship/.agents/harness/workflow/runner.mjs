@@ -10,6 +10,7 @@ import { createWatchdog } from "./watchdog.mjs";
 
 const TRANSPORT_LOST = /Transport (closed|not connected)/;
 const MAX_LISTED_ERRORS = 20;
+const LAPSED = Symbol("lapsed");
 
 export const schemaInstruction = (schema) => `\n\nReply with only a JSON object (no other text) that matches this JSON schema:\n${JSON.stringify(schema)}`;
 
@@ -87,6 +88,10 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
     out(`log runner lost the daemon connection (${transportDown}): remaining agent() calls return null; resume the run`);
   }
 
+  // A create that answers after its call ended starts an agent nobody tracks: archive it (G146; CR-FND-02 for a failed usage tracking).
+  const archiveLate = (agentId) => session.archive(agentId).catch((e) => out(`log warning: late agent ${id8(agentId)} not archived: ${errText(e)}`));
+  const archiveLateError = (e) => e?.agentId && e.archived !== true && archiveLate(e.agentId);
+
   // Warm-up gate (FLOW-28): the first agent per run, type, model and thinking starts alone.
   async function passGate(def, identity) {
     const key = `${runId}|${def.type}|${identity.model}|${identity.effort ?? ""}`;
@@ -122,6 +127,7 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
     let gate = null;
     let worktree = null;
     let newWorktree = false;
+    let abandoned = false;
     let maxContext = 0;
     let ok = false;
     if (key !== undefined || opts.keep === true) admission?.keep?.();
@@ -148,6 +154,22 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
       // The absolute deadline also bounds waitTurn's provider-retry pauses and continue prompts (CR-WFL-05).
       return { turnsBefore: before, timeoutS: Math.min(opts.timeoutS, cfg.wait_timeout_s), deadline };
     };
+    // Setup awaits (agent creation, the fetch of an adopted agent, a resume) end at the deadline too (G146). A result that
+    // comes later goes to onLate, which cleans up what it started; the call itself ends null.
+    const bounded = async (work, onLate = () => {}) => {
+      if (deadline === null) return work;
+      let timer = null;
+      const lapsed = new Promise((resolve) => (timer = clock.setTimeout(() => resolve(LAPSED), Math.max(0, deadline - clock.now()))));
+      try {
+        const got = await Promise.race([work, lapsed]);
+        if (got !== LAPSED) return got;
+      } finally {
+        clock.clearTimeout(timer);
+      }
+      onLate(work);
+      throw late();
+    };
+    const budgetMs = () => (deadline === null ? undefined : Math.ceil(deadline - clock.now()));
 
     async function waitReply(turnsBefore) {
       let text = null;
@@ -185,7 +207,15 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
     }
 
     async function create(text, outputSchema) {
-      const agent = await session.createAgent({ sel, prompt: text, title: `${workflowName}:${label}`, name: label, swarm: workflowName, run: runId, cwd, outputSchema, readOnly });
+      if (expired()) throw late();
+      const agent = await bounded(
+        session.createAgent({ sel, prompt: text, title: `${workflowName}:${label}`, name: label, swarm: workflowName, run: runId, cwd, outputSchema, readOnly }),
+        (started) => {
+          // A create still running may start its agent in the worktree after the call ended, so settle keeps the worktree.
+          abandoned = true;
+          started.then((a) => archiveLate(a.id), archiveLateError);
+        },
+      );
       agentId = agent.id;
       journalAgent?.(agentId);
       admission?.started?.(agentId);
@@ -202,7 +232,8 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
           if (!fs.existsSync(prior.worktree.path)) throw new Error(`session worktree ${prior.worktree.path} is gone`);
           worktree = prior.worktree;
         } else {
-          worktree = await runtime.createWorktree(root, cfg, `${runId}-${n}`, opts.worktreeSeed);
+          if (expired()) throw late();
+          worktree = await runtime.createWorktree(root, cfg, `${runId}-${n}`, { seed: opts.worktreeSeed, timeoutMs: budgetMs() });
           newWorktree = true;
         }
       }
@@ -216,7 +247,7 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
       const fullPrompt = () => runtime.composePrompt({ def, prompt: task, readOnly, worktree, workdir, cfg, root, rolePrimed: primed, tag });
 
       let text;
-      const known = prior?.adopted ? await session.fetchAgent(agentId) : null;
+      const known = prior?.adopted ? await bounded(session.fetchAgent(agentId)) : null;
       if (prior?.adopted && (!known || known.archivedAt)) {
         // The earlier run already ended this agent: start the session fresh with the full prompt (PCLI-16).
         out(`log warning: session agent ${id8(agentId)} of an earlier run is no longer live; started fresh with the full prompt`);
@@ -231,7 +262,7 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
         // Later prompts of a session carry the run tag so run-stats attributes the turn to this run (FLOW-48).
         const continuation = `${task.trim()}\n\nRun ${runId} #${n} (bookkeeping only; ignore).`;
         const fresh = { sel, prompt: fullPrompt(), title: `${workflowName}:${label}`, name: label, swarm: workflowName, run: runId, cwd, readOnly };
-        const r = await session.resumeSend(agentId, { sel, prompt: continuation, create: fresh });
+        const r = await bounded(session.resumeSend(agentId, { sel, prompt: continuation, create: fresh }), (started) => started.then((x) => x.created && archiveLate(x.agent.id), archiveLateError));
         admission?.started?.(r.agent.id);
         if (r.created) {
           wd?.disarm();
@@ -287,7 +318,9 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
 
     async function settle() {
       if (!agentId) {
-        if (newWorktree) {
+        if (newWorktree && abandoned) {
+          out(`log warning: worktree ${worktree.path} kept: agent creation was still running at the deadline`);
+        } else if (newWorktree) {
           try {
             runtime.removeWorktree(worktree);
           } catch (e) {

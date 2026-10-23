@@ -31,7 +31,7 @@ export const runtime = Object.freeze({
     assertPromptSize(text, cfg);
     return text;
   },
-  createWorktree: (root, cfg, name, seed) => createWorktree(root, cfg, name, { seed }),
+  createWorktree: (root, cfg, name, { seed, timeoutMs }) => createWorktree(root, cfg, name, { seed, timeoutMs }),
   removeWorktree: (wt) => discardWorktree(wt),
   listPriceCost: (root, model, usage) => {
     if (!prices.has(root)) prices.set(root, loadPrices(root));
