@@ -26,5 +26,5 @@ Args file `_workspace/args/gsd-execute.json`: `{"phaseDir": ...}` plus `wave` (N
 ### Results
 - `executed`: run `gsd-verify` with `evidence` = the result's evidence list. When the result has `skipped`, report those plans first (halted or blocked): the phase is not complete.
 - `nothing-to-run`: follow `route` (verify, complete, plan-gaps, uat, stuck: answer the halt named with `ph gsd halt clear`, never "done").
-- `needs-owner`: show stage, reason and options. Quota or rate limits never offer retry-now: report the reset time. A Rule-4 or checkpoint result needs the owner's decision; a red tracer wave starts no later wave.
+- `needs-owner`: show stage, reason and options. Quota or rate limits never offer retry-now: report the reset time. A Rule-4 or checkpoint result needs the owner's decision; a red tracer wave starts no later wave. A Fix stop whose reason says `last edit unverified` means the fixer's last edit has no build or test run after it: run the failing tests before any hand fix.
 - `refused` / `failed`: report the reason. `refused` names the holder: a plan or an execute of this phase (`phase-<NN>` lease), or a debug or quick run on the code root.
