@@ -6,6 +6,28 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Kit feedback 64-67 from the Flutter port: independent and parallel flows, each behind a `gsd` switch whose default
+  keeps today's behaviour (owner 2026-10-23; one Opus agent per area, design notes in kit-bughunt/fb4/design/).
+  `gsd.plan_flow: streams` (65, 67; default `staged`): each plan gets its own review stream (per-plan lenses, judge,
+  edit, a resolution check of only its findings) as soon as its planner finishes, streams run in parallel under
+  `max_subagents`, a clean plan is frozen, the next outline wave is planned on reviewed plans, one phase-wide checker on
+  the frozen set is the join and sends cross-plan issues only to the plans they name, and a revised plan whose declared
+  interface changed re-checks the plans that depend on it. `gsd.execute_schedule: graph` (66.1-2; default `waves`,
+  per-wave mode only): a plan starts when the plans it depends on (depends_on, owns or file overlap, earlier tracers)
+  are committed, its own obligations gate, review, fix and resolution run per plan, the repo-wide suite and commits go
+  through one queue. `gsd.map_mode: per-focus` (66.3; default `whole`): each map focus checks, reviews, fixes and stamps
+  on its own; a failing focus reruns alone; one docs commit joins them. `gsd.verify_mode: per-criterion` (66.4; default
+  `phase`): one verifier per success criterion plus a phase unit, merged by `ph gsd verification merge`; only criteria
+  that need a human go to UAT. `gsd.research_ahead` (66.5; default false): research of a later phase may run while the
+  current phase executes; it is `provisional` until the phases it is ahead of complete, then `code-stale` asks for
+  `refresh: "code"` of its `## Code APIs` part. `gsd.review_metrics` (64; default true, records only): skeleton review,
+  plan review and checker findings are recorded with class and fate per run (`<phaseDir>/prereview/`), confirmed code
+  findings carry `plan-catchable`, plan-defect halts, gate failures and fixer rounds are counted, and `ph review-stats
+  --stage skeleton|plan|code` prints cost per confirmed finding and escapes per stage. Prompt text: finding-verifier,
+  gsd-plan-checker and gsd-verifier overlays, skills gsd-plan, gsd-execute, gsd-map-codebase, gsd-verify, gsd-research,
+  gsd-discuss, ph, harness references. Measured check: tests/fb4/ (main path, failure and resume per mode; defaults
+  unchanged), full offline suite; no mode run on a live phase yet.
+
 - Kit feedback 57-63 from the Flutter port, phase 2 verify, map and evolve (owner 2026-10-23). Verify (58, a bug since
   the 2026-10-20 integration, narrowed but not closed by G076): per-wave execute ends with one more gate over every
   plan of the run (`batch-<n>.json`), the only evidence it returns, because a wave's gate goes stale once a later wave
