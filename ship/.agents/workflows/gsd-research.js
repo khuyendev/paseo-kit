@@ -65,7 +65,7 @@ if (a.view) {
 const open = await discussOpen(phaseDir, nn);
 if (open) return needsOwner("Discuss", open);
 if (status.code === 0 && !a.refresh) return { status: "reused", path: report, headChanged: Boolean(status.json?.headChanged) };
-// GSDF-13 (CR-GSF-20): without refresh only a missing report is researched; an invalid, blocked, incomplete or stale
+// GSDF-13 (CR-GSF-20): without refresh only a missing report is researched; an invalid, blocked, incomplete, stale or changed
 // one is reported with the refresh option, unless this run's own attempt is being resumed.
 if (status.code !== 66 && !a.refresh) {
   const shown = await gsd(["attempt", "show", phaseDir, "--kind", "research"]);

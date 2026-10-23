@@ -6,8 +6,9 @@ import { readJsonIf } from "../lib/io.mjs";
 import { sha256, textDigest } from "../lib/hash.mjs";
 import { isInside } from "../lib/paths.mjs";
 import { asArray, done, mentions, none, readIf, rel, unavailable } from "./common.mjs";
+import { headOf } from "./git.mjs";
 import { haltIds, listFiles, phaseFile, planIds, summaryIds } from "./planning.mjs";
-import { keyHash, readAttempt } from "./revisions.mjs";
+import { keyHash, readAttempt, readRevisions } from "./revisions.mjs";
 import { loadRoadmap, roadmapPhase } from "./roadmap.mjs";
 import { frontmatter } from "./yaml.mjs";
 
@@ -181,6 +182,10 @@ export function researchStatus(g, phase) {
     if (attempt.result?.status === "blocked") return done({ ...out, status: "blocked", attempt: attempt.key, blockers: researchBlockers(body) }, 1);
     if (!attempt.done) return done({ ...out, status: "incomplete", attempt: attempt.key }, 1);
   }
+  // A report edited after its attempt was accepted is not that attempt's output: changed, so the default run asks for a refresh.
+  if (attempt && attempt.key === fm.attempt_key && attempt.done && typeof attempt.result === "string" && attempt.result !== out.sha) return done({ ...out, status: "changed", attempt: attempt.key }, 1);
   if (fm.status === "blocked") return done({ ...out, status: "blocked", blockers: researchBlockers(body) }, 1);
-  return done({ ...out, status: "complete" });
+  // A code commit alone is reported, not stale (GSDC-28): headChanged compares HEAD with the research revision's record.
+  const recorded = readRevisions(phase).keys.research;
+  return done({ ...out, status: "complete", headChanged: recorded ? recorded.head !== headOf(g.codeRoot) : null });
 }
