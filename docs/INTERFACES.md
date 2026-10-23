@@ -172,10 +172,11 @@ Thinking levels (`THINKING_LEVELS`): `off, low, medium, high, xhigh, max`.
 | `startup_globs` | string[] | `[]` |
 | `hook_timeout_s` | int >= 1 | 30 |
 | `attribution` | `null` or path | `null` |
+| `worktree_setup` | `{copy: string[], link: string[]}` (both keys required; git-ignored paths copied or linked into each new harness worktree) | `{copy: [], link: []}` |
 
 Paths in the adapter are repo-relative script paths; the adapter hook protocol (ADPT-15) is implemented by code-gsd-core in `gsd/` and documented in its report.
 
-### 4.2 `gsd` section (M9/M10; ADPT-11..13)
+### 4.2 `gsd` section (M9/M10; ADPT-11..13; entries merge per entry, an entry is replaced whole)
 
 | entry | shape | shipped default |
 | --- | --- | --- |
@@ -201,6 +202,7 @@ Paths in the adapter are repo-relative script paths; the adapter hook protocol (
 | `fixer` | `{max_build_attempts: int>=1, minutes: int>=1}` | `{3, 60}` |
 | `parallelization` | `{enabled: bool, max_concurrent: int>=1\|null}` | `{enabled: true, max_concurrent: null}` |
 | `review_depth` | `quick\|standard\|deep` | `standard` |
+| `code_review` | `{max_concurrent: int >= 1, reviewers: [{model?: string, effort?: level}]}` (both keys required; each reviewer's `model` and `effort` are optional) | `{max_concurrent: 1, reviewers: []}` |
 
 `GSD_ROLES` (ADPT-11): `research, project_researcher, synthesizer, outline, planner, checker, skeleton_lane, architect, plan_finder, plan_verifier, plan_judge, plan_editor, executor, reviewer, finding_verifier, fixer, verifier, mapper, roadmapper, debugger`.
 
