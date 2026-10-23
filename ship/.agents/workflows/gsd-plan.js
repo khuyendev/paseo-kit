@@ -301,6 +301,7 @@ phase("Skeleton review");
 const sevClass = (s) => (s === "info" ? "info" : s === "warning" ? "warning" : "blocker"); // unknown severity = blocker
 const issues = new Map();
 const passCounts = [];
+const laneFailures = new Map(); // lane id -> reason of a lane that returned nothing
 const integrationLane = (lanes.find((l) => l.lens === "integration") ?? lanes[0]).id;
 const hasEdges = (o) => Boolean(o?.needsWiring || (o?.crossPlan ?? []).length);
 const openIssues = () => [...issues.values()].filter((i) => i.state === "open");
@@ -347,11 +348,16 @@ async function resolutionCheck(lane, open) {
 }
 async function skeletonGate() {
   const first = await parallel(lanes.map((l) => () => reviewLane(l)));
+  // A failed lane keeps the findings of the lanes that answered; the stop lists the failed lanes.
   for (const [i, r] of first.entries()) {
-    if (!r || r.result === null) return { status: "failed", stop: failedCall(`skeleton lane ${lanes[i].id} (${lanes[i].lens})`, r?.reason ?? null) };
-    for (const raw of r.result.issues ?? []) addIssue(lanes[i].id, raw);
+    if (!r || r.result === null) laneFailures.set(lanes[i].id, r?.reason ?? null);
+    else for (const raw of r.result.issues ?? []) addIssue(lanes[i].id, raw);
   }
   for (const c of outlineChangeIssues) addIssue(integrationLane, c);
+  if (laneFailures.size) {
+    const failed = lanes.filter((l) => laneFailures.has(l.id)).map((l) => failedCall(`skeleton lane ${l.id} (${l.lens})`, laneFailures.get(l.id)).reason);
+    return { status: "failed", stop: result("failed", { reason: failed.join("; ") }) };
+  }
   passCounts.push(openIssues().length);
   // Revisions and the stall rule follow open blockers only; warnings are carried after the loop.
   for (let pass = 2; openBlockers().length && pass <= maxSkeletonPasses; pass++) {
@@ -411,8 +417,8 @@ function renderReview(gate) {
   const resolved = [...issues.values()].filter((i) => i.state === "resolved");
   return [
     `# Phase ${nn} outline review`, "", `Status: ${gate.status}${gate.stop?.reason ? ` (${gate.stop.reason})` : ""}`, "",
-    "## Lanes", "", "| lane | lens | model | effort |", "| --- | --- | --- | --- |",
-    ...lanes.map((l) => `| ${l.id} | ${l.lens} | ${l.model ?? roleTable.skeleton_lane?.model ?? "agent default"} | ${l.effort ?? roleTable.skeleton_lane?.effort ?? "agent default"} |`), "",
+    "## Lanes", "", "| lane | lens | model | effort | result |", "| --- | --- | --- | --- | --- |",
+    ...lanes.map((l) => `| ${l.id} | ${l.lens} | ${l.model ?? roleTable.skeleton_lane?.model ?? "agent default"} | ${l.effort ?? roleTable.skeleton_lane?.effort ?? "agent default"} | ${laneFailures.has(l.id) ? `failed: ${cut300(laneFailures.get(l.id) ?? "no reply")}` : "ok"} |`), "",
     "## Passes", "", ...passCounts.map((c, i) => `- pass ${i + 1}: ${c} open`), "",
     "## Open", "", "| id | lane | plan | severity | target | description | evidence |", "| --- | --- | --- | --- | --- | --- | --- |",
     ...rows(open, ["id", "lane", "plan", "severity", "target", "description", "evidence"]), "",
