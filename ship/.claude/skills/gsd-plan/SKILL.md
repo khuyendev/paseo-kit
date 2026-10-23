@@ -12,6 +12,7 @@ Method text: the orchestration of upstream `plan-phase` is the workflow script b
 ### Phase (GSDF-35, GSDF-33)
 - Without a phase argument pick the first phase (lowest first, `ph gsd roadmap analyze`) whose status is `NOT_STARTED` or that is discussed or researched but unplanned; when none fits, ask.
 - The run refuses a `COMPLETE` phase (`refused`, pointing at its VERIFICATION) unless the owner says force: pass `"force": true` and show the warning banner.
+- The run refuses a `phaseDir` whose number matches a phase but whose directory is not that phase's directory (`refused`, naming both paths): pass the directory `find-phase` reports; it never plans into a stale slug.
 
 ### Run (GSDF-15, GSDF-02)
 Args file `_workspace/args/gsd-plan.json`, e.g. `{"phaseDir": ".planning/phases/02-api"}`; optional `mode` (`plan` | `gaps`), `tracer` (default true), `reversibilityGates` (default true), `maxSkeletonPasses` / `maxCheckIterations` (integers 1..3, defaults from `gsd`), `skeletonLanes` (`[{lens, model?, effort?}]`, default `gsd.skeleton_lanes`; a changed lane set, lens text or reviewer definition reruns the skeleton review), `wiring` (`auto|always|never`), `replan`, `skipResearch` + `researchSkipReason`, `forceProceed {reason}`, `planReview`, `roles {role: {model, effort}}`.

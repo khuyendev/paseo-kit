@@ -139,6 +139,8 @@ const lease = await flow(["lock", "debug", runId, "gsd-plan"]);
 if (lease.code !== 0) return result("refused", { reason: `${leaseText(lease.json)}; plan after it ends` });
 try {
 const found = (await gsd(["find-phase", N])).json;
+// G010: the number names the phase directory; a phaseDir with another slug would plan into a stale directory.
+if (found?.directory && found.directory !== phaseDir) return result("refused", { reason: `phaseDir ${phaseDir} is not the directory of phase ${N} (${found.directory}); pass ${found.directory}` });
 if (found?.status === "COMPLETE") {
   if (!a.force) return result("refused", { reason: `phase ${N} is complete (see ${P("VERIFICATION.md")}); pass force to replan it` });
   log(`warning: ======== replanning COMPLETE phase ${N} (force) ========`);

@@ -49,7 +49,7 @@ export function makeWorld(opts = {}) {
   const world = { project, root: project.root, read, write, recorded, attempts, events: [], probes: {}, coverage: { passed: true }, status: opts.status ?? "PLANNED", verification: opts.verification ?? null };
   const ev = (e) => world.events.push(e);
   world.gsd = new FakeGsd({
-    "find-phase": () => ({ found: true, status: world.status }),
+    "find-phase": () => ({ found: true, status: world.status, directory: PHASE_DIR }),
     "research status": () => (read(phaseFile("RESEARCH.md")) ? { code: 0, json: { status: "complete" } } : { code: 66, json: { status: "missing" } }),
     "roadmap get-phase": () => ({ found: true, phase_number: "1", phase_name: "Core", goal: "core works", requirements: ["R-1"] }),
     "revisions hash": ([, key]) => ({ hash: hashOf(key) }),
