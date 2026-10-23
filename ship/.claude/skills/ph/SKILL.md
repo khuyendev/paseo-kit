@@ -127,7 +127,7 @@ until dry, budget-aware loop, custom type + schema + effort, tier choice).
   first archives the agents the killed run left running (journaled, never finished), so each call starts again with
   one live agent.
   `--detach` returns at once; follow it with `ph watch-run <runId>` under Monitor.
-- Run directory `_workspace/_runs/<runId>/`: `script.js`, `args.json`, `run.json`, `journal.jsonl`, `log.txt`,
+- Run directory `_workspace/_runs/<runId>/`: `script.js`, `args.json` (only when the run got args), `run.json`, `journal.jsonl`, `log.txt`,
   `result.json`. `ph run-stats <runId>` sums time, tokens and cost; `ph runs [--prune]` lists and prunes runs;
   `ph archive --run <runId> [--reason "<why>"]` stops a run for good; the reason goes into `run.json` and the metrics
   ledger, so give one.

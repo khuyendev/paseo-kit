@@ -75,7 +75,8 @@ async function prepare(ctx, deps) {
   let args;
   if (opts.args !== undefined) args = parseJsonArg(opts.args, "--args");
   else if (opts["args-file"] !== undefined) args = parseJsonArg(readText(path.resolve(root, opts["args-file"])), "--args-file");
-  else if (prevDir) args = readJsonIf(path.join(prevDir, RUN_FILES.args)) ?? undefined;
+  // A run without args writes no args.json, so a file that exists (even holding null) is the value the run was given.
+  else if (prevDir && fs.existsSync(path.join(prevDir, RUN_FILES.args))) args = readJsonIf(path.join(prevDir, RUN_FILES.args));
   const budgetTotal = opts.budget !== undefined ? parseBudget(opts.budget) : null;
   if (!ctx.env.PASEO_AGENT_ID?.trim()) throw new UsageError(NO_CALLER);
   const runtime = deps.runtime ?? kitRuntime;
@@ -119,7 +120,7 @@ function claimRunDir(p) {
 function writeRunStart(p, ctx, pid) {
   const existing = claimRunDir(p);
   fs.writeFileSync(path.join(p.runDir, RUN_FILES.script), p.script.source, "utf8");
-  writeJsonAtomic(path.join(p.runDir, RUN_FILES.args), p.args ?? null);
+  if (p.args !== undefined) writeJsonAtomic(path.join(p.runDir, RUN_FILES.args), p.args);
   const info = {
     runId: p.runId, attemptRunId: p.attemptRunId, parent: ctx.opts.resume ?? null, script: p.script.scriptPath, status: "running",
     startedAt: existing ? existing.startedAt : new Date(ctx.clock.now()).toISOString(),
