@@ -253,7 +253,9 @@ export function resumeGate(root, phaseDir, { plans, integration = readState(root
 // (committed later in the run) are left alone; an unowned tracked file whose only change is line endings (`eolOnly`, kit feedback 80)
 // or that lies outside adapter.ownership.source_roots (`outside`, kit feedback 77) is reported and never committed; everything
 // else is `unowned` and must stop the commit.
-export function ownedChanges(root, phaseDir, { plans, pending = [], integration = readState(root, phaseDir).integration, ignore = [] }) {
+export function ownedChanges(root, phaseDir, { plans: given, pending = [], integration = readState(root, phaseDir).integration, ignore = [], claims = false }) {
+  // claims (worktree isolation): a plan without `claimed` claims the files its transfer record names.
+  const plans = claims ? given.map((p) => ({ ...p, claimed: p.claimed ?? (readJsonIf(resolveInside(root, `${phaseDir}/transfers/${p.id}.json`), null)?.files ?? []).map((f) => f.path) })) : given;
   const base = readJsonIf(baselineFile(root, phaseDir), null);
   if (!base) throw new Error(`no execute baseline in ${phaseDir}`);
   const prefixes = ownsPrefixes(root);
@@ -324,8 +326,18 @@ export function executionInputs(root) {
   return { root: toSlash(dir), hash };
 }
 
-export function dependencySeed(root, phaseDir, { plans }) {
+// Kit feedback 95: with `shared`, the files of every applied shared change of the phase (path and generator outputs) that differ
+// from HEAD join the seed, so an executor worktree starts with the shared changes made before its wave.
+export function dependencySeed(root, phaseDir, { plans = [], shared = false }) {
   const files = new Map();
+  if (shared) {
+    const changed = new Set(status(root).map((e) => e.path));
+    const paths = new Set(readState(root, phaseDir).shared.filter((s) => s.applied && s.path).flatMap((s) => [s.path, ...(s.outputs ?? [])]));
+    for (const p of [...paths].filter((x) => changed.has(x))) {
+      const hash = contentHash(resolveInside(root, p));
+      files.set(p, hash === "deleted" ? { path: p, deleted: true } : { path: p, sha256: hash });
+    }
+  }
   for (const plan of plans) {
     if (!/^\d+(\.\d+)?-\d+$/.test(plan)) throw new Error("invalid dependency plan id");
     const record = readJsonIf(resolveInside(root, `${phaseDir}/transfers/${plan}.json`), null);

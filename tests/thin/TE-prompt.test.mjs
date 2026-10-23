@@ -82,7 +82,8 @@ test("TE the executor template renders the inline executor brief byte for byte (
       generated: c.generated ? GEN(["lib/**/*.g.dart"]) : "", pendingOn: c.pending, metricsOn: c.metrics,
       answers: c.answers ? [{ halt: "h", answer: "a" }] : [], notes: c.notes ? [{ severity: "low", description: "n" }] : [], reqs: c.reqs ? REQS : [], digest: "Input digest (plan:01-01): h-01-01",
     };
-    const got = render("executor", { plan: v.planFile, snapshot: v.mainRoot ?? "", summary: v.summary, owns: JSON.stringify(v.owns), stackSkill: v.stackSkill, generated: c.generated ? JSON.stringify(["lib/**/*.g.dart"]) : "", pending: v.pendingOn, metrics: v.metricsOn, answers: v.answers.length ? JSON.stringify(v.answers) : "", notes: v.notes.length ? JSON.stringify(v.notes) : "", requests: v.reqs.length ? JSON.stringify(v.reqs) : "", digest: v.digest });
+    // accepted (kit feedback 89) is empty: the inline brief had no such part, and an empty one adds no byte.
+    const got = render("executor", { plan: v.planFile, snapshot: v.mainRoot ?? "", summary: v.summary, owns: JSON.stringify(v.owns), stackSkill: v.stackSkill, generated: c.generated ? JSON.stringify(["lib/**/*.g.dart"]) : "", pending: v.pendingOn, metrics: v.metricsOn, answers: v.answers.length ? JSON.stringify(v.answers) : "", notes: v.notes.length ? JSON.stringify(v.notes) : "", accepted: "", requests: v.reqs.length ? JSON.stringify(v.reqs) : "", digest: v.digest });
     assert.equal(got, oldExecutor(v), JSON.stringify(c));
   }
 });

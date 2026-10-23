@@ -10,6 +10,7 @@ import { done, mentions, readIf, unavailable } from "./common.mjs";
 import { HookError, builtinResolve, callHook, classify, covers, filesUnder, balancedGlob, hasGlob, overlaps, ownsPath, pathKey, physicalPath, sharedPaths, targetsOf } from "./adapter-hooks.mjs";
 import { phaseFile, readPlans, sharedDependencies } from "./planning.mjs";
 import { loadRoadmap, roadmapPhase } from "./roadmap.mjs";
+import { timingIssues } from "./shared-changes.mjs";
 
 export const REQUIRED_PLAN_FIELDS = ["phase", "plan", "type", "wave", "depends_on", "files_modified", "autonomous", "requirements", "must_haves"];
 const TASK_TYPES = new Set(["auto", "tracer", "manual", "checkpoint:human-verify", "checkpoint:decision", "checkpoint:human-action"]);
@@ -338,7 +339,10 @@ export async function checkOwns(g, phase, ids) {
   const plans = readPlans(phase, ids);
   const { problems, owned } = await ownershipProblems(g, plans);
   problems.push(...waveOverlaps(plans, (p) => owned.get(p.id) ?? []));
-  return done({ passed: problems.length === 0, problems, plans: plans.map((p) => ({ id: p.id, wave: p.wave, owns: p.owns, files_modified: p.filesModified, tracer: p.tasks.some((t) => t.type === "tracer") || p.fm.tracer === true })), files_per_plan: filesPerPlanLines(g, readPlans(phase)) }, problems.length ? 1 : 0);
+  // Kit feedback 95 F2: a <shared_changes> wave timing gsd-execute cannot honour is an issue for the plan checker (the owns probe);
+  // it is no problem, so the exit code (gsd-execute's shared-tree check) does not change.
+  const timing = plans.flatMap(timingIssues);
+  return done({ passed: problems.length === 0, problems, ...(timing.length ? { issues: timing } : {}), plans: plans.map((p) => ({ id: p.id, wave: p.wave, owns: p.owns, files_modified: p.filesModified, tracer: p.tasks.some((t) => t.type === "tracer") || p.fm.tracer === true })), files_per_plan: filesPerPlanLines(g, readPlans(phase)) }, problems.length ? 1 : 0);
 }
 
 // --- dependencies (G022) ---

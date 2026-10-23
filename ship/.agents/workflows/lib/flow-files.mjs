@@ -40,6 +40,16 @@ export function append(root, rel, text) {
   return { appended: rel };
 }
 
+// Append the lines {lines} the file does not hold yet (deferred.md, G081: one line per finding), in order; none: nothing written.
+export function appendNew(root, rel, { lines = [] }) {
+  const abs = guardedPath(root, rel);
+  const have = new Set(fs.existsSync(abs) ? readText(abs).split(/\r?\n/) : []);
+  const fresh = lines.map(String).filter((l) => !have.has(l));
+  if (!fresh.length) return { appended: null, lines: 0 };
+  append(root, rel, fresh.join("\n"));
+  return { appended: rel, lines: fresh.length };
+}
+
 // Append one entry to a JSON array file (commits.json, GSDF-53), atomically.
 export function jsonPush(root, rel, entry) {
   const abs = guardedPath(root, rel);

@@ -1,13 +1,14 @@
 // The owner's typed answers to the stops of a phase (kit feedback 83 F3): `<phase dir>/owner-answers.json` is an append-only
 // array of {id, kind, plan?, wave?, path?, config?, reason, at}, one shape for every answer verb (`halt clear`, `shared clear`,
-// `request clear`, and `allow` for a check weakening, kit feedback 87 C1). Written only by gsd/owner-answers.mjs; gsd-execute reads it at start and applies what it has not taken
+// `request clear`, `allow` for a check weakening, kit feedback 87 C1, and `accepted confirm|resolve` for a checker issue
+// forceProceed accepted, kit feedback 89, with {issue, decision}). Written only by gsd/owner-answers.mjs; gsd-execute reads it at start and applies what it has not taken
 // yet, and `ph review-stats` counts it, so the orchestrator's answers are kit events and no hand edit of a state file.
 import fs from "node:fs";
 import path from "node:path";
 import { readJsonIf } from "./io.mjs";
 
 export const OWNER_ANSWERS_FILE = "owner-answers.json";
-export const ANSWER_KINDS = Object.freeze(["halt", "shared", "request", "allow"]);
+export const ANSWER_KINDS = Object.freeze(["halt", "shared", "request", "allow", "accepted"]);
 
 const PHASES_REL = ".planning/phases";
 const valid = (x) => typeof x?.id === "string" && ANSWER_KINDS.includes(x.kind) && typeof x.reason === "string";

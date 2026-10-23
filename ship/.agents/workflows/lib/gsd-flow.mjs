@@ -20,6 +20,8 @@ import * as plan from "./flow-plan.mjs";
 import * as state from "./flow-state.mjs";
 import { renderPrompt } from "./flow-prompt.mjs";
 import * as exec from "./flow-exec.mjs";
+import { recordAccepted } from "../../harness/gsd/accepted.mjs";
+import { resolveInside } from "../../harness/lib/paths.mjs";
 
 // execute-progress.json has one writer, the state-* verbs (kit feedback 83 F1, 87); a raw write would skip their contracts.
 const notState = (p) => {
@@ -43,6 +45,7 @@ const COMMANDS = {
   read: (root, [p]) => files.read(root, p),
   write: (root, [p], input) => files.write(root, notState(p), input),
   append: (root, [p], input) => files.append(root, notState(p), input),
+  "append-new": (root, [p], input) => files.appendNew(root, notState(p), JSON.parse(input)),
   "json-push": (root, [p], input) => files.jsonPush(root, notState(p), JSON.parse(input)),
   secrets: (root, args) => map.secrets(root, args),
   stamp: (root, args) => map.stamp(root, args.length ? args : undefined),
@@ -102,6 +105,8 @@ const COMMANDS = {
   "plan-linked": (root, _args, input) => plan.planLinked(root, JSON.parse(input)),
   "plan-realloc-diff": (root, _args, input) => plan.planReallocDiff(root, JSON.parse(input)),
   "plan-validation": (root, _args, input) => plan.planValidation(root, JSON.parse(input)),
+  // Kit feedback 89: the checker issues a forceProceed override accepted, recorded by gsd-plan (<phaseDir>/accepted-issues.json).
+  "accepted-record": (root, [phaseDir], input) => recordAccepted(resolveInside(root, phaseDir), JSON.parse(input)),
   "state-read": (root, [phaseDir]) => state.stateRead(root, phaseDir),
   "state-plan": (root, [phaseDir], input) => state.statePlan(root, phaseDir, JSON.parse(input)),
   "state-shared": (root, [phaseDir], input) => state.stateShared(root, phaseDir, JSON.parse(input)),
@@ -129,20 +134,22 @@ const COMMANDS = {
   "exec-findings": (root, _args, input) => exec.execFindings(JSON.parse(input)),
   "exec-pause": (root, _args, input) => exec.execPause(JSON.parse(input)),
   "exec-groups": (root, _args, input) => exec.execGroups(JSON.parse(input)),
+  "exec-shared-before": (root, [phaseDir], input) => exec.execSharedBefore(root, phaseDir, JSON.parse(input)),
+  "exec-shared-reply": (root, _args, input) => exec.execSharedReply(JSON.parse(input)),
 };
 
 export const COMMAND_NAMES = Object.keys(COMMANDS);
 
 // Verbs whose handler reads JSON or text from stdin; every other verb never touches stdin, so a person running
 // `gsd-flow.mjs remove <path>` from a shell whose stdin is an open pipe is not left waiting (G088).
-const STDIN = new Set(["write", "append", "json-push", "summary-heal", "resume-gate", "transfer", "discard-worktree", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "evidence-check", "check-weakening", "review-scope", "review-record", "prereview-record", "changed-lines", "forensics-path", "plan-run", "plan-mark", "plan-end", "plan-outline", "plan-checker", "plan-contracts", "plan-realloc", "plan-recheck", "state-plan", "state-shared", "state-request", "state-integration", "state-answer", "state-smoke", "prompt", "exec-args", "exec-setup", "exec-defect", "exec-handoff", "exec-records", "exec-select", "exec-route", "exec-verdict", "exec-fixers", "exec-round-end", "exec-verdicts", "exec-review", "exec-findings", "exec-pause", "exec-groups", "plan-args", "plan-prompt", "plan-skeleton", "plan-probes", "plan-linked", "plan-realloc-diff", "plan-validation"]);
+const STDIN = new Set(["write", "append", "append-new", "json-push", "summary-heal", "resume-gate", "transfer", "discard-worktree", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "evidence-check", "check-weakening", "review-scope", "review-record", "prereview-record", "changed-lines", "forensics-path", "plan-run", "plan-mark", "plan-end", "plan-outline", "plan-checker", "plan-contracts", "plan-realloc", "plan-recheck", "state-plan", "state-shared", "state-request", "state-integration", "state-answer", "state-smoke", "prompt", "exec-args", "exec-setup", "exec-defect", "exec-handoff", "exec-records", "exec-select", "exec-route", "exec-verdict", "exec-fixers", "exec-round-end", "exec-verdicts", "exec-review", "exec-findings", "exec-pause", "exec-groups", "exec-shared-before", "exec-shared-reply", "plan-args", "plan-prompt", "plan-skeleton", "plan-probes", "plan-linked", "plan-realloc-diff", "plan-validation", "accepted-record"]);
 export const readsStdin = (cmd) => STDIN.has(cmd);
 
 export async function main(argv, { root = configRoot(), input = "", out = (l) => process.stdout.write(`${l}\n`), env = process.env } = {}) {
   const [cmd, ...args] = argv;
   const fn = COMMANDS[cmd];
   // The plan-* verbs are the only writer of plan-progress.json.
-  if (["write", "append", "json-push", "remove"].includes(cmd) && planState.isPlanStateFile(args[0])) {
+  if (["write", "append", "append-new", "json-push", "remove"].includes(cmd) && planState.isPlanStateFile(args[0])) {
     out(JSON.stringify({ status: "refused", error: `${args[0]} is written only by the plan-* verbs` }));
     return 1;
   }

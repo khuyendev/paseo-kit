@@ -9,6 +9,7 @@ import path from "node:path";
 import { loadConfig } from "../../harness/config.mjs";
 import { matchesGlob } from "../../harness/adapter/contract.mjs";
 import { withFileLock } from "../../harness/gsd/common.mjs";
+import { presence } from "../../harness/gsd/shared-changes.mjs";
 import { textDigest } from "../../harness/lib/hash.mjs";
 import { PLAN_STAGES, STATE_FILE, readStateFile } from "../../harness/lib/execute-state.mjs";
 import { readText, writeJsonAtomic } from "../../harness/lib/io.mjs";
@@ -157,6 +158,7 @@ export function statePlan(root, phaseDir, input) {
 }
 
 // {op: add, changes: [{from, path|null, change, reason?, key?, wave?, via?, outputs?}]} | {op: tag, wave} | {op: applied, ids, link?}
+// | {op: present, ids, link?}
 export function stateShared(root, phaseDir, input) {
   const op = input?.op;
   if (op === "cleared") return { status: "refused", reason: "a shared change is cleared only by the owner's answer (ph gsd shared clear), taken with state-answer", code: 1, state: readState(root, phaseDir) };
@@ -195,7 +197,28 @@ export function stateShared(root, phaseDir, input) {
       for (const s of hit) s.applied = true;
       return { applied: ids, closed: input.link ? closeLinked(st, hit, "was applied") : [] };
     }
-    refuse(`op ${JSON.stringify(op)} is not add|tag|applied`);
+    // Kit feedback 95 F3: of the open changes `ids`, those the tree holds at HEAD (gsd/shared-changes.mjs presence) are applied
+    // without a fixer, with appliedBy present and the evidence.
+    if (op === "present") {
+      // The text of a path at a revision (HEAD) or in the tree (null); null when there is none.
+      const read = (p) => (rev) => {
+        if (rev) {
+          const r = git(root, ["show", `${rev}:${p}`], { allowFail: true });
+          return r.code === 0 ? r.out : null;
+        }
+        const abs = resolveInside(root, p);
+        return fs.existsSync(abs) ? readText(abs) : null;
+      };
+      const found = [];
+      for (const s of st.shared.filter((x) => (input.ids ?? []).includes(x.id) && !x.applied && !x.refused && x.path)) {
+        const p = presence(s, { read: read(s.path), earlier: st.shared.filter((x) => x !== s) });
+        if (!p.present) continue;
+        Object.assign(s, { applied: true, appliedBy: "present", evidence: p.evidence });
+        found.push(s);
+      }
+      return { present: found.map(({ id, path: p, evidence }) => ({ id, path: p, evidence })), closed: input.link ? closeLinked(st, found, "was present at HEAD") : [] };
+    }
+    refuse(`op ${JSON.stringify(op)} is not add|tag|applied|present`);
   });
 }
 
