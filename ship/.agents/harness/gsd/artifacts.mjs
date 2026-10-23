@@ -21,6 +21,9 @@ const inRoot = (root, p) => {
   return isInside(abs, root) ? abs : null;
 };
 
+// Lines of text: an empty file has none, and the newline that ends the last line does not start another.
+const lineCount = (text) => (text === "" ? 0 : text.split(/\r?\n/).length - (text.endsWith("\n") ? 1 : 0));
+
 export function verifyArtifacts(g, plans) {
   const items = plans.flatMap((p) => asArray(p.fm.must_haves?.artifacts).map((a) => ({ plan: p.id, ...(typeof a === "string" ? { path: a } : a) })));
   if (!items.length) throw none("no must_haves.artifacts in scope");
@@ -31,7 +34,7 @@ export function verifyArtifacts(g, plans) {
     if (!fs.existsSync(abs)) return { ...a, exists: false, passed: false, status: "missing", issues: ["file does not exist"] };
     if (isDir(abs)) return { ...a, exists: true, passed: false, status: "directory", issues: ["path is a directory"] };
     const text = readIf(abs) ?? "";
-    const lines = text.split(/\r?\n/).length;
+    const lines = lineCount(text);
     if (a.min_lines && lines < Number(a.min_lines)) issues.push(`${lines} lines < min_lines ${a.min_lines}`);
     for (const c of asArray(a.contains)) if (!text.includes(String(c))) issues.push(`does not contain ${c}`);
     for (const e of asArray(a.exports)) if (!text.includes(String(e))) issues.push(`does not export ${e}`);
