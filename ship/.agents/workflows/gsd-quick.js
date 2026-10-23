@@ -82,7 +82,8 @@ const q = a.dir && /^\.planning\/quick\/\d{6}-[0-9a-z]{3}-[a-z0-9-]+$/.test(a.di
 if (!q?.dir) return { status: "failed", reason: "could not create the quick task directory" };
 const PLAN = `${q.dir}/${q.id}-PLAN.md`;
 const SUMMARY = `${q.dir}/${q.id}-SUMMARY.md`;
-const data = `DATA_START\n${description}\nDATA_END`;
+// G122: indented like gsd-debug.js, so a line of the description cannot close the DATA fence.
+const data = `DATA_START\n${description.split(/\r?\n/).map((l) => `    ${l}`).join("\n")}\nDATA_END`;
 const context = a.contextPath ? `Owner decisions: ${a.contextPath} (locked).` : "";
 // G103: a structure error the planner can fix in place gets one repair turn in its own session, as gsd-plan does (GSDF-25).
 async function structureFix(label, stage) {
