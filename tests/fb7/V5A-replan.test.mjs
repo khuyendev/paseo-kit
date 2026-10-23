@@ -99,7 +99,7 @@ test("V5A 101 F3 a planner's REVISION_CONFLICT about one plan answers with repla
   const stop = await plan(w, {}, { "plan-01-02": () => conflict });
   assert.deepEqual([stop.result.status, stop.result.stage], ["needs-owner", "Plan"], JSON.stringify(stop.result));
   const { answer } = stop.result;
-  assert.equal(answer.verb, "context");
+  assert.equal(answer.verb, "decide"); // kit feedback 99 F1 (merged with V5B)
   assert.deepEqual(Object.keys(answer.args), ["replanPlans"]);
   assert.deepEqual(answer.args.replanPlans.plans, ["01-02"]);
   assert.match(answer.args.replanPlans.inputs, /^d[0-9a-f]+$/);

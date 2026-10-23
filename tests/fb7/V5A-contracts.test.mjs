@@ -114,5 +114,5 @@ test("V5A 98 F3 a planner's REVISION_CONFLICT that carries contract_changes is a
     "revise-01-01": () => ({ marker: "CONTRACT_CHANGE", contract_changes: [change] }),
   });
   assert.equal(f.result.stage, "Checker", JSON.stringify(f.result));
-  assert.equal(f.result.answer.verb, "context");
+  assert.equal(f.result.answer.verb, "decide"); // kit feedback 99 F1 (merged with V5B): an owner answer is a decide record, not a CONTEXT edit
 });
