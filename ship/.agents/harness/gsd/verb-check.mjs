@@ -22,8 +22,14 @@ export function flowVerbNames(file = FLOW_FILE) {
 }
 
 const CALL = /\b(flow|gsd)\(\s*\[/g;
-// Scripts that define the shared helpers: flow runs gsd-flow.mjs, gsd runs `ph gsd`.
+// `flow` and `gsd` are workflow engine globals (THIN.md item 1). A script that declares its own keeps the kit's meaning
+// only when its definition is the old copied helper (flow runs gsd-flow.mjs, gsd runs `ph gsd`); another one is not scanned.
+const OWN = {
+  flow: /^\s*(?:(?:const|let|var)\s+flow\s*=|(?:async\s+)?function\s+flow\s*\()/m,
+  gsd: /^\s*(?:(?:const|let|var)\s+gsd\s*=|(?:async\s+)?function\s+gsd\s*\()/m,
+};
 const DEFINES = { flow: /gsd-flow\.mjs/, gsd: /["']gsd["'],\s*\.\.\.argv/ };
+const kitHelper = (text, kind) => !OWN[kind].test(text) || DEFINES[kind].test(text);
 
 // The first three elements of the array literal starting at `at` (`query a b` is the longest verb name): a string for
 // a literal, null for anything computed.
@@ -71,7 +77,7 @@ export function verbCalls(text) {
   let dynamic = 0;
   for (const m of text.matchAll(CALL)) {
     const kind = m[1];
-    if (!DEFINES[kind].test(text)) continue;
+    if (!kitHelper(text, kind)) continue;
     const tokens = leadingElements(text, m.index + m[0].length);
     const verb = kind === "flow" ? (typeof tokens[0] === "string" ? tokens[0] : undefined) : gsdVerb(tokens);
     if (verb === undefined) dynamic++;

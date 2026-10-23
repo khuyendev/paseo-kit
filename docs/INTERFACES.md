@@ -515,12 +515,32 @@ reaches the kit only through these verbs: `flow([...])` runs `node .agents/workf
 `gsd([...])` runs `node .agents/harness/ph.mjs gsd <verb> ...` (besides the runtime globals `agent`, `shell`, `log`).
 The verbs below are the API the kit keeps stable for compositions.
 
+Composition helpers (THIN.md stage 1): the workflow engine provides the helpers every `gsd-*.js` used to copy as globals
+(`harness/workflow/script.mjs` `kitHelpers`, one implementation evaluated in each script context on top of `shell` and
+`agent`): `run(argv, input)` (any node verb, JSON on stdin, whole output kept), `flow`, `gsd`, `loadCfg()`, `call(prompt,
+opts)` (`agent` with `detail: true` -> `{result, reason, model, effort}`), `sha(text)`, `fileSha(path)`,
+`discussOpen(phaseDir, nn)`, `renderPrompt(name, vars)`, `fatal(reason)`, `needsOwner(stage, reason, extra)`,
+`leaseText(r, what)`, `phaseNumber(dir)`, `digestLine(key, hash)`, `policyBlock(path)`, `lastJson(text)` and the constants
+`PH`, `FLOW`, `PHASE_DIR_RE`, `NEVER_RETRY`, `VERB_TAIL_CHARS`. A script's own top-level definition of a name wins (a
+project script that still carries the old block keeps working, and resumes replay the same agent calls either way: the
+journal keys a call by its prompt and options, not by script text); the kit's helpers keep calling each other, so a
+script that replaces only `run` does not change `flow`. Reassigning a global (`call = ...`, as gsd-execute and gsd-plan
+wrap it) affects only that script's run.
+
+Prompt templates (THIN.md item 2): a prompt that is a contract with a verb or a schema is kit text in
+`.agents/workflows/prompts/<name>.md` (a kit part, shipped prompt text for the release check); a project adds its own as
+`.agents/workflows/prompts/project/<name>.md`, named `project/<name>` (never shipped, never overwritten). A kit name
+always reads the kit file. `{{var}}` is replaced in one pass by a string, number or boolean; a missing variable fails
+(flow verb `prompt` exits 1 naming every missing one; `renderPrompt` throws it, which fails the run unless the script
+catches it). The text is read with LF line ends; a leading `<!-- ... -->` (the template's contract notes) and one final
+line break are not part of the prompt. Kit templates: `debug-turn` (gsd-debug).
+
 Rule: a verb is renamed or changes the shape of its input, output or record only with a CHANGELOG line that names the
 old and the new form and a compatibility alias for one release (the old name or shape is still accepted). A new verb
 gets a row here in the same change: `tests/r87/RA-verbs.test.mjs` fails when a verb of the tables (`COMMAND_NAMES` of
 gsd-flow.mjs, `verbHandlers` of gsd/verbs.mjs) has no row. `kit.mjs update`, `ph doctor` and `ph harness lint` scan
-every top-level `.agents/workflows/*.js` that defines the helpers for `flow(["<verb>"...])` and `gsd(["<verb>"...])`
-calls with a literal verb and report a verb the kit does not serve (`gsd/verb-check.mjs`); a computed verb is counted,
+every top-level `.agents/workflows/*.js` for `flow(["<verb>"...])` and `gsd(["<verb>"...])` calls (the engine globals,
+or the old copied helpers; a script whose own `flow`/`gsd` is something else is skipped) with a literal verb and report a verb the kit does not serve (`gsd/verb-check.mjs`); a computed verb is counted,
 not checked.
 
 Output convention of both: one JSON document on the last stdout line; flow verbs exit 0 (ok) or 1 (negative verdict or
@@ -589,6 +609,7 @@ error, `{status: "error", error}`); `ph gsd` verbs exit 0, 1, 66 (nothing matche
 | `plan-mark` | `<phaseDir>`, `{run, plans, stage: planned\|recorded}` | `{status}` | `plan-progress.json` |
 | `plan-outline` | `<phaseDir>`, `{run, inputs, sha}` | `{status}` | `plan-progress.json` |
 | `plan-checker`, `plan-contracts`, `plan-realloc`, `plan-recheck` | `<phaseDir>`, `{run, part, step, ops}` | `{status, log}` | `plan-progress.json` (op log per part) |
+| `prompt` | `<name>` (`<kit name>` or `project/<name>`), `{<var>: string\|number\|boolean}` | `{name, path, text, unused}`; exit 1 on a bad name, a missing template, a missing variable or a bad value | none (reads the template) |
 | `stop-requested` | `[runId]` (default: the current run, `PASEO_HARNESS_WORKFLOW_RUN` / `_RUN_DIR`, which `ph workflow` sets) | `{stop, runId, at?, requestedAt?, reason?}`: whether `ph workflow stop` asked the run to stop at its next wave boundary (`stop: false, runId: null` outside a run) | none (reads `<runDir>/stop.json`) |
 
 ### `ph gsd` verbs

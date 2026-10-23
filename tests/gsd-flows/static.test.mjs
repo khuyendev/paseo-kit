@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { SHIP_DIR } from "../helpers/temp.mjs";
 import { loadScript } from "./host.mjs";
+import { kitHelpers } from "../../ship/.agents/harness/workflow/script.mjs";
 
 const SKILLS = path.join(SHIP_DIR, ".claude", "skills");
 const WF = path.join(SHIP_DIR, ".agents", "workflows");
@@ -19,6 +20,7 @@ const kitFiles = () => [
   ...fs.readdirSync(path.join(WF, "lib")).map((f) => path.join(WF, "lib", f)),
   ...fs.readdirSync(path.join(WF, "lenses")).map((f) => path.join(WF, "lenses", f)),
   ...fs.readdirSync(path.join(WF, "overlays")).map((f) => path.join(WF, "overlays", f)),
+  ...fs.readdirSync(path.join(WF, "prompts")).filter((f) => f.endsWith(".md")).map((f) => path.join(WF, "prompts", f)),
   path.join(WF, "gsd-overlay.md"),
 ];
 // GSDC-50 deny list: no Backlog path and no project, engine or game vocabulary in kit-authored GSD files.
@@ -48,19 +50,19 @@ test("GSDF-02 plan chains execute and verify, --plan-only stops after the handof
   assert.match(loadScript("gsd-execute"), /no handoff files in/);
 });
 
+// THIN.md item 1: the one verb helper is the engine's (kitHelpers in workflow/script.mjs); no script carries a copy.
 test("GSDF-03 scripts read no clock or randomness, share one verb helper and only validated phase dirs", () => {
-  const shared = (t) => /\/\/ ---- shared[\s\S]*?\/\/ ---- end shared helpers ----/.exec(t)?.[0];
-  const first = shared(read(path.join(WF, SCRIPTS[0])));
-  assert.ok(first, "shared helper block present");
+  const helpers = String(kitHelpers);
   for (const f of SCRIPTS) {
     const text = read(path.join(WF, f));
     assert.doesNotMatch(text, /\bDate\b|Math\.random|ScheduleWakeup|setTimeout|\bsleep\(/, f);
-    assert.equal(shared(text), first, `${f} carries the identical shared helper block`);
+    assert.doesNotMatch(text, /\/\/ ---- shared GSD script helpers|^async function run\(/m, `${f} carries no copy of the engine helpers`);
     const meta = parseMeta(text);
     assert.ok(meta.name === f.replace(/\.js$/, "") && meta.description, `${f} meta`);
   }
-  assert.match(first, /PHASE_DIR_RE = \/\^\\\.planning\\\/phases\\\/\\d\+\(\\\.\\d\+\)\?-\[a-z0-9-\]\+\$\//);
-  assert.match(first, /Input digest \(\$\{key\}\): \$\{hash\}/);
+  assert.doesNotMatch(helpers, /\bDate\b|Math\.random/);
+  assert.match(helpers, /PHASE_DIR_RE = \/\^\\\.planning\\\/phases\\\/\\d\+\(\\\.\\d\+\)\?-\[a-z0-9-\]\+\$\//);
+  assert.match(helpers, /Input digest \(\$\{key\}\): \$\{hash\}/);
 });
 
 test("GSDF-04 scripts and skills name only roster agents; a shipped agent dir matches the roster", () => {

@@ -101,7 +101,67 @@ export function parseScript(source) {
   return { meta, body };
 }
 
-// Runs inside the script context: defines the globals on top of the host bridge `__host` (values cross as JSON).
+// The kit helpers of the compositions (THIN.md item 1, kit feedback 87), once the "shared GSD script helpers" block every
+// gsd-*.js copied: verb wrappers, config, the detail agent call, digests, prompt templates. The engine evaluates this
+// function's source inside each script context on top of `shell` and `agent`, so it may use only its parameters and
+// JavaScript built-ins, and its values belong to the script's realm. A script's own definition of a name wins (the body
+// is a function scope); the kit's helpers keep calling each other, not a script's replacement.
+export function kitHelpers({ shell, agent }) {
+  const PH = ".agents/harness/ph.mjs";
+  const FLOW = ".agents/workflows/lib/gsd-flow.mjs";
+  const PHASE_DIR_RE = /^\.planning\/phases\/\d+(\.\d+)?-[a-z0-9-]+$/;
+  const lastJson = (text) => { try { return JSON.parse(String(text).trim().split(/\r?\n/).pop()); } catch { return null; } };
+  // A verb prints its JSON on one last line; shell() keeps only the last 20000 characters by default, which cut the line of
+  // `outline parse` for a 12-plan phase (23 KB) and made the outline look incomplete. Keep the whole output.
+  const VERB_TAIL_CHARS = 4000000;
+  // GSDF-03: the one verb helper; JSON goes on stdin, only validated values reach the argv.
+  async function run(argv, input) {
+    const r = await shell(["node", ...argv], { tailChars: VERB_TAIL_CHARS, ...(input === undefined ? {} : { input: typeof input === "string" ? input : JSON.stringify(input) }) });
+    return { code: r.code, json: lastJson(r.stdout), stderr: r.stderr };
+  }
+  async function loadCfg() {
+    const r = await shell(["node", PH, "config"]);
+    if (r.code !== 0) throw new Error(`ph config failed: ${String(r.stderr).split(/\r?\n/)[0]}`);
+    return JSON.parse(r.stdout);
+  }
+  const gsd = (argv, input) => run([PH, "gsd", ...argv], input);
+  const flow = (argv, input) => run([FLOW, ...argv], input);
+  const phaseNumber = (dir) => /phases\/(\d+(?:\.\d+)?)-/.exec(dir)[1];
+  const digestLine = (key, hash) => `Input digest (${key}): ${hash}`;
+  const policyBlock = (path) => `<research_input_policy>\n${path ? `Approved research: ${path}. Read and use only this report.` : "Approved research: NONE. Do not read or use any RESEARCH.md on disk."}\n</research_input_policy>`;
+  const NEVER_RETRY = /quota|credit|billing|auth|permission|usage limit|rate limit|\b429\b|too many requests|RESOURCE_EXHAUSTED/i;
+  // agent option `detail: true` resolves {result, reason, agentId, worktree, durationS, model, effort};
+  // the global `runId` is the first run's id, kept by --resume (GSDC-30 attempt keys).
+  async function call(prompt, opts) {
+    const d = await agent(prompt, { ...opts, detail: true });
+    return { result: d?.result ?? null, reason: d?.reason ?? null, model: d?.model ?? null, effort: d?.effort ?? null };
+  }
+  const fatal = (reason) => Boolean(reason && NEVER_RETRY.test(reason));
+  const needsOwner = (stage, reason, extra = {}) => ({ status: "needs-owner", stage, reason, ...extra });
+  // The refusal of a held lease names the holder's workflow and run (kit-feedback 1); `what` says what it holds.
+  const leaseText = (r, what = "this code root") => `${r?.holderKind ? `a ${r.holderKind} run` : "another run"} holds ${what} (${r?.holder ?? r?.error ?? "unknown run"})`;
+  async function discussOpen(phaseDir, nn) {
+    const ex = (await flow(["exists", `${phaseDir}/${nn}-DISCUSS-CHECKPOINT.json`, `${phaseDir}/${nn}-CONTEXT.md`])).json?.exists ?? {};
+    if (ex[`${phaseDir}/${nn}-DISCUSS-CHECKPOINT.json`]) return "discussion interrupted (DISCUSS-CHECKPOINT present); finish it with gsd-discuss";
+    if (!ex[`${phaseDir}/${nn}-CONTEXT.md`]) return "no CONTEXT.md; run gsd-discuss first";
+    return null;
+  }
+  async function sha(text) { return (await gsd(["hash"], text ?? "")).json?.hash ?? null; }
+  async function fileSha(path) { const r = await flow(["read", path]); return r.json?.exists ? sha(r.json.text) : null; }
+  // A prompt template (`.agents/workflows/prompts/<name>.md`, or `project/<name>`) filled by the flow verb `prompt`; a
+  // missing variable, an unknown template or a bad value throws with the verb's error.
+  async function renderPrompt(name, vars = {}) {
+    const r = await flow(["prompt", name], vars);
+    if (r.code !== 0 || typeof r.json?.text !== "string") throw new Error(r.json?.error ?? `prompt ${name}: gsd-flow exited ${r.code}`);
+    return r.json.text;
+  }
+  return { PH, FLOW, PHASE_DIR_RE, lastJson, VERB_TAIL_CHARS, run, loadCfg, gsd, flow, phaseNumber, digestLine, policyBlock, NEVER_RETRY, call, fatal, needsOwner, leaseText, discussOpen, sha, fileSha, renderPrompt };
+}
+
+export const KIT_HELPER_NAMES = Object.freeze(Object.keys(kitHelpers({ shell: null, agent: null })));
+
+// Runs inside the script context: defines the globals on top of the host bridge `__host` (values cross as JSON), then
+// the kit helpers on top of `shell` and `agent` (writable: a script may wrap `call`).
 const PRELUDE = String.raw`
 "use strict";
 const __h = globalThis.__host;
@@ -169,7 +229,7 @@ globalThis.workflow = async (ref, a) => {
   return r === undefined ? undefined : JSON.parse(r);
 };
 globalThis.shell = async (cmd, opts) => JSON.parse(await __h.shell(JSON.stringify(cmd), opts === undefined ? undefined : JSON.stringify(opts)));
-`;
+` + `Object.assign(globalThis, (${kitHelpers})({ shell: globalThis.shell, agent: globalThis.agent }));\n`;
 
 // Run a parsed body in a fresh context; `host` is the bridge the prelude wraps. Resolves the JSON-cloned return value.
 export async function runBody(body, scriptPath, host) {

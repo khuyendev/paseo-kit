@@ -17,6 +17,7 @@ import * as validation from "./flow-validation.mjs";
 import * as checks from "./flow-checks.mjs";
 import * as planState from "./flow-plan-state.mjs";
 import * as state from "./flow-state.mjs";
+import { renderPrompt } from "./flow-prompt.mjs";
 
 // execute-progress.json has one writer, the state-* verbs (kit feedback 83 F1, 87); a raw write would skip their contracts.
 const notState = (p) => {
@@ -99,13 +100,15 @@ const COMMANDS = {
   "state-answer": (root, [phaseDir], input) => state.stateAnswer(root, phaseDir, JSON.parse(input)),
   "state-smoke": (root, [phaseDir], input) => state.stateSmoke(root, phaseDir, JSON.parse(input)),
   "stop-requested": (root, args, _input, env) => stopRequested(root, args, env),
+  // Prompt templates (THIN.md item 2): kit `.agents/workflows/prompts/<name>.md` or project `project/<name>`.
+  prompt: (root, [name], input) => renderPrompt(root, name, input ? JSON.parse(input) : {}),
 };
 
 export const COMMAND_NAMES = Object.keys(COMMANDS);
 
 // Verbs whose handler reads JSON or text from stdin; every other verb never touches stdin, so a person running
 // `gsd-flow.mjs remove <path>` from a shell whose stdin is an open pipe is not left waiting (G088).
-const STDIN = new Set(["write", "append", "json-push", "summary-heal", "resume-gate", "transfer", "discard-worktree", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "evidence-check", "check-weakening", "review-scope", "review-record", "prereview-record", "changed-lines", "forensics-path", "plan-run", "plan-mark", "plan-end", "plan-outline", "plan-checker", "plan-contracts", "plan-realloc", "plan-recheck", "state-plan", "state-shared", "state-request", "state-integration", "state-answer", "state-smoke"]);
+const STDIN = new Set(["write", "append", "json-push", "summary-heal", "resume-gate", "transfer", "discard-worktree", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "evidence-check", "check-weakening", "review-scope", "review-record", "prereview-record", "changed-lines", "forensics-path", "plan-run", "plan-mark", "plan-end", "plan-outline", "plan-checker", "plan-contracts", "plan-realloc", "plan-recheck", "state-plan", "state-shared", "state-request", "state-integration", "state-answer", "state-smoke", "prompt"]);
 export const readsStdin = (cmd) => STDIN.has(cmd);
 
 export async function main(argv, { root = configRoot(), input = "", out = (l) => process.stdout.write(`${l}\n`), env = process.env } = {}) {

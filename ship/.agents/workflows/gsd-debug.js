@@ -4,50 +4,6 @@ export const meta = {
   phases: [{ title: "Session" }, { title: "Debug" }, { title: "Close" }],
 };
 
-// ---- shared GSD script helpers (scripts cannot import; keep identical across gsd-*.js) ----
-const PH = ".agents/harness/ph.mjs";
-const FLOW = ".agents/workflows/lib/gsd-flow.mjs";
-const PHASE_DIR_RE = /^\.planning\/phases\/\d+(\.\d+)?-[a-z0-9-]+$/;
-const lastJson = (text) => { try { return JSON.parse(String(text).trim().split(/\r?\n/).pop()); } catch { return null; } };
-// A verb prints its JSON on one last line; shell() keeps only the last 20000 characters by default, which cut the line of
-// `outline parse` for a 12-plan phase (23 KB) and made the outline look incomplete. Keep the whole output.
-const VERB_TAIL_CHARS = 4000000;
-// GSDF-03: the one verb helper; JSON goes on stdin, only validated values reach the argv.
-async function run(argv, input) {
-  const r = await shell(["node", ...argv], { tailChars: VERB_TAIL_CHARS, ...(input === undefined ? {} : { input: typeof input === "string" ? input : JSON.stringify(input) }) });
-  return { code: r.code, json: lastJson(r.stdout), stderr: r.stderr };
-}
-async function loadCfg() {
-  const r = await shell(["node", PH, "config"]);
-  if (r.code !== 0) throw new Error(`ph config failed: ${String(r.stderr).split(/\r?\n/)[0]}`);
-  return JSON.parse(r.stdout);
-}
-const gsd = (argv, input) => run([PH, "gsd", ...argv], input);
-const flow = (argv, input) => run([FLOW, ...argv], input);
-const phaseNumber = (dir) => /phases\/(\d+(?:\.\d+)?)-/.exec(dir)[1];
-const digestLine = (key, hash) => `Input digest (${key}): ${hash}`;
-const policyBlock = (path) => `<research_input_policy>\n${path ? `Approved research: ${path}. Read and use only this report.` : "Approved research: NONE. Do not read or use any RESEARCH.md on disk."}\n</research_input_policy>`;
-const NEVER_RETRY = /quota|credit|billing|auth|permission|usage limit|rate limit|\b429\b|too many requests|RESOURCE_EXHAUSTED/i;
-// agent option `detail: true` resolves {result, reason, agentId, worktree, durationS, model, effort};
-// the global `runId` is the first run's id, kept by --resume (GSDC-30 attempt keys).
-async function call(prompt, opts) {
-  const d = await agent(prompt, { ...opts, detail: true });
-  return { result: d?.result ?? null, reason: d?.reason ?? null, model: d?.model ?? null, effort: d?.effort ?? null };
-}
-const fatal = (reason) => Boolean(reason && NEVER_RETRY.test(reason));
-const needsOwner = (stage, reason, extra = {}) => ({ status: "needs-owner", stage, reason, ...extra });
-// The refusal of a held lease names the holder's workflow and run (kit-feedback 1); `what` says what it holds.
-const leaseText = (r, what = "this code root") => `${r?.holderKind ? `a ${r.holderKind} run` : "another run"} holds ${what} (${r?.holder ?? r?.error ?? "unknown run"})`;
-async function discussOpen(phaseDir, nn) {
-  const ex = (await flow(["exists", `${phaseDir}/${nn}-DISCUSS-CHECKPOINT.json`, `${phaseDir}/${nn}-CONTEXT.md`])).json?.exists ?? {};
-  if (ex[`${phaseDir}/${nn}-DISCUSS-CHECKPOINT.json`]) return "discussion interrupted (DISCUSS-CHECKPOINT present); finish it with gsd-discuss";
-  if (!ex[`${phaseDir}/${nn}-CONTEXT.md`]) return "no CONTEXT.md; run gsd-discuss first";
-  return null;
-}
-async function sha(text) { return (await gsd(["hash"], text ?? "")).json?.hash ?? null; }
-async function fileSha(path) { const r = await flow(["read", path]); return r.json?.exists ? sha(r.json.text) : null; }
-// ---- end shared helpers ----
-
 const TURN_SCHEMA = {
   type: "object",
   properties: {
@@ -120,21 +76,8 @@ async function debugSession() {
   for (;;) {
     const now = left((await status()).json?.frontmatter ?? fm);
     if (now.turns <= 0 || now.minutes <= 0) return { status: "needs-owner", type: "budget-exhausted", reason: `debug budget used: ${now.used.turns} turns, ${now.used.minutes} min`, options: [EXTEND, "close as diagnosed", "stop"] };
-    const prompt = [
-      `Debug session file: ${st.json.path}. Follow the session-manager contract of your role: update the session file before acting.`,
-      "<runtime_adapter>",
-      `Goal: ${fm.goal ?? "find_and_fix"}`,
-      "Code root: the current working directory.",
-      `Edit scope (owns): ${JSON.stringify(fm.owns ?? [])}; never a shared file; remove instrumentation before closing.`,
-      // The gate reads owns, so the session file is granted here instead of being added to owns.
-      `Session file: ${st.json.path}, the one file you may write outside owns (Current Focus, Evidence, Eliminated, Resolution and frontmatter; never Symptoms or Checkpoints; product edits stay inside owns).`,
-      `Budget left: ${now.charged} turns, ${Math.floor(now.minutes)} minutes.`,
-      "Never ask the owner: return a checkpoint {id, type, question, options} instead. Never commit, stage or stash.",
-      "A completed fix returns status checkpoint type human-verify with the verify obligation {kind, command, target} that reproduces the failure.",
-      "</runtime_adapter>",
-      next,
-      "Return JSON {status: continue|checkpoint|resolved|diagnosed, checkpoint?, verify?, summary}.",
-    ].join("\n");
+    // The gate reads owns, so the template grants the session file instead of adding it to owns.
+    const prompt = await renderPrompt("debug-turn", { sessionPath: st.json.path, goal: String(fm.goal ?? "find_and_fix"), owns: JSON.stringify(fm.owns ?? []), turns: now.charged, minutes: Math.floor(now.minutes), next });
     // The turn is reserved before the debugger starts, and the session stops when either budget write fails: no turn runs
     // on a budget that was not recorded.
     const reserved = await gsd(["debug", "budget", slug], { reserve: 1 });

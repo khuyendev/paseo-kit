@@ -8,11 +8,11 @@ import { pathToFileURL } from "node:url";
 import { SHIP_DIR } from "../helpers/temp.mjs";
 import { createWorktree } from "../../ship/.agents/harness/runtime/worktrees.mjs";
 import { AGENT_OPTIONS } from "../../ship/.agents/harness/workflow/engine.mjs";
+import { kitHelpers } from "../../ship/.agents/harness/workflow/script.mjs";
 
 const WORKFLOWS = path.join(SHIP_DIR, ".agents", "workflows");
 const flowMod = await import(pathToFileURL(path.join(WORKFLOWS, "lib", "gsd-flow.mjs")).href);
 const configMod = await import(pathToFileURL(path.join(SHIP_DIR, ".agents", "harness", "config.mjs")).href);
-const AsyncFunction = (async () => {}).constructor;
 // FLOW-04 options plus `detail` and `timeoutS` (as the engine).
 const AGENT_OPTS = new Set(AGENT_OPTIONS);
 const GROUPS = new Set(["research", "revisions", "attempt", "outline", "check", "verify", "verification", "state", "roadmap", "phase", "debug", "requirements", "init", "contracts"]);
@@ -149,8 +149,11 @@ export async function runScript(name, opts) {
       },
       console: { log: (m) => logs.push(`log ${m}`), warn: (m) => logs.push(`log ${m}`), error: (m) => logs.push(`log ${m}`), info: (m) => logs.push(`log ${m}`) },
       Date: g.Date, Math: g.Math,
+      // As the engine: the kit helpers are globals (THIN.md item 1), built on this host's shell and agent.
+      ...kitHelpers({ shell, agent }),
     };
-    const fn = new AsyncFunction(...Object.keys(globals), body);
+    // As the engine: the body is a function scope inside the globals, so a script's own helper definitions win.
+    const fn = new Function(...Object.keys(globals), `return (async () => {\n${body}\n})();`);
     return fn(...Object.values(globals));
   }
   const result = await evaluate(name, opts.args);

@@ -41,7 +41,12 @@ workflow composition: the `.agents/workflows/gsd-*.js` scripts, that is the step
 which verbs run with which policy. The kit ships the default composition; the project changes its copy only between
 runs, through harness-evolve, never to get past the stop a run is in. A script cannot import modules, so it reaches
 the kit only through the verbs; `ph harness lint` fails a verb the kit does not serve. `kit.mjs update` keeps an
-edited composition (also with `--force`) and `kit.mjs pull` offers it back as the kit default.
+edited composition (also with `--force`) and `kit.mjs pull` offers it back as the kit default. The engine provides the
+helpers a composition needs as globals (`flow`, `gsd`, `call`, `loadCfg`, `sha`, `fileSha`, `renderPrompt`, ...; the
+list is in the kit's docs/INTERFACES.md section 13); a script does not copy them. Prompt texts that are a contract with
+a verb or a schema are kit templates (`.agents/workflows/prompts/<name>.md`); the project's own prompts go to
+`.agents/workflows/prompts/project/<name>.md` and are rendered with `renderPrompt("project/<name>", {vars})`, which fails
+on a missing variable.
 
 ## 2. When to run
 

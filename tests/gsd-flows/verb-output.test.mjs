@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { SHIP_DIR } from "../helpers/temp.mjs";
 
 const { runShell } = await import(pathToFileURL(path.join(SHIP_DIR, ".agents/harness/workflow/shell.mjs")).href);
+const { kitHelpers } = await import(pathToFileURL(path.join(SHIP_DIR, ".agents/harness/workflow/script.mjs")).href);
 const NODE = process.execPath;
 const WORKFLOWS = path.join(SHIP_DIR, ".agents/workflows");
 const BIG = "node -e \"console.log(JSON.stringify({complete:true,pad:'x'.repeat(30000)}))\"";
@@ -23,6 +24,10 @@ test("GSDF-03 a larger tailChars keeps the whole verb line, as the gsd-* verb he
 });
 
 test("GSDF-03 every gsd-* workflow script passes a tailChars of at least 1,000,000 characters to its verb helper", () => {
+  // THIN.md item 1: the verb helper is the engine's global (kitHelpers); a script with its own copy is checked as before.
+  const engine = String(kitHelpers);
+  assert.ok(Number(/const VERB_TAIL_CHARS = (\d[\d_]*);/.exec(engine)?.[1].replace(/_/g, "")) >= 1000000, "engine VERB_TAIL_CHARS missing or too small");
+  assert.match(engine, /shell\(\["node", \.\.\.argv\], \{ tailChars: VERB_TAIL_CHARS,/);
   const scripts = fs.readdirSync(WORKFLOWS).filter((f) => /^gsd-.*\.js$/.test(f));
   assert.ok(scripts.length >= 9);
   for (const f of scripts) {

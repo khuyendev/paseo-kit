@@ -57,7 +57,8 @@ test("RB B3 every needs-owner stop of gsd-execute names its answer verb", () => 
   assert.ok(verbs.length >= 6);
   for (const v of verbs) assert.ok(VERBS.includes(v), v);
   // Every needs-owner result is made by owner(): no other construction of the status.
-  assert.deepEqual([...SCRIPT.matchAll(/"needs-owner"/g)].length, 4, "owner() (its default and its Checks stop of item 87 C1), the shared needsOwner helper and the graph drain check");
+  // The needsOwner helper is the engine's global since THIN stage 1, no longer a copy in the script.
+  assert.deepEqual([...SCRIPT.matchAll(/"needs-owner"/g)].length, 3, "owner() (its default and its Checks stop of item 87 C1) and the graph drain check");
 });
 
 const exec = (w, overrides = {}) => runScript("gsd-execute", { root: w.root, args: { phaseDir: PHASE_DIR }, gsd: w.gsd, agent: executor(w, overrides) });
