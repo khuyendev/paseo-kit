@@ -5,16 +5,19 @@ import path from "node:path";
 import { GSD_ROLES, OVERLAY_REL, loadConfigLenient } from "../config.mjs";
 import { readJson, readText } from "../lib/io.mjs";
 import { errText } from "../lib/cli.mjs";
-import { toSlash } from "../lib/paths.mjs";
+import { isInside, toSlash } from "../lib/paths.mjs";
 import { runGit } from "../runtime/worktrees.mjs";
 import { setupProblems } from "../runtime/worktree-setup.mjs";
 import { isBuiltinRunnerKind } from "./contract.mjs";
 import { isWorkflowScript, lintAgentFile, lintSkillFolder, lintTextFile, walkFiles } from "./lint-assets.mjs";
 import { lintWorkflowScript } from "./lint-scripts.mjs";
-import { EVAL_RECORD_KINDS, HISTORY_REL, lintHistory, scopePaths, triggerRecordRel, validateEvalRecord, validateTriggerRecord } from "./records.mjs";
+import { EVAL_RECORD_KINDS, HISTORY_REL, badScopePath, lintHistory, scopePaths, triggerRecordRel, validateEvalRecord, validateTriggerRecord } from "./records.mjs";
 
 const SKILLS = ".claude/skills";
 const AGENTS = ".agents/agents";
+
+// A path the project names (scope, adapter asset, --script reference) is walked or read only inside the root.
+const inRoot = (root, rel) => isInside(path.resolve(root, rel), root);
 
 const SCRIPT_OPERAND = /^(?:\.\/)?[\w@.-]+(?:\/[\w@.-]+)*\.(?:[cm]?js|ts|py|sh|ps1|bat|cmd|rb|pl)$/i;
 
@@ -138,7 +141,7 @@ const refTarget = (r) => (r.kind === "agent" ? `${AGENTS}/${r.name}.md` : r.kind
 
 // Workflow scripts the linted files invoke (`--script`) that exist: mandatory and checked as workflow scripts.
 function invokedScripts(root, refs) {
-  return [...new Set(refs.filter((r) => r.kind === "script").map(refTarget))].filter((rel) => fs.existsSync(path.join(root, rel)) && fs.statSync(path.join(root, rel)).isFile());
+  return [...new Set(refs.filter((r) => r.kind === "script").map(refTarget))].filter((rel) => inRoot(root, rel) && fs.existsSync(path.join(root, rel)) && fs.statSync(path.join(root, rel)).isFile());
 }
 
 // Structural checks for invoked scripts the first pass linted as plain files (no meta, outside .agents/workflows/).
@@ -173,13 +176,14 @@ export function lintProject(root, { all = false } = {}) {
   if (fs.existsSync(historyFile)) {
     const { rows, problems } = lintHistory(readText(historyFile));
     findings.push(...problems.map((p) => ({ level: "fail", file: HISTORY_REL, line: p.line, msg: p.msg })));
-    if (rows.length) scope = scopePaths(rows.at(-1).scope).map((p) => toSlash(p).replace(/^\.\//, "").replace(/\/$/, ""));
+    // An invalid scope entry is reported above and never used.
+    if (rows.length) scope = scopePaths(rows.at(-1).scope).filter((p) => !badScopePath(p)).map((p) => toSlash(p).replace(/^\.\//, "").replace(/\/$/, ""));
   }
   for (const rel of scope.filter((p) => !fs.existsSync(path.join(root, p)))) {
     findings.push({ level: "warn", file: HISTORY_REL, line: null, msg: `scope path ${rel} does not exist` });
   }
   findings.push(...lintAdapter(root, cfg));
-  const named = [...scope, ...adapterAssets(cfg)].filter((p) => fs.existsSync(path.join(root, p)) && p !== OVERLAY_REL);
+  const named = [...scope, ...adapterAssets(cfg)].filter((p) => inRoot(root, p) && fs.existsSync(path.join(root, p)) && p !== OVERLAY_REL);
   const scoped = new Set(named.flatMap((p) => expand(root, p)));
   const groups = classify([...scoped]);
   const main = lintAssets(root, cfg, groups);

@@ -14,7 +14,7 @@ const validDate = (s) => ISO.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00Z
 
 export const scopePaths = (scope) => String(scope).split(",").map((s) => s.trim().replace(/^`|`$/g, "")).filter(Boolean);
 
-function badScopePath(p) {
+export function badScopePath(p) {
   if (path.isAbsolute(p) || /^[A-Za-z]:/.test(p) || p.startsWith("/")) return "is absolute";
   if (p.split(/[\\/]/).includes("..")) return "leaves the repository";
   return null;
