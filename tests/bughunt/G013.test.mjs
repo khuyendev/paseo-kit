@@ -9,7 +9,8 @@ const plan = (w, args = {}, overrides = {}) => runScript("gsd-plan", { root: w.r
 const labels = (r) => r.calls.map((c) => c.opts.label);
 
 // The checker reports script[id][n] blockers for the n-th time it is asked about plan id; a plan it is not asked about
-// does not use up its script.
+// does not use up its script. Its issues are the whole current state, so it resolves every blocker carried from an
+// earlier iteration (F44: a carried blocker leaves the count only when a checker lists its id in `resolved`).
 function scriptedChecker(script) {
   const seen = {};
   return (prompt) => {
@@ -20,7 +21,8 @@ function scriptedChecker(script) {
       seen[id] = n + 1;
       for (let k = 0; k < (counts[n] ?? 0); k++) issues.push({ plan: id, severity: "blocker", description: `${id} blocker ${n}.${k}` });
     }
-    return { issues };
+    const resolved = [...prompt.matchAll(/"id":"(open-\d+)"/g)].map((m) => ({ id: m[1], evidence: "re-judged in this iteration" }));
+    return { issues, resolved };
   };
 }
 

@@ -238,8 +238,8 @@ Use `false` for Fast off; do not replace the model with a differently named `*-f
 Fast is independent of bypass permissions and only works for provider/model combinations that advertise it.
 Changing tiers affects subsequently created agents, including the next `agent()` call of a running workflow (the
 overlay is read again at each call; an overlay that no longer loads keeps the last good config and logs it). Agents
-already running keep their model, and a cached resume may create no agent at all. Leave the kit's shipped tiers
-unconfigured until the project or owner chooses their models.
+already running keep their model, and a cached resume may create no agent at all. Leave the kit's
+shipped tiers unconfigured until the project or owner chooses their models.
 
 ## 8. Lint
 
