@@ -139,11 +139,23 @@ function detachFailed(ctx, p, e) {
   return 2;
 }
 
+// The child gets the same arguments without the --detach flag; the token after a string option is its value and stays.
+function childArgvOf(argv) {
+  const out = [];
+  for (let i = 0; i < argv.length; i++) {
+    const key = argv[i].startsWith("--") ? argv[i].slice(2) : null;
+    if (key === "detach") continue;
+    out.push(argv[i]);
+    if (WORKFLOW_OPTIONS[key] === "string" && i + 1 < argv.length) out.push(argv[++i]);
+  }
+  return out;
+}
+
 async function detach(ctx, p, deps) {
   const logFile = path.join(p.runDir, RUN_FILES.log);
   writeRunStart(p, ctx, process.pid);
   const fd = fs.openSync(logFile, "a");
-  const childArgs = ctx.argv.filter((a) => a !== "--detach");
+  const childArgs = childArgvOf(ctx.argv);
   if (ctx.opts["run-id"] === undefined) childArgs.push("--run-id", p.runId);
   let child;
   try {
