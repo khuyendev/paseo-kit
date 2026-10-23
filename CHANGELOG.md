@@ -23,7 +23,10 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
   transfer with a log line; executors delete their scratch files. `ph gsd phase uat-passed` follows upstream GSD: a
   verified gap resolution and a skipped test with a reason no longer block (GSDC-16 wording updated). Kept as GSD does
   (owner 2026-10-23): research reuse does not hash STATE.md (G051), standalone plan review adds no deterministic size
-  rule (G042), every UAT issue blocks (G099); kept as is: the skill-usage log is not rotated (G171). Prompt text: the
+  rule (G042), every UAT issue blocks (G099); kept as is: the skill-usage log is not rotated (G171). G144 (owner chose
+  option 1): an `agent()` call without `timeoutS` under an armed watchdog waits in `wait_timeout_s` slices until the
+  watchdog stop (`agent_stop_s` of model time), so a long turn is no longer nulled at 3600 s wall; unarmed waits and an
+  explicit `timeoutS` keep the cap (paseo-runtime.md, INTERFACES.md). Prompt text: the
   gsd-plan-checker overlay (blocker-only gates, scaled file line, task limit, research questions answered in a plan),
   gsd-planner overlay (dependency lines), skills gsd-plan, gsd-quick, gsd-execute, gsd-debug, gsd-discuss, gsd-verify,
   gsd-research, gsd-map-codebase, ph, harness references, INTERFACES.md (role catalog 4.2, worktree_setup,
