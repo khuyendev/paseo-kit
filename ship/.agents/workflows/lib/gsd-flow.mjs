@@ -12,6 +12,7 @@ import * as execute from "./flow-execute.mjs";
 import * as review from "./flow-review.mjs";
 import * as gate from "./flow-gate.mjs";
 import * as validation from "./flow-validation.mjs";
+import * as checks from "./flow-checks.mjs";
 
 const COMMANDS = {
   exists: (root, args) => files.exists(root, args),
@@ -49,6 +50,7 @@ const COMMANDS = {
   digest: (root, _args, input) => gate.digest(root, JSON.parse(input)),
   gate: (root, [phaseDir], input) => gate.gate(root, phaseDir, JSON.parse(input)),
   "evidence-check": (root, [p], input) => gate.evidenceCheck(root, p, input ? JSON.parse(input).plans ?? [] : []),
+  "check-weakening": (root, [phaseDir], input) => checks.checkWeakening(root, phaseDir, input ? JSON.parse(input) : {}),
   "spot-check": (root, [summary]) => execute.spotCheck(root, summary),
   "review-scope": (root, [phaseDir], input) => review.reviewScope(root, phaseDir, JSON.parse(input)),
   "review-record": (root, [phaseDir], input) => review.writeRecord(root, phaseDir, JSON.parse(input)),
@@ -64,7 +66,7 @@ export const COMMAND_NAMES = Object.keys(COMMANDS);
 
 // Verbs whose handler reads JSON or text from stdin; every other verb never touches stdin, so a person running
 // `gsd-flow.mjs remove <path>` from a shell whose stdin is an open pipe is not left waiting (G088).
-const STDIN = new Set(["write", "append", "json-push", "summary-heal", "resume-gate", "transfer", "discard-worktree", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "evidence-check", "review-scope", "review-record", "prereview-record", "changed-lines", "forensics-path"]);
+const STDIN = new Set(["write", "append", "json-push", "summary-heal", "resume-gate", "transfer", "discard-worktree", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "evidence-check", "check-weakening", "review-scope", "review-record", "prereview-record", "changed-lines", "forensics-path"]);
 export const readsStdin = (cmd) => STDIN.has(cmd);
 
 export async function main(argv, { root = configRoot(), input = "", out = (l) => process.stdout.write(`${l}\n`) } = {}) {

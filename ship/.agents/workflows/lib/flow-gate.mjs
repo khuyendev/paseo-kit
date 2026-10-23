@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../../harness/config.mjs";
+import { errText } from "../../harness/lib/cli.mjs";
 import { readJsonIf, writeJsonAtomic, writeTextAtomic } from "../../harness/lib/io.mjs";
 import { isInside, resolveInside, safeName, toSlash } from "../../harness/lib/paths.mjs";
 import { runArgv } from "../../harness/lib/proc.mjs";
@@ -14,6 +15,7 @@ import { sha256 } from "../../harness/lib/hash.mjs";
 import { producedCheck } from "../../harness/gsd/contracts.mjs";
 import { gitLines, head } from "./flow-git.mjs";
 import { contentHash, owned, ownsPrefixes, ownsScope, specificOwners } from "./flow-owns.mjs";
+import { checksStop, checkWeakening } from "./flow-checks.mjs";
 
 const TIMEOUT_CODE = 124;
 const EXCERPT_LINES = 40;
@@ -184,6 +186,32 @@ function noRun(root, logDir, name, outcome, text, extra = {}) {
   return { name, argv: [], outcome, exitCode: null, executed: { ...NOT_RUN }, log: toSlash(path.relative(root, log)), text, ...extra };
 }
 
+// Kit feedback 87 C1: every gate runs check-weakening over the files changed since HEAD (a composition passes no base and no file
+// list, so it cannot narrow it). A weakening no plan declared and the owner did not allow is the failed step `checks`, whose
+// failure names the answer (stage Checks, `ph gsd allow`) and goes to no fixer; a check that cannot run fails closed. The
+// evidence holds the step whenever the check had something to judge (a changed check file, a weakening, an allow, an error).
+export const CHECKS_STEP = "checks";
+function checksStep(root, phaseDir, logDir, notes) {
+  let r;
+  try {
+    r = checkWeakening(root, phaseDir);
+  } catch (e) {
+    r = { status: "error", error: errText(e), weakened: [], allowed: [], notes: [] };
+  }
+  for (const n of r.notes) notes.push(`checks: ${n}`);
+  for (const a of r.allowed) notes.push(`checks: ${a.path} ${a.kind} allowed by ${a.by === "plan" ? `plan ${a.plan}` : `owner answer ${a.answer}`}: ${a.reason}`);
+  const summary = { status: r.status, weakened: r.weakened, allowed: r.allowed, ...(r.error ? { error: r.error } : {}) };
+  if (r.status === "off" || (r.status === "ok" && !r.compared.length && !r.allowed.length)) return { summary };
+  const stop = r.weakened.length ? checksStop(phaseDir, r.weakened) : null;
+  const text = r.status === "error" ? `check-weakening could not run: ${r.error}`
+    : stop ? [stop.reason, "Answers:", ...stop.options.map((o) => `- ${o}`)].join("\n")
+    : `${r.compared.length} changed test or gate file(s) compared with ${r.base ? r.base.slice(0, 7) : "no base"}; no unallowed weakening${r.allowed.length ? ` (${r.allowed.length} allowed)` : ""}`;
+  const log = path.join(logDir, `${CHECKS_STEP}.log`);
+  writeTextAtomic(log, `${text}\n`);
+  const outcome = r.status === "error" ? "unavailable" : stop ? "failed" : "passed";
+  return { summary, stop, step: { name: CHECKS_STEP, argv: [], outcome, exitCode: outcome === "passed" ? 0 : 1, executed: { ...NOT_RUN }, log: toSlash(path.relative(root, log)), text, plan: null, task: null, kind: CHECKS_STEP } };
+}
+
 // input: {waveId, plans: [{id, owns, verify: [{task, kind, command, target}]}], testArgv?, skipObligations?, suite?, context?}
 // kit-feedback 66 (gsd.execute_schedule graph): `suite: false` runs only the plans' obligations (the adapter gates, the build
 // and the tests are the repo-wide suite, run once before a commit); `context` [{id, owns}] are other open plans of the run:
@@ -256,6 +284,8 @@ export async function gate(root, phaseDir, input) {
       steps.push(s);
     }
   }, { log: (m) => notes.push(m) });
+  const checks = checksStep(root, phaseDir, logDir, notes);
+  if (checks.step) steps.push(checks.step);
   const after = inputsOf(root, scopes);
   const moved = Object.keys({ ...inputs.files, ...after.files }).filter((f) => inputs.files[f] !== after.files[f]);
   if (after.head !== inputs.head) moved.unshift("HEAD");
@@ -264,11 +294,13 @@ export async function gate(root, phaseDir, input) {
   const evidence = { v: 1, waveId: input.waveId, at: new Date().toISOString(), inputs, ...(input.suite === false ? { suite: false } : {}), steps: steps.map(({ text, ...s }) => s) };
   writeJsonAtomic(evidenceFile, evidence);
   const visible = visibleFiles(root);
-  const failures = steps.filter((s) => s.outcome !== "passed").map((s) => ({ step: s.name, plan: s.plan ?? null, outcome: s.outcome, excerpt: excerpt(s.text), log: s.log, files: mentionedFiles(root, s.text, visible) }));
-  const attribution = await attribute(root, cfg, [...(input.plans ?? []), ...(input.context ?? []).map(({ id, owns }) => ({ id, owns: owns ?? [] }))], failures, prefixes);
+  const failures = steps.filter((s) => s.outcome !== "passed").map((s) => (s.kind === CHECKS_STEP
+    ? { step: s.name, plan: null, outcome: s.outcome, excerpt: s.text, log: s.log, files: [], needsOwner: checks.stop ?? { stage: "Checks", reason: s.text, options: ["fix the cause (git, the harness config), then rerun with the same args"] } }
+    : { step: s.name, plan: s.plan ?? null, outcome: s.outcome, excerpt: excerpt(s.text), log: s.log, files: mentionedFiles(root, s.text, visible) }));
+  const attribution = await attribute(root, cfg, [...(input.plans ?? []), ...(input.context ?? []).map(({ id, owns }) => ({ id, owns: owns ?? [] }))], failures.filter((f) => f.step !== CHECKS_STEP), prefixes);
   if (attribution.attributionError) notes.push(`attribution hook failed: ${attribution.attributionError}; its failures stay unplaced`);
   const timedOut = steps.filter((s) => s.outcome === "timeout").map((s) => `${s.name} timed out after its limit (exit ${TIMEOUT_CODE})`);
-  return { green: failures.length === 0, evidence: toSlash(path.relative(root, evidenceFile)), notes, timedOut, failures, failureCount: failures.length, ...attribution };
+  return { green: failures.length === 0, evidence: toSlash(path.relative(root, evidenceFile)), notes, timedOut, failures, failureCount: failures.length, checks: checks.summary, ...attribution };
 }
 
 async function attribute(root, cfg, plans, failures, prefixes) {

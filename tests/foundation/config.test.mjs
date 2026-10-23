@@ -284,6 +284,7 @@ const GOLDEN = {
     command_probes: [],
     attribution: null,
     worktree_setup: { copy: [], link: [] },
+    checks: { enabled: true, paths: null, test_decl: null, assert: null, skip: null },
   },
   gsd: {
     roles: {},

@@ -9,6 +9,7 @@ import { isInside, resolveInside, samePath, toSlash } from "../../harness/lib/pa
 import { git, gitLines, head, status } from "./flow-git.mjs";
 import { contentHash, keyFiles, owned, ownsPath, ownsPrefixes, specificOwners } from "./flow-owns.mjs";
 import { overlaps } from "../../harness/gsd/adapter-hooks.mjs";
+import { gateConfigHash } from "../../harness/gsd/allow.mjs";
 import { matchesGlob } from "../../harness/adapter/contract.mjs";
 import { readWorktreeSeed } from "../../harness/runtime/worktree-seed.mjs";
 import { leftoverWorktrees, retireWorktree, runGit } from "../../harness/runtime/worktrees.mjs";
@@ -87,12 +88,13 @@ function snapshot(root) {
   };
 }
 
-// Kept for the whole phase: a resumed run compares against the first run's baseline (GSDF-38).
+// Kept for the whole phase: a resumed run compares against the first run's baseline (GSDF-38). It also records the hash of the
+// gate configuration before any agent of the phase runs; the gate's check-weakening compares with it (kit feedback 87 C1).
 export function recordBaseline(root, phaseDir) {
   const file = baselineFile(root, phaseDir);
   const existing = readJsonIf(file, null);
   if (existing) return { kept: true, baseline: existing };
-  const base = snapshot(root);
+  const base = { ...snapshot(root), gateConfig: gateConfigHash(loadConfig(root)) };
   writeJsonAtomic(file, base);
   return { kept: false, baseline: base };
 }

@@ -173,6 +173,16 @@ export function sharedDependencies(body) {
   });
 }
 
+// Kit feedback 87 C1: a `<check_changes>` block declares up front, one line per file, a test or gate file whose checks the plan
+// weakens on purpose (a deleted test, fewer assertions, an added skip): `<path>: <reason>` (a path holding spaces in backticks).
+// The gate's check-weakening accepts exactly these paths; a line that does not parse has path null.
+export function checkChanges(body) {
+  return [...String(body ?? "").matchAll(/<check_changes>([\s\S]*?)<\/check_changes>/g)].flatMap((m) => m[1].split(/\r?\n/).filter((l) => l.trim()).map((line) => {
+    const x = /^\s*(?:[-*]\s+)?(?:`([^`]+)`|([^\s:`]+))\s*:\s*(.*?)\s*$/.exec(line);
+    return x ? { path: (x[1] ?? x[2]).trim().replace(/\\/g, "/").replace(/^\.\//, ""), reason: x[3], line: line.trim() } : { path: null, reason: "", line: line.trim() };
+  }));
+}
+
 // A plan file read with its frontmatter, tasks and declared write sets.
 export function readPlan(phase, id) {
   const file = planPath(phase, id);
@@ -195,6 +205,7 @@ export function readPlan(phase, id) {
     owns: asArray(fm.owns).map(String),
     requirements: asArray(fm.requirements).map(String),
     sharedChanges: sharedChanges(parsed.body),
+    checkChanges: checkChanges(parsed.body),
   };
 }
 

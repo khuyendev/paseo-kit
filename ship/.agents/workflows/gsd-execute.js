@@ -135,7 +135,11 @@ const treeReport = () => {
   return discarded.length || left.length ? { discarded, kept: left } : null;
 };
 const result = (status, extra = {}) => ({ status, phaseDir, mode: execMode, isolation: g.isolation, waves: waveResults, sharedChanges, ...(Object.keys(pendingRequests).length ? { requests: pendingRequests } : {}), ...(skipped.length ? { skipped } : {}), ...(treeReport() ? { worktrees: treeReport() } : {}), ...(handEdits ? { handEdits } : {}), ...(reported.outsideRoots.size ? { outsideRoots: [...reported.outsideRoots] } : {}), ...(reported.eolOnly.size ? { eolOnly: [...reported.eolOnly] } : {}), ...(pendingTasks.length ? { pendingRequestTasks: pendingTasks } : {}), ...(kitNotes.length ? { kitNotes } : {}), ...(ownerAnswers.length ? { ownerAnswers } : {}), ...(requestsClosed.length ? { requestsClosed } : {}), events, ...extra });
-const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reason, ...extra });
+// Kit feedback 87 C1: a red gate whose failures hold the gate's check-weakening step stops at stage Checks with its answers (ph gsd allow).
+const owner = (stage, reason, extra = {}) => {
+  const ck = stage === "Gate" ? (extra.failures ?? []).find((f) => f.needsOwner?.stage === "Checks") : null;
+  return ck ? result("needs-owner", { ...extra, stage: "Checks", reason: `${ck.needsOwner.reason} (${reason})`, options: ck.needsOwner.options }) : result("needs-owner", { stage, reason, ...extra });
+};
 const digestOf = async (input) => (await flow(["digest"], input)).json?.hash ?? "none";
 
 // Kit feedback 64 (gsd.review_metrics, measurement only): executors and fixers may name the plan defects they met, the finding
