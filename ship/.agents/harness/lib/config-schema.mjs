@@ -89,7 +89,9 @@ export const SCHEMA = obj({
       test_timeout_s: int(1),
       gates: arr(obj({ name: str({ nonEmpty: true }), argv: argv() })),
       verify: map(obj({ argv: argv(), timeout_s: int(1) })),
-    }),
+      // F50: one argv per declared verification target, built once before planning (gsd-plan stage Smoke build).
+      smoke_builds: arr(argv()),
+    }, ["smoke_builds"]),
     verify_vocabulary: map(obj({
       prefix: str({ nonEmpty: true }),
       parser: nullable(str({ nonEmpty: true, repoPath: true })),

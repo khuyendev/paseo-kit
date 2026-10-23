@@ -2,7 +2,7 @@ export const meta = {
   name: "gsd-plan",
   description: "GSD phase planning: outline, wiring, skeleton review, per-plan planners, checker loop, coverage and handoff (or one gap-closure wave)",
   phases: [
-    { title: "Preconditions" }, { title: "Outline" }, { title: "Wiring" }, { title: "Skeleton review" },
+    { title: "Preconditions" }, { title: "Smoke build" }, { title: "Outline" }, { title: "Wiring" }, { title: "Skeleton review" },
     { title: "Plans" }, { title: "Checker" }, { title: "Plan review" }, { title: "Dependencies" }, { title: "Handoff" }, { title: "Gaps" },
   ],
 };
@@ -188,6 +188,14 @@ if (!reqIds.length) log(`warning: ROADMAP lists no requirement IDs for phase ${N
 const drift = (await flow(["drift", String(g.drift_threshold)])).json;
 if (drift?.status === "drift") log(`warning: codebase map drift: ${drift.count} changes since ${drift.baseline} (threshold ${drift.threshold}); consider gsd-map-codebase --paths`);
 else if (drift?.status === "skipped") log(`drift check skipped: ${drift.reason}`);
+// F50: with adapter.commands.smoke_builds, every declared verification target builds once before any planner runs, so a missing
+// toolchain component stops the run here (needs-owner) instead of at the first obligation that needs that target.
+if (cfg.adapter.commands.smoke_builds?.length) {
+  phase("Smoke build");
+  const smoke = await gsd(["check", "smoke"]);
+  if (smoke.code !== 0) return owner("Smoke build", smoke.json?.reason ?? `smoke build check exit ${smoke.code}`, { builds: (smoke.json?.builds ?? []).filter((b) => b.status !== "passed"), options: ["install the missing toolchain component or fix the build, then rerun", "remove the target from adapter.commands.smoke_builds, then rerun", "abandon"] });
+  phase("Preconditions");
+}
 const POLICY = policyBlock(approvedResearch);
 const stackSkill = cfg.adapter.stack_skill ? `.claude/skills/${cfg.adapter.stack_skill}/SKILL.md` : null;
 const planningContext = (planMode) => [

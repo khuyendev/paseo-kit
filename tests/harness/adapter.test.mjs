@@ -20,7 +20,7 @@ const VOCAB = (extra = {}) => ({
   cmd: { prefix: "cmd:", parser: null, resolver: null, runner: null, evidence_parser: null, exit_code_sufficient: true },
   ...extra,
 });
-const COMMANDS = (extra = {}) => ({ build: null, test: null, build_timeout_s: 300, test_timeout_s: 600, gates: [], verify: {}, ...extra });
+const COMMANDS = (extra = {}) => ({ build: null, test: null, build_timeout_s: 300, test_timeout_s: 600, gates: [], verify: {}, smoke_builds: [], ...extra });
 
 test("ADPT-01 the adapter lives in the overlay, is validated closed and .planning/config.json is ignored", () => {
   const p = makeTempProject({ git: false, overlay: { adapter: { unknown_key: 1 } } });

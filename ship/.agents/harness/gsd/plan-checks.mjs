@@ -1,9 +1,10 @@
 // Plan checks: structure (GSDC-18), verify-command probe (GSDC-19), failure directions (GSDC-20), decision and
-// requirement coverage (GSDC-21, GSDC-22), disjoint write sets (GSDC-23) and the dependency probe (G022). Adapter data only
-// through hooks and the argv of adapter.dependency_probe.
+// requirement coverage (GSDC-21, GSDC-22), disjoint write sets (GSDC-23), the dependency probe (G022) and the smoke builds (F50).
+// Adapter data only through hooks and the argv of adapter.dependency_probe and adapter.commands.smoke_builds.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { withMutex } from "../adapter/mutex.mjs";
 import { runArgv } from "../lib/proc.mjs";
 import { done, mentions, readIf, unavailable } from "./common.mjs";
 import { HookError, builtinResolve, callHook, classify, covers, filesUnder, overlaps, ownsPath, pathKey, physicalPath, sharedPaths, targetsOf } from "./adapter-hooks.mjs";
@@ -349,4 +350,34 @@ export async function checkDependencies(g, phase, plans) {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+
+// --- smoke builds (F50) ---
+
+const BUILD_TAIL_CHARS = 4000;
+
+// Each adapter.commands.smoke_builds argv builds one declared verification target once, in the project root, before any planner
+// runs: a missing toolchain component fails here, not at the first obligation that needs that target. Every target runs, so the
+// owner sees all failures at once. A build that times out or cannot run is unresolvable (exit 69), never a pass. Nothing configured:
+// nothing runs. The build holds adapter.mutex like every other adapter build (ADPT-10).
+export async function checkSmokeBuilds(g) {
+  const builds = g.cfg.adapter.commands.smoke_builds ?? [];
+  if (!builds.length) return done({ status: "none", builds: [] });
+  const secs = g.cfg.adapter.commands.build_timeout_s;
+  const results = await withMutex(g.cfg.adapter.mutex, async () => {
+    const out = [];
+    for (const argv of builds) {
+      const run = await runArgv(argv, { cwd: g.codeRoot, env: g.env, timeoutMs: secs * 1000, tailChars: BUILD_TAIL_CHARS });
+      const output = `${run.stdout}${run.stderr}`.trim();
+      if (run.timedOut) out.push({ argv, status: "unresolvable", reason: `build timed out after ${secs}s`, output });
+      else if (run.error || run.code === null) out.push({ argv, status: "unresolvable", reason: `build could not run: ${run.error?.message ?? "stopped by a signal"}`, output });
+      else if (run.code !== 0) out.push({ argv, status: "failed", reason: `build exited ${run.code}`, output });
+      else out.push({ argv, status: "passed" });
+    }
+    return out;
+  });
+  const bad = results.filter((b) => b.status !== "passed");
+  if (!bad.length) return done({ status: "passed", builds: results });
+  const reason = bad.map((b) => `${b.argv.join(" ")}: ${b.reason}`).join("; ");
+  return done({ status: bad.some((b) => b.status === "failed") ? "failed" : "unresolvable", reason, builds: results }, bad.some((b) => b.status === "failed") ? 1 : 69);
 }

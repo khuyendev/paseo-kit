@@ -258,7 +258,7 @@ const GOLDEN = {
   project_prompt_note: "",
   platform_notes: { win32: "On Windows never round-trip text files through PowerShell Get-Content/Set-Content: they re-encode non-ASCII text on every pass." },
   adapter: {
-    commands: { build: null, test: null, build_timeout_s: 300, test_timeout_s: 600, gates: [], verify: {} },
+    commands: { build: null, test: null, build_timeout_s: 300, test_timeout_s: 600, gates: [], verify: {}, smoke_builds: [] },
     verify_vocabulary: {
       build: { prefix: "build", parser: null, resolver: null, runner: null, evidence_parser: null, exit_code_sufficient: true },
       cmd: { prefix: "cmd:", parser: null, resolver: null, runner: null, evidence_parser: null, exit_code_sufficient: true },

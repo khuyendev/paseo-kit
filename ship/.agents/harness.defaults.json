@@ -87,7 +87,8 @@
       "build_timeout_s": 300,
       "test_timeout_s": 600,
       "gates": [],
-      "verify": {}
+      "verify": {},
+      "smoke_builds": []
     },
     "verify_vocabulary": {
       "build": { "prefix": "build", "parser": null, "resolver": null, "runner": null, "evidence_parser": null, "exit_code_sufficient": true },
