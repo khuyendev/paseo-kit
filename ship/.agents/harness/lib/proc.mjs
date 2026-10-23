@@ -1,4 +1,4 @@
-// Processes and time: pid liveness, the real clock, and argv commands run without a shell (INV-52).
+// Processes and time: pid liveness and trees, the real clock, and argv commands run without a shell (INV-52).
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -47,6 +47,46 @@ function killTree(child) {
       child.kill("SIGKILL");
     }
   }
+}
+
+// G166: pid and every process under it. Windows: taskkill /T walks the tree. POSIX: the descendants are listed before
+// pid dies, since they are reparented once it is gone; each shell has its own process group (shell.mjs), so each is
+// killed by pid.
+export function killPidTree(pid) {
+  if (process.platform === "win32") {
+    // When taskkill fails (pid gone, or taskkill missing) the pid alone is killed; that throws when the pid is gone too.
+    if (spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true }).status !== 0) process.kill(pid);
+    return;
+  }
+  const descendants = descendantPids(pid);
+  process.kill(pid);
+  for (const d of descendants) {
+    try {
+      process.kill(d, "SIGKILL");
+    } catch {
+      // already gone
+    }
+  }
+}
+
+// Pids under pid from one ps snapshot; none when ps is not installed.
+function descendantPids(pid) {
+  const r = spawnSync("ps", ["-A", "-o", "pid=", "-o", "ppid="], { encoding: "utf8", windowsHide: true });
+  if (r.status !== 0) return [];
+  const children = new Map();
+  for (const line of r.stdout.split("\n")) {
+    const [child, parent] = line.trim().split(/\s+/).map(Number);
+    if (Number.isInteger(parent)) children.set(parent, [...(children.get(parent) ?? []), child]);
+  }
+  const found = [];
+  const todo = [pid];
+  while (todo.length) {
+    for (const c of children.get(todo.pop()) ?? []) {
+      found.push(c);
+      todo.push(c);
+    }
+  }
+  return found;
 }
 
 const envValue = (env, key) => env[Object.keys(env).find((k) => k.toUpperCase() === key)] ?? "";

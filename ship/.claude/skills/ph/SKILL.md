@@ -133,7 +133,8 @@ until dry, budget-aware loop, custom type + schema + effort, tier choice).
 - Run directory `_workspace/_runs/<runId>/`: `script.js`, `args.json` (only when the run got args), `run.json`, `journal.jsonl`, `log.txt`,
   `result.json`. `ph run-stats <runId>` sums time, tokens and cost; `ph runs [--prune]` lists and prunes runs;
   `ph archive --run <runId> [--reason "<why>"]` stops a run for good; the reason goes into `run.json` and the metrics
-  ledger, so give one.
+  ledger, so give one. It stops the runner with the shell commands the run started; a runner that already died leaves
+  those commands running.
 - Every ended run appends one line to `_workspace/harness-metrics.jsonl`, which pruning keeps. `ph evolve-stats
   [--agent A] [--workflow N] [--since YYYY-MM-DD]` prints it per agent version (agent, role-text hash, model,
   effort) and per workflow, with a suggested `--budget` (4 x the median output tokens of a run), then every project

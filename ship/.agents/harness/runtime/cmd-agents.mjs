@@ -6,7 +6,7 @@ import { assertPromptSize } from "../paseo-client/index.mjs";
 import { UsageError, errText, failedLine } from "../lib/cli.mjs";
 import { readJsonIf, writeJsonAtomic } from "../lib/io.mjs";
 import { id8, isInside, resolveInside } from "../lib/paths.mjs";
-import { pidAlive } from "../lib/proc.mjs";
+import { killPidTree, pidAlive } from "../lib/proc.mjs";
 import { resultJson } from "./result.mjs";
 import { RUN_FILES, readJournal } from "../workflow/journal.mjs";
 import { appendRecords, readLedger, runRecord } from "../workflow/metrics.mjs";
@@ -172,9 +172,11 @@ async function runAgents(ctx, session, own) {
   const file = path.join(runDir, "run.json");
   const info = readJsonIf(file);
   if (!info) throw new Error(`no run ${runId} (${file})`);
+  // G166: the shell commands the runner started are its descendants and go with it. Once the runner is gone nothing
+  // records them, so they are not stopped (ph skill).
   if (info.status === "running" && pidAlive(info.pid)) {
     try {
-      process.kill(info.pid);
+      killPidTree(info.pid);
       ctx.out(`stopped runner pid ${info.pid}`);
     } catch (e) {
       ctx.out(`could not stop runner pid ${info.pid}: ${errText(e)}`);
