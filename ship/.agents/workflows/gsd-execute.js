@@ -116,6 +116,10 @@ const discarded = [];
 const keptTrees = {};
 const seeds = {};
 const integrationFiles = new Set();
+// Kit feedback 85, 83: requests closed without a resolvedRequests reply (basis: tree, shared change, resolver, owner) and the
+// owner's answers (ph gsd shared clear, request clear) this run took; both are listed in the result.
+const requestsClosed = [];
+const ownerAnswers = [];
 const ev = (e) => { events.push(e); log(`event ${e}`); };
 // Kit feedback 68: plans, artifacts and owned files changed outside the flow since their last record, from `ph gsd hand-edit scan`.
 let handEdits = null;
@@ -123,7 +127,7 @@ const treeReport = () => {
   const left = Object.entries(worktrees).filter(([plan]) => !discarded.includes(plan)).map(([plan, path]) => ({ plan, path, ...(keptTrees[plan] ? { why: keptTrees[plan] } : {}) }));
   return discarded.length || left.length ? { discarded, kept: left } : null;
 };
-const result = (status, extra = {}) => ({ status, phaseDir, mode: execMode, isolation: g.isolation, waves: waveResults, sharedChanges, ...(Object.keys(pendingRequests).length ? { requests: pendingRequests } : {}), ...(skipped.length ? { skipped } : {}), ...(treeReport() ? { worktrees: treeReport() } : {}), ...(handEdits ? { handEdits } : {}), events, ...extra });
+const result = (status, extra = {}) => ({ status, phaseDir, mode: execMode, isolation: g.isolation, waves: waveResults, sharedChanges, ...(Object.keys(pendingRequests).length ? { requests: pendingRequests } : {}), ...(skipped.length ? { skipped } : {}), ...(treeReport() ? { worktrees: treeReport() } : {}), ...(handEdits ? { handEdits } : {}), ...(ownerAnswers.length ? { ownerAnswers } : {}), ...(requestsClosed.length ? { requestsClosed } : {}), events, ...extra });
 const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reason, ...extra });
 const digestOf = async (input) => (await flow(["digest"], input)).json?.hash ?? "none";
 
@@ -383,6 +387,8 @@ async function resumeGateNow() {
   }
   return null;
 }
+const answersStop = await takeOwnerAnswers();
+if (answersStop) return answersStop;
 const stop0 = await resumeGate();
 if (stop0) return stop0;
 
@@ -453,7 +459,7 @@ async function headNow(cwd) { return (await shell(["git", "rev-parse", "HEAD"], 
 // executor runs, and a worktree may start from it (kit-feedback 66).
 const ownCommits = new Set();
 const movedBy = (now, before) => now !== before && !ownCommits.has(now);
-const slashPath = (p) => String(p).trim().replace(/\\/g, "/").replace(/^\.\//, "");
+function slashPath(p) { return String(p).trim().replace(/\\/g, "/").replace(/^\.\//, ""); }
 // G072: a request goes to the plan owning its path most specifically (adapter owns forms, path boundaries). G089: a
 // path no open plan of the phase owns (no plan, or one already committed) is a shared change, applied before the next
 // gate by the integration fixer and committed with the wave.
@@ -464,12 +470,69 @@ async function routeRequests(t, res) {
   const owners = (await flow(["owners"], { paths: list.map((rq) => rq.path), plans: others })).json?.owners ?? {};
   for (const rq of list) {
     const id = (owners[rq.path] ?? [])[0];
-    if (id && progress.plans[id]?.commit === undefined) (pendingRequests[id] ??= []).push({ from: t.plan, ...rq });
-    else sharedChanges.push({ from: t.plan, ...rq, applied: false });
+    if (id && progress.plans[id]?.commit === undefined) {
+      const q = { from: t.plan, ...rq };
+      (pendingRequests[id] ??= []).push(q);
+      if (g.request_check !== "off") (progress.requestBase ??= {})[requestKey(id, q)] = await fileSha(q.path);
+    } else sharedChanges.push({ from: t.plan, ...rq, applied: false });
   }
 }
 const ownerDecision = (res) => (res.deviations ?? []).find((x) => Number(x.rule) === 4 || x.kind === "checkpoint") ?? (res.taskResults ?? []).find((x) => x.status === "partial" || x.status === "blocked") ?? null;
 const clearResolved = (id, res) => { if (pendingRequests[id]) pendingRequests[id] = pendingRequests[id].filter((q) => !(res?.resolvedRequests ?? []).map(slashPath).includes(slashPath(q.path))); };
+// Kit feedback 85: a request leaves pendingRequests when its owner names it in resolvedRequests (clearResolved) and also when
+// the tree shows it done (the digest of its path at the request, progress.requestBase, differs and the gate after it is green),
+// when a shared change to its path is applied or cleared, when the resolver finds it satisfied, or when the owner clears it
+// (ph gsd request clear). Each closure is listed in the result and kept in execute-progress.json (closed).
+function requestKey(plan, q) { return JSON.stringify([plan, q.from ?? null, slashPath(q.path), q.change ?? null]); }
+function closeRequest(plan, q, by, why) {
+  pendingRequests[plan] = (pendingRequests[plan] ?? []).filter((x) => x !== q);
+  const row = { plan, from: q.from ?? null, path: slashPath(q.path), by, why: String(why ?? "").slice(0, 300) };
+  requestsClosed.push(row);
+  (progress.closed ??= []).push(row);
+  if (progress.requestBase) delete progress.requestBase[requestKey(plan, q)];
+  ev(`request ${plan} ${row.path} closed by ${by}`);
+}
+// A request whose target path a shared change changed is linked to it and closes with it.
+function closeLinked(applied) {
+  const byPath = new Map(applied.filter((x) => x.path).map((x) => [slashPath(x.path), x]));
+  if (!byPath.size || g.request_check === "off") return;
+  for (const [plan, list] of Object.entries(pendingRequests)) for (const q of [...list]) {
+    const sc = byPath.get(slashPath(q.path));
+    if (sc) closeRequest(plan, q, "shared change", `the shared change to ${slashPath(sc.path)} (${sc.from ?? "declared"}) ${sc.cleared ? "was cleared by the owner" : "was applied"}`);
+  }
+}
+function waveIs(waveId, ref) { const r = String(ref ?? "").trim(); return Boolean(r) && (waveId === r || waveId === `w${r}` || waveId === `gap-w${r}`); }
+// The owner's typed answers (ph gsd shared clear, request clear) in owner-answers.json that an earlier run did not take yet. The
+// verbs never write execute-progress.json (the flow is its writer), so this run applies them and records their ids in it.
+async function takeOwnerAnswers() {
+  const r = await flow(["read", `${phaseDir}/owner-answers.json`]);
+  let list = [];
+  try { list = r.json?.exists ? JSON.parse(r.json.text) : []; } catch { list = []; }
+  if (!Array.isArray(list)) return null;
+  let took = 0;
+  for (const x of list) {
+    if (!x?.id || !["shared", "request"].includes(x.kind) || (progress.answered ?? []).includes(x.id)) continue;
+    let matched = 0;
+    if (x.kind === "shared") {
+      const hit = sharedChanges.filter((s) => !s.applied && (s.wave === undefined || waveIs(s.wave, x.wave)) && (!x.path || slashPath(s.path ?? "") === x.path));
+      for (const s of hit) {
+        s.applied = true;
+        s.cleared = { answer: x.id, reason: x.reason };
+        if (s.path) integrationFiles.add(s.path);
+      }
+      if (hit.length) progress.integration = [...integrationFiles];
+      closeLinked(hit);
+      matched = hit.length;
+    } else {
+      for (const q of [...(pendingRequests[x.plan] ?? [])].filter((y) => slashPath(y.path) === x.path)) { closeRequest(x.plan, q, "owner", x.reason); matched++; }
+    }
+    (progress.answered ??= []).push(x.id);
+    ownerAnswers.push({ id: x.id, kind: x.kind, ...(x.plan ? { plan: x.plan } : {}), ...(x.wave ? { wave: x.wave } : {}), ...(x.path ? { path: x.path } : {}), reason: x.reason, matched });
+    ev(`answer ${x.id} ${x.kind}${x.path ? ` ${x.path}` : ""} (${matched} cleared)`);
+    took++;
+  }
+  return took && !(await saveProgress()) ? result("failed", { reason: `${PROGRESS} could not be written after the owner's answers` }) : null;
+}
 // The owner's answers to earlier halts of a plan (ph gsd halt clear), handed to its next executor (G055).
 async function haltAnswers(id) {
   const r = await flow(["read", `${phaseDir}/halt-answers.json`]);
@@ -621,22 +684,40 @@ async function strayStopNow(tasks, stage) {
 // commits.json, and the resume gate knows them from execute-progress.json.
 const sharedTurn = serialize();
 const applyShared = (waveId, label) => sharedTurn(() => applySharedNow(waveId, label));
+// Kit feedback 82: the step is done when every requested change is present, whatever the fixer thinks of the rest of the tree.
+// The fixer reports per change; verification belongs to the gate that follows, whose plan fixers repair what fails outside
+// the shared files. An Integration stop is answered with ph gsd shared clear.
+const SHARED_SCHEMA = { ...fixerSchema, properties: { ...fixerSchema.properties, changes: { type: "array", items: { type: "object", properties: { index: { type: "number" }, applied: { type: "boolean" }, evidence: { type: "string" } }, required: ["index", "applied"] } }, outside: { type: "string" } } };
+const SHARED_NOTE = "Check only the shared files you changed (a syntax, format or analysis check of those files). Do not run other test files or whole suites: the gate that follows verifies the change, and a failure outside these files belongs to the plan fixers that gate runs. Name such a failure in outside, and still report your changes.";
+const SHARED_REPORT = "Report per change. Return JSON {changes: [{index, applied, evidence}], status: fixed|unresolved, attempts, remaining_failures, evidence, outside}: applied is true when that change is present in its file (made by you or already there); status is unresolved only when a change could not be made.";
+const sharedOptions = (waveId) => [`ph gsd shared clear ${N} ${waveId} [--path <file>] --reason "<what you did or accept>", then rerun with the same args`, "stop"];
 async function applySharedNow(waveId, label) {
   const open = sharedChanges.filter((s) => !s.applied);
   if (!open.length) return null;
+  let tagged = false;
+  for (const s of open) if (s.wave === undefined) { s.wave = waveId; tagged = true; }
+  if (tagged && !(await saveProgress())) return result("failed", { reason: `${PROGRESS} could not be written before the shared changes` });
   const nameless = open.filter((s) => !s.path);
-  if (nameless.length) return owner("Integration", `shared changes of ${label} name no file, so no fixer can own them: ${nameless.map((s) => `${s.from}: ${String(s.change).slice(0, 120)}`).join("; ")}`, { sharedChanges: nameless, options: ["apply them by hand, commit them, then rerun with the same args", "name the file in the plan's <shared_changes> and regenerate the handoff"] });
+  if (nameless.length) return owner("Integration", `shared changes of ${label} name no file, so no fixer can own them: ${nameless.map((s) => `${s.from}: ${String(s.change).slice(0, 120)}`).join("; ")}`, { sharedChanges: nameless, options: [...sharedOptions(waveId).slice(0, 1), "apply them by hand, commit them, then rerun with the same args", "name the file in the plan's <shared_changes> and regenerate the handoff"] });
   const files = [...new Set(open.map((s) => s.path))];
   for (const f of files) integrationFiles.add(f);
   progress.integration = [...integrationFiles];
   if (!(await saveProgress())) return result("failed", { reason: `${PROGRESS} could not be written before the shared changes` });
-  const brief = open.map(({ from, path, change, reason }) => ({ from, path, change, reason }));
-  const prompt = [`Shared changes for ${label}: no open plan of the phase owns these paths, so you make them. You own exactly these files: ${JSON.stringify(files)}. Make each change below and nothing else; never commit.`, `Changes (JSON): ${JSON.stringify(brief)}`, "Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence}.", digestLine(`shared:${waveId}`, await digestOf({ files }))].join("\n\n");
-  const r = await writeTree(() => call(prompt, fixerOpts(`shared-${waveId}`)));
-  if (r.result === null) return owner("Integration", `the shared-change fixer of ${label} returned nothing${r.reason ? ` (${r.reason})` : ""}`, { sharedChanges: open, ...(fatal(r.reason) ? { failure: classify(r.reason) } : {}) });
-  if (r.result.status !== "fixed") return owner("Integration", `shared changes of ${label} unresolved${r.result.evidence ? `: ${r.result.evidence}` : ""}`, { sharedChanges: open });
-  for (const s of open) s.applied = true;
+  const brief = open.map(({ from, path, change, reason }, index) => ({ index, from, path, change, reason }));
+  const prompt = [`Shared changes for ${label}: no open plan of the phase owns these paths, so you make them. You own exactly these files: ${JSON.stringify(files)}. Make each change below and nothing else; never commit.`, `Changes (JSON): ${JSON.stringify(brief)}`, SHARED_NOTE, SHARED_REPORT, digestLine(`shared:${waveId}`, await digestOf({ files }))].join("\n\n");
+  const r = await writeTree(() => call(prompt, fixerOpts(`shared-${waveId}`, { schema: SHARED_SCHEMA })));
+  if (r.result === null) return owner("Integration", `the shared-change fixer of ${label} returned nothing${r.reason ? ` (${r.reason})` : ""}`, { sharedChanges: open, options: sharedOptions(waveId), ...(fatal(r.reason) ? { failure: classify(r.reason) } : {}) });
+  const rep = r.result;
+  const entries = Array.isArray(rep.changes) && rep.changes.length ? rep.changes : null;
+  const present = (i) => (entries ? entries.some((c) => Number(c?.index) === i && c.applied === true) : rep.status === "fixed");
+  const made = open.filter((s, i) => present(i));
+  for (const s of made) s.applied = true;
+  if (rep.outside && String(rep.outside).trim()) log(`shared ${waveId}: the fixer saw a failure outside the shared files, left to the gate: ${String(rep.outside).trim().slice(0, 300)}`);
+  if (made.length && rep.status !== "fixed") log(`shared ${waveId}: ${made.length} of ${open.length} change(s) reported present although the fixer answered ${rep.status}; the gate verifies them`);
+  closeLinked(made);
   if (!(await saveProgress())) return result("failed", { reason: `${PROGRESS} could not be written after the shared changes` });
+  const left = open.filter((s) => !s.applied);
+  if (left.length) return owner("Integration", `shared changes of ${label} not applied (${left.length} of ${open.length})${rep.evidence ? `: ${rep.evidence}` : ""}`, { sharedChanges: left, options: sharedOptions(waveId) });
   ev(`shared ${waveId} ${files.length}`);
   return null;
 }
@@ -1073,10 +1154,49 @@ async function discardLanded(ids) {
     else { keptTrees[id] = r.json?.why ?? r.json?.error ?? `exit ${r.code}`; log(`plan ${id}: worktree ${worktrees[id]} kept (${keptTrees[id]})`); }
   }
 }
+// Kit feedback 85: before Commit each open request of the committed plans is checked, deterministically where possible (the digest
+// of its path changed since the request, and a green gate precedes every Commit) and by one read-only resolver call for the rest
+// (gsd.request_check auto; tree = the deterministic check only; off = every open request stops the commit).
+const RESOLVER_NOTE = "Cross-plan change requests were made while the plans of this phase ran. Decide read-only, for each request below, whether the current code already satisfies it: the change is present in the named file in this or an equivalent form that serves the request's reason. Read only the named files; raise nothing new.";
+async function settleRequests(list) {
+  const plans = list.flatMap((w) => w.tasks.map((t) => t.plan));
+  const openNow = () => plans.flatMap((plan) => (pendingRequests[plan] ?? []).map((q) => ({ plan, q })));
+  if (!openNow().length) return null;
+  const mode = g.request_check ?? "auto";
+  const before = requestsClosed.length;
+  if (mode !== "off") {
+    for (const { plan, q } of openNow()) {
+      const key = requestKey(plan, q);
+      if (!progress.requestBase || !Object.hasOwn(progress.requestBase, key)) continue;
+      if ((await fileSha(slashPath(q.path))) !== progress.requestBase[key]) closeRequest(plan, q, "tree", `${slashPath(q.path)} changed after the request, and the gate after the change is green`);
+    }
+  }
+  let note = "";
+  const rest = openNow();
+  if (mode === "auto" && rest.length) {
+    const items = rest.map(({ plan, q }, n) => ({ id: `R${n + 1}`, plan, from: q.from ?? null, path: slashPath(q.path), change: q.change, reason: q.reason ?? null }));
+    const ids = [...new Set(rest.map((x) => x.plan))].join("+");
+    const prompt = [RESOLVER_NOTE, `Requests (JSON): ${JSON.stringify(items)}`, "Return JSON {resolution: [{id, resolved, evidence}]}.", digestLine(`requests:${ids}`, await digestOf({ files: items.map((x) => x.path) }))].join("\n\n");
+    const r = await call(prompt, { label: `resolve-requests-${ids}`, agentType: agentFor("finding_verifier", "finding-verifier"), role: "finding_verifier", readOnly: true, schema: RESOLUTION_SCHEMA });
+    if (r.result === null) {
+      if (fatal(r.reason)) return owner("Commit", `the resolver of the open cross-plan requests failed: ${r.reason}`, { failure: classify(r.reason), requests: rest.map((x) => x.q) });
+      note = `; the resolver returned nothing${r.reason ? ` (${r.reason})` : ""}`;
+    } else {
+      for (const x of r.result.resolution ?? []) {
+        const at = items.findIndex((it) => it.id === x.id);
+        if (at >= 0 && x.resolved === true) closeRequest(rest[at].plan, rest[at].q, "resolver", x.evidence ?? "the resolver found the change present");
+      }
+    }
+  }
+  if (requestsClosed.length > before && !(await saveProgress())) return result("failed", { reason: `${PROGRESS} could not be written after closing requests` });
+  const left = openNow();
+  if (!left.length) return null;
+  return owner("Commit", `cross-plan change requests lack acknowledged resolution${note}`, { requests: left.map((x) => x.q), options: [...left.map(({ plan, q }) => `ph gsd request clear ${N} --plan ${plan} --path ${slashPath(q.path)} --reason "<why it is satisfied>", then rerun with the same args`), "make the change in the file, then rerun with the same args"] });
+}
 async function commitWaves(list, verify, evidence) {
   phase("Commit");
-  const requests = list.flatMap((w) => w.tasks.flatMap((t) => pendingRequests[t.plan] ?? []));
-  if (requests.length) return { stop: owner("Commit", "cross-plan change requests lack acknowledged resolution", { requests }) };
+  const requestStop = await settleRequests(list);
+  if (requestStop) return { stop: requestStop };
   const pf = await planFiles(list.flatMap((d) => d.tasks));
   if (pf.stop) return pf;
   if (pf.unowned.length) return { stop: owner("Commit", `changes outside every plan's owns: ${pf.unowned.slice(0, 10).join(", ")}`, { paths: pf.unowned, options: ["move or revert them, then rerun with the same args", "add them to a plan's owns and replan"] }) };
@@ -1191,7 +1311,7 @@ const metricsLine = (wave) => flow(["append", "_workspace/review-metrics.jsonl"]
 // A run that skipped halted or blocked plans says so in its result; shared changes left unapplied stop it.
 const finish = async (extra = {}) => {
   const left = sharedChanges.filter((s) => !s.applied);
-  if (left.length) return owner("Integration", `${left.length} shared change(s) were never applied`, { sharedChanges: left });
+  if (left.length) return owner("Integration", `${left.length} shared change(s) were never applied`, { sharedChanges: left, options: sharedOptions(left[0].wave ?? "<wave>") });
   // Kit feedback 75: harness worktrees of finished runs that are still there (the transferred ones go with ph worktrees --prune).
   const old = worktreeMode ? (await flow(["leftover-worktrees"])).json : null;
   if (old?.total) log(`${old.total} leftover harness worktree(s) of finished runs (${old.removable} removable): ph worktrees --prune removes the removable ones`);
