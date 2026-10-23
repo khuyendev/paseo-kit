@@ -108,6 +108,7 @@ export class Session {
   async sendPrompt(agentId, text) {
     assertPromptSize(text, this.cfg);
     await this.client.sendAgentMessage(agentId, text);
+    this.usage.expireLate(agentId);
   }
 
   turnsOf(agentId) {

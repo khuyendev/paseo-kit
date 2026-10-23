@@ -61,6 +61,12 @@ export class UsageTracker {
     }
   }
 
+  // The next prompt starts a turn: a late event still owed by the previous turn is given up as lost, so it cannot take this turn's event.
+  expireLate(agentId) {
+    const t = this.totals.get(agentId);
+    if (t) t.late = 0;
+  }
+
   turnsOf(agentId) {
     return this.totals.get(agentId)?.turns ?? 0;
   }
