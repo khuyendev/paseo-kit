@@ -178,6 +178,7 @@ Thinking levels (`THINKING_LEVELS`): `off, low, medium, high, xhigh, max`.
 | `hook_timeout_s` | int >= 1 | 30 |
 | `dependency_probe` | `null` or argv (non-empty string[]): the command that checks the dependency set the plans declare (`<path>: dependency <name> [<constraint>] [dev]` lines of `<shared_changes>`). It runs in the project root with the set's JSON file as its last argument; exit 0 passes, a non-zero exit stops gsd-plan at stage Dependencies (needs-owner, with the output), a probe that cannot run stops it too | `null` (no probe; nothing runs) |
 | `dependency_probe_timeout_s` | int >= 1 (seconds) | 300 |
+| `command_probes` | `[{name, argv, timeout_s?}]` (kit-feedback 81): one harmless, read-only argv per wrapper command the stack skill prescribes to workers (for example `--version`, or a format check of one file with `--output=none`). `ph harness lint` runs each in the project root (`timeout_s`, default 20) and fails with the wrapper's first output line when one exits non-zero, times out or cannot start; `--no-probes` skips running them. Lint also warns when the stack skill prescribes a `node <script> <subcommand>` that no `commands` argv or probe runs. A script named in a probe must exist | `[]` (nothing runs) |
 | `attribution` | `null` or path | `null` |
 | `worktree_setup` | `{copy: string[], link: string[]}` (both keys required; git-ignored paths copied or linked into each new harness worktree; with `gsd.isolation: worktree`, `ph doctor` and `ph harness lint` name the git-ignored paths the adapter uses that no entry sets up) | `{copy: [], link: []}` |
 
@@ -354,7 +355,7 @@ Command modules (fixed list in `ph.mjs`, imported in this order; a module file t
 | `./runtime/commands.mjs` | code-ph | doctor, spawn, fanout, send, watch, result, team, context, compact-self (+ hidden watcher), stop, archive, model, task, freeze, worktrees |
 | `./workflow/commands.mjs` | code-workflow | workflow, watch-run, run-stats, evolve-stats, runs |
 | `./gsd/commands.mjs` | code-gsd-core | gsd |
-| `./adapter/commands.mjs` | code-harness | harness (`ph harness lint [--all]`, HARN-05) |
+| `./adapter/commands.mjs` | code-harness | harness (`ph harness lint [--all] [--no-probes]`, HARN-05) |
 
 Each module exports `commands`, an array of command definitions:
 

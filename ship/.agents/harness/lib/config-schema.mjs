@@ -126,6 +126,8 @@ export const SCHEMA = obj({
     // G022: the argv that checks the dependency set the plans declare; null = no probe.
     dependency_probe: nullable(argv()),
     dependency_probe_timeout_s: int(1),
+    // kit-feedback 81: a harmless argv per wrapper command the stack skill prescribes; `ph harness lint` runs each and fails on a rejection.
+    command_probes: arr(obj({ name: str({ nonEmpty: true }), argv: argv(), timeout_s: int(1) }, ["timeout_s"])),
     attribution: nullable(str({ nonEmpty: true, repoPath: true })),
     worktree_setup: obj({ copy: strs(), link: strs() }),
   }),
