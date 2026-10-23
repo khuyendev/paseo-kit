@@ -107,7 +107,7 @@ fail reopens that item. Base: kit main 3c00968 (items 1-85 fixed, CHANGELOG [Unr
 | 76 | Full fresh checker after any edit; preconditions | composition | F1 verb: `key_links` `requires` in `verify contracts`; F2 `gsd.checker_recheck: incremental` (default `full`); link walk never enters a reparse point | `tests/fb5/P67.test.mjs:76 F1`, `tests/fb5/P69-flow.test.mjs:incremental`, `tests/fb5/P75.test.mjs:F4` | F2 is off by default. |
 | 77 | Orchestrator note outside source roots stops the wave | composition | `gsd.unowned_outside_roots` (default `report`) with `adapter.ownership.source_roots` | `tests/fb6/Q77-unowned.test.mjs:F77` | Without `source_roots` (kit default) every unowned path still stops. |
 | 78 | Resumed execute forgets integration files | composition | gsd-execute.js seeds integration files from execute-progress.json | `tests/fb6/Q77-resume.test.mjs:F78` | Moves into the typed state verbs of part B (`state-read`). Recurrence in 86 ran on the older kit. |
-| 79 | Partial task on a routed request halts the wave | covered | prompt + composition: `pending-request` task status (`gsd.pending_request_tasks`, default true), kitNotes; verb `halt clear --resume` | `tests/fb6/Q79.test.mjs` | |
+| 79 | Partial task on a routed request halts the wave | composition | prompt + composition (gsd-execute.js ownerDecision): `pending-request` task status (`gsd.pending_request_tasks`, default true), kitNotes; verb `halt clear --resume` | `tests/fb6/Q79.test.mjs` | |
 | 80 | Fixture generation makes EOL-only changes | covered | verb: owned-changes lists `eolOnly` (never a stop or commit), transfer drops them (G090); kit-adapter.md EOL contract | `tests/fb6/Q77-unowned.test.mjs:F80`, `tests/bughunt/G090.test.mjs:line-endings` | The generator's write policy is project code. |
 | 81 | Stack skill promises Dart commands through a Flutter-only wrapper | covered | install: `adapter.command_probes`, `ph harness lint` runs probes and warns on uncovered prescribed commands | `tests/fb6/Q81.test.mjs` | The wrapper itself is project code. |
 | 82 | Shared-change step stops on a failure it does not own | composition | gsd-execute applies per reported change, bounds the brief; verb `ph gsd shared clear` | `tests/fb6/Q82.test.mjs:Q82 F1`, `tests/fb6/Q82.test.mjs:Q82 F2`, `tests/fb6/Q82.test.mjs:Q82 F3` | Moves into `state-shared` in part B. |
@@ -137,7 +137,7 @@ Items, or parts of items, that no kit test pins, and defects found while mapping
 4. **`update --force` without `--enable-plugin` (84/86 addendum).** Q84 F2 prints the doctor line and the hook
    consequence; the plain "the mod stays (or becomes) unselected" line of the addendum is open in part A.
 5. **Fixes that live only in a composition.** Rows marked `composition` (9, 13, 16, 17, 18, 20, 25, 28, 30, 32, 33,
-   34, 35, 36, 37, 43, 44, 46, 47, 51, 55, 57, 60, 61, 71, 72, 76, 77, 78, 82, 85 and the composition halves of 2, 21,
+   34, 35, 36, 37, 43, 44, 46, 47, 51, 55, 57, 60, 61, 71, 72, 76, 77, 78, 79, 82, 85 and the composition halves of 2, 21,
    22, 40, 50, 53, 58, 64-70) are pinned by tests that run the kit's default `gsd-*.js`. Once part A lets a project
    keep an edited composition, these tests say nothing about the project's copy: an evolve edit can drop such a fix,
    and the A3 verb check only catches unknown verbs, not a lost step. Part B moves 78, 82 and 85 (and the other
