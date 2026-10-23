@@ -102,6 +102,28 @@ async function ask(prompt, opts, what) {
 // the journal replays those units on --resume. The run id is the one `ph workflow` printed when the run started.
 const stopWith = (stop, issues) => ({ ...stop, reason: `${stop.reason}; resume the run with ph workflow --resume <run id> to reuse the units that finished`, issues });
 
+// G041: a reply that answers an issue zero or two times gets one repair call for those issues only, with the prior reply
+// in view. Its answers for other ids are dropped; the count checks after the stage still decide what is left.
+async function repair(reply, items, flag, list, prompt, opts, what) {
+  const answers = reply.result[list] ?? [];
+  const open = items.filter((x) => answers.filter((v) => v.id === x.id && typeof v[flag] === "boolean").length !== 1);
+  if (!open.length) return reply;
+  const again = await ask(prompt(open, reply.result), opts, what);
+  if (again.fail) return again;
+  const openIds = open.map((x) => x.id);
+  return { result: { [list]: [...answers.filter((v) => !openIds.includes(v.id)), ...(again.result[list] ?? []).filter((v) => openIds.includes(v.id))] } };
+}
+const conflicted = (reply) => String(reply.result?.marker ?? "").includes("REVISION_CONFLICT");
+// G041: each plan's verify plan-structure result: its errors when it fails, and its warnings either way.
+async function checkPlans() {
+  const out = [];
+  for (const p of plans) {
+    const st = await gsd(["verify", "plan-structure", planPath(p)]);
+    out.push({ plan: p, ok: st.code === 0, errors: st.code === 0 ? [] : st.json?.errors ?? [st.json?.error ?? `exit ${st.code}`], warnings: st.json?.warnings ?? [] });
+  }
+  return out;
+}
+
 let prev = Infinity;
 let planRevision = null;
 let structure = [];
@@ -127,7 +149,9 @@ for (let cycle = 1; ; cycle++) {
   const verdicts = await parallel(plans.map((p) => async () => {
     const mine = issues.filter((x) => x.plan === p);
     if (!mine.length) return { result: { verdicts: [] } };
-    return ask([`Verify these plan-review issues of ${planPath(p)} against the plan and the code, read-only.`, `Issues (JSON): ${JSON.stringify(mine)}`, "Return JSON {verdicts: [{id, valid, evidence}]}.", ...lockedDecisions, policy, digestLine("checked", digest)].join("\n\n"), { label: `verify-${p}`, agentType: agentFor("plan_verifier"), readOnly: true, schema: VERIFY_SCHEMA, ...ro("plan_verifier") }, `plan verifier ${p}`);
+    const first = await ask([`Verify these plan-review issues of ${planPath(p)} against the plan and the code, read-only.`, `Issues (JSON): ${JSON.stringify(mine)}`, "Return JSON {verdicts: [{id, valid, evidence}]}.", ...lockedDecisions, policy, digestLine("checked", digest)].join("\n\n"), { label: `verify-${p}`, agentType: agentFor("plan_verifier"), readOnly: true, schema: VERIFY_SCHEMA, ...ro("plan_verifier") }, `plan verifier ${p}`);
+    if (first.fail) return first;
+    return repair(first, mine, "valid", "verdicts", (open, prior) => [`Your last reply did not give each plan-review issue of ${planPath(p)} exactly one boolean verdict. Verify only the issues below against the plan and the code, read-only.`, `Issues still needing a verdict (JSON): ${JSON.stringify(open)}`, `Prior reply (JSON): ${JSON.stringify(prior)}`, "Return JSON {verdicts: [{id, valid, evidence}]} with one entry per issue above.", ...lockedDecisions, policy, digestLine("checked", digest)].join("\n\n"), { label: `verify-${p}-repair`, agentType: agentFor("plan_verifier"), readOnly: true, schema: VERIFY_SCHEMA, ...ro("plan_verifier") }, `plan verifier ${p} repair`);
   }));
   const badVerify = verdicts.findIndex((r) => !r || r.fail);
   if (badVerify !== -1) {
@@ -142,7 +166,9 @@ for (let cycle = 1; ; cycle++) {
   if (valid.length) {
     const j = await ask(["Judge these verified plan-review issues across all plans: keep the real ones and merge cross-plan duplicates (duplicate_of names the kept id).", `Issues (JSON): ${JSON.stringify(valid)}`, "Return JSON {decisions: [{id, keep, duplicate_of}]}.", ...lockedDecisions, policy, digestLine("checked", digest)].join("\n\n"), { label: `judge-${cycle}`, agentType: agentFor("plan_judge"), readOnly: true, schema: JUDGE_SCHEMA, ...ro("plan_judge") }, "plan judge");
     if (j.fail) return j.fail;
-    const decisions = j.result.decisions ?? [];
+    const judged = await repair(j, valid, "keep", "decisions", (open, prior) => ["Your last reply did not give each verified plan-review issue exactly one boolean keep decision. Decide only the issues below: keep the real ones and merge cross-plan duplicates (duplicate_of names the kept id).", `Issues still needing a decision (JSON): ${JSON.stringify(open)}`, `Prior reply (JSON): ${JSON.stringify(prior)}`, "Return JSON {decisions: [{id, keep, duplicate_of}]} with one entry per issue above.", ...lockedDecisions, policy, digestLine("checked", digest)].join("\n\n"), { label: `judge-${cycle}-repair`, agentType: agentFor("plan_judge"), readOnly: true, schema: JUDGE_SCHEMA, ...ro("plan_judge") }, "plan judge repair");
+    if (judged.fail) return judged.fail;
+    const decisions = judged.result.decisions ?? [];
     if (valid.some((x) => decisions.filter((d) => d.id === x.id && typeof d.keep === "boolean").length !== 1)) return { status: "failed", reason: "plan judge did not answer every issue exactly once", issues: valid };
     if (decisions.some((d) => d.duplicate_of && !decisions.some((other) => other.id === d.duplicate_of && other.keep && !other.duplicate_of))) return { status: "failed", reason: "plan judge merged an issue without a kept representative", issues: valid };
     kept = valid.filter((x) => { const d = decisions.find((y) => y.id === x.id); return d.keep && !d.duplicate_of; });
@@ -161,17 +187,23 @@ for (let cycle = 1; ; cycle++) {
   prev = count;
   phase("Edit");
   const before = new Map(await Promise.all(plans.map(async (p) => [p, await fileSha(planPath(p))])));
-  const ed = await call([`Revise these plans in one pass so the issues below are resolved: ${plans.map(planPath).join(", ")}.`, `Issues (JSON): ${JSON.stringify(blocking)}`, "Return JSON {marker: REVISION COMPLETE | REVISION_CONFLICT, conflict?}. Never ask the owner; never commit.", ...lockedDecisions, policy, digestLine("checked", digest)].join("\n\n"), { label: `editor-${cycle}`, agentType: agentFor("plan_editor", "gsd-planner"), schema: EDITOR_SCHEMA, ...ro("plan_editor") });
-  if (String(ed.result?.marker ?? "").includes("REVISION_CONFLICT")) return { status: "needs-owner", reason: "plan editor returned REVISION_CONFLICT", conflict: ed.result.conflict ?? null, issues: kept };
-  if (!ed.result) return { status: "failed", reason: `plan editor returned nothing${ed.reason ? ` (${ed.reason})` : ""}` };
+  const ed = await ask([`Revise these plans in one pass so the issues below are resolved: ${plans.map(planPath).join(", ")}.`, `Issues (JSON): ${JSON.stringify(blocking)}`, "Return JSON {marker: REVISION COMPLETE | REVISION_CONFLICT, conflict?}. Never ask the owner; never commit.", "Before you reply, run verify plan-structure on each plan you revise and fix what it reports.", ...lockedDecisions, policy, digestLine("checked", digest)].join("\n\n"), { label: `editor-${cycle}`, agentType: agentFor("plan_editor", "gsd-planner"), schema: EDITOR_SCHEMA, ...ro("plan_editor") }, "plan editor");
+  if (ed.fail) return ed.fail;
+  if (conflicted(ed)) return { status: "needs-owner", reason: "plan editor returned REVISION_CONFLICT", conflict: ed.result.conflict ?? null, issues: kept };
+  // G041: plans that fail verify plan-structure after the edit get one editor repair, as gsd-plan's structureFix gives a planner.
+  let checks = await checkPlans();
+  if (checks.some((c) => !c.ok)) {
+    const failing = checks.filter((c) => !c.ok);
+    const fix = await ask([`Fix these plans in place: ${failing.map((c) => planPath(c.plan)).join(", ")}. verify plan-structure reported exactly these errors:`, ...failing.flatMap((c) => c.errors.map((e) => `- ${c.plan}: ${typeof e === "string" ? e : JSON.stringify(e)}`)), "Return JSON {marker: REVISION COMPLETE | REVISION_CONFLICT, conflict?}. Never ask the owner; never commit.", ...lockedDecisions, policy, digestLine("checked", digest)].join("\n\n"), { label: `editor-${cycle}-fix`, agentType: agentFor("plan_editor", "gsd-planner"), schema: EDITOR_SCHEMA, ...ro("plan_editor") }, "plan editor repair");
+    if (fix.fail) return fix.fail;
+    if (conflicted(fix)) return { status: "needs-owner", reason: "plan editor returned REVISION_CONFLICT", conflict: fix.result.conflict ?? null, issues: kept };
+    checks = await checkPlans();
+  }
+  const broken = checks.find((c) => !c.ok);
+  if (broken) return { status: "failed", reason: `plan ${broken.plan} fails verify plan-structure after the edit`, errors: broken.errors };
   for (const p of plans) if ((await fileSha(planPath(p))) !== before.get(p)) clean.delete(p);
   // The warnings of this check are the plans' warnings now; gsd-plan replaces the earlier ones with them (G019).
-  structure = [];
-  for (const p of plans) {
-    const st = await gsd(["verify", "plan-structure", planPath(p)]);
-    if (st.code !== 0) return { status: "failed", reason: `plan ${p} fails verify plan-structure after the edit`, errors: st.json?.errors ?? [] };
-    structure.push({ plan: p, warnings: st.json?.warnings ?? [] });
-  }
+  structure = checks.map((c) => ({ plan: c.plan, warnings: c.warnings }));
   // The edited plans pass the structure check: record them, so the next gsd-plan run keeps them instead of planning them again.
   for (const p of plans) await gsd(["revisions", "record", phaseDir, `plan:${p}`]);
   const h = await gsd(["handoff", N]);

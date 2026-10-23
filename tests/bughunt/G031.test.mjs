@@ -33,7 +33,8 @@ test("G031 a plan-review edit is recorded, so the next gsd-plan run keeps the ed
 
 test("G031 a plan-review edit that fails plan-structure records nothing", async () => {
   const w = makeWorld({ files: { [`${PHASE_DIR}/01-01-PLAN.md`]: planText("01-01") } });
-  w.structureErrors = { [`${PHASE_DIR}/01-01-PLAN.md`]: [["no <task>"]] };
+  // One failing check before the editor repair (G041) and one after it: the plan still fails, so nothing is recorded.
+  w.structureErrors = { [`${PHASE_DIR}/01-01-PLAN.md`]: [["no <task>"], ["no <task>"]] };
   const r = await review(w, (p, o) => {
     if (o.label.startsWith("find-")) return { issues: [{ severity: "high", actionable: true, description: "x" }] };
     if (o.label.startsWith("verify-")) return { verdicts: ids(p).map((id) => ({ id, valid: true })) };
