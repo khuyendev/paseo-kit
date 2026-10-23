@@ -21,7 +21,7 @@ test("EVOL-01 null reasons sort into agent, infra and other causes", () => {
   assert.equal(nullCause("reply did not match the schema after 3 replies: #1 x"), "schema");
   assert.equal(nullCause("no reply within 600 s"), "timeout");
   assert.equal(nullCause("finished without a reply"), "empty");
-  for (const r of ["daemon connection lost earlier in this run (x); resume the run", "runner error: boom", "live agent cap reached (3 of 3); end sessions", "agent error: overloaded", "agent is waiting for a permission: Bash"]) assert.equal(nullCause(r), "infra", r);
+  for (const r of ["daemon connection lost earlier in this run (x); resume the run", "runner error: boom", "live agent cap reached (3 of 3); end sessions", "agent error: overloaded", "agent stopped: permission Bash was not granted"]) assert.equal(nullCause(r), "infra", r);
   assert.equal(nullCause("tier pro is not configured"), "other");
   // 2026-10-21: four executors ended empty with 0 tokens in 37 s before the 429; quota text anywhere is infra.
   assert.equal(nullCause("finished without a reply", 0), "infra");

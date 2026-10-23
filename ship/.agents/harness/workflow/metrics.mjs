@@ -15,7 +15,7 @@ const CAUSES = [
   ["schema", /did not match the schema/],
   ["timeout", /^no reply within/],
   ["empty", /^finished without a reply/],
-  ["infra", /daemon|^runner error|live agent cap|usage tracking|model readback|worktree .* is gone|^agent error:|waiting for a permission|^agent status|quota|rate limit|\b429\b|too many requests|RESOURCE_EXHAUSTED/i],
+  ["infra", /daemon|^runner error|live agent cap|usage tracking|model readback|worktree .* is gone|^agent error:|^agent stopped: permission|^agent status|quota|rate limit|\b429\b|too many requests|RESOURCE_EXHAUSTED/i],
 ];
 export const AGENT_CAUSES = Object.freeze(["schema", "timeout", "empty"]);
 

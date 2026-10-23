@@ -77,7 +77,7 @@ test("FLOW-26 null reasons appear exactly in the journal and the agent done line
   assert.equal(reasons[0], "finished without a reply");
   assert.equal(reasons[1], "no reply within 5 s");
   assert.equal(reasons[2], "agent error: quota exceeded");
-  assert.equal(reasons[3], "agent is waiting for a permission: Bash");
+  assert.equal(reasons[3], "agent stopped: permission Bash was not granted");
   assert.match(reasons[4], /^prompt is \d+ bytes > max_prompt_bytes 1500; pass a file path instead of inlining content$/);
   assert.match(reasons[5], /^agent type 'nope' not found/);
   for (const [i, reason] of reasons.entries()) assert.ok(r.out.some((l) => l.startsWith(`agent done #${i + 1} `) && l.includes(`null (${reason})`)), reason);

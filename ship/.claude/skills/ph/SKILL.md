@@ -191,5 +191,5 @@ Time counts model time since the last prompt, tool time excluded. Teammates get 
 Run `ph doctor`. `PASEO_AGENT_ID is not set`: run `ph` from a Paseo agent. `tier <name> has no model`: the project
 has not mapped its tiers yet (run the harness adapter generator, or set `tiers.<name>.provider` in
 `.agents/harness.config.json`). A cap refusal: wait, `ph archive --idle`, or use a workflow (it queues). An agent
-waiting for a permission or failing with an error shows in `ph watch` as `failed <name> <id8>: ...`; read it with
-`ph result <name>`.
+stopped for a permission it was not granted, or failing with an error, shows in `ph watch` as `failed <name> <id8>: ...`;
+read it with `ph result <name>`.

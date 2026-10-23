@@ -657,7 +657,7 @@ Every behavior M1, M2 and M3 absorb in the SYNTHESIS module table, once each. IN
 - Scope: v1
 
 #### PCLI-14 AskUserQuestion denied, other permissions fail
-- Requirement: a pending `AskUserQuestion` permission is denied with the text `Nobody answers questions from subagents. Do not ask: decide from the material you were given if it settles the point; otherwise record the decision as open in your result the way your instructions say (for example a skipped item with needs_owner and the options), and finish the rest of your task.`, counted once per permission status, at most 3 per wait; any other pending permission, or a fourth question, fails `agent is waiting for a permission: <name|kind>`.
+- Requirement: a pending `AskUserQuestion` permission is denied with the text `Nobody answers questions from subagents. Do not ask: decide from the material you were given if it settles the point; otherwise record the decision as open in your result the way your instructions say (for example a skipped item with needs_owner and the options), and finish the rest of your task.`, counted once per permission status, at most 3 per wait; any other pending permission, or a fourth question, fails `agent stopped: permission <name|kind> was not granted` (the agent is then archived, FLOW-25).
 - Acceptance: FDC: two questions then idle -> 2 denials with the exact text, success; four questions -> failure on the fourth; an `Edit` permission -> immediate failure naming it.
 - Source: RUN-32, WFL-26, WFL-52(f), INV-14.
 - Scope: v1

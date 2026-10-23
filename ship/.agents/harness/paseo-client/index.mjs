@@ -179,8 +179,9 @@ export class Session {
           }
           continue;
         }
+        // The caller's run archives the agent right after this failure (FLOW-25), so the reason says it was stopped.
         const blocking = pending.find((p) => !isQuestion(p)) ?? pending[0];
-        throw new Error(`agent is waiting for a permission${blocking ? `: ${blocking.name ?? blocking.kind}` : ""}`);
+        throw new Error(`agent stopped: permission${blocking ? ` ${blocking.name ?? blocking.kind}` : ""} was not granted`);
       }
       throw new Error(`agent status ${st.status}`);
     }

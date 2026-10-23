@@ -196,10 +196,10 @@ test("PCLI-14 AskUserQuestion denied up to 3 times; other permissions fail", asy
   for (const d of denials) assert.deepEqual(d.args[2], { behavior: "deny", message: NO_OWNER_REPLY });
   assert.ok(NO_OWNER_REPLY.startsWith("Nobody answers questions from subagents. Do not ask:"));
   const four = await setup(() => [ask, ask, ask, ask, { reply: "never" }]);
-  await assert.rejects(four.session.waitTurn(four.agent.id), { message: "agent is waiting for a permission: AskUserQuestion" });
+  await assert.rejects(four.session.waitTurn(four.agent.id), { message: "agent stopped: permission AskUserQuestion was not granted" });
   assert.equal(four.fake.callsOf("respondToPermission").length, 3);
   const edit = await setup(() => [{ permission: { name: "Edit" } }]);
-  await assert.rejects(edit.session.waitTurn(edit.agent.id), { message: "agent is waiting for a permission: Edit" });
+  await assert.rejects(edit.session.waitTurn(edit.agent.id), { message: "agent stopped: permission Edit was not granted" });
   assert.equal(edit.fake.callsOf("respondToPermission").length, 0);
 });
 
