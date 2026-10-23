@@ -96,6 +96,10 @@ async function ask(prompt, opts, what) {
   return r.result === null ? { fail: { status: "failed", reason: `${what} returned nothing${r.reason ? ` (${r.reason})` : ""}` } } : r;
 }
 
+// G036: a failed stop keeps the issues of the units that answered (gsd-plan forwards them) and names the resume command;
+// the journal replays those units on --resume. The run id is the one `ph workflow` printed when the run started.
+const stopWith = (stop, issues) => ({ ...stop, reason: `${stop.reason}; resume the run with ph workflow --resume <run id> to reuse the units that finished`, issues });
+
 let prev = Infinity;
 let planRevision = null;
 let structure = [];
@@ -105,16 +109,21 @@ for (let cycle = 1; cycle <= MAX_CYCLES; cycle++) {
   phase("Find");
   const pairs = plans.flatMap((p) => lenses.map((l) => ({ p, l })));
   const found = await parallel(pairs.map(({ p, l }) => () => ask([`Review ${planPath(p)} read-only through one lens.`, `Lens ${l.name}: ${l.text}`, "Return JSON {issues: [{plan, severity (high|medium|low), actionable, description, evidence}]}.", ...lockedDecisions, policy, digestLine("checked", digest)].join("\n\n"), { label: `find-${p}-${l.name}`, agentType: agentFor("plan_finder"), readOnly: true, schema: FIND_SCHEMA, ...ro("plan_finder") }, `plan finder ${p} (${l.name})`)));
-  for (const [i, r] of found.entries()) if (!r || r.fail) return r?.fail ?? { status: "failed", reason: `plan finder ${pairs[i].p} (${pairs[i].l.name}) failed to run` };
   // The finder reviewed one plan; its issues belong to that plan's verifier whatever plan id the finder wrote.
-  const issues = found.flatMap((r, i) => (r.result.issues ?? []).map((x, k) => ({ ...x, plan: pairs[i].p, id: `C${cycle}-${i + 1}-${k + 1}` })));
+  const issues = found.flatMap((r, i) => (r?.result?.issues ?? []).map((x, k) => ({ ...x, plan: pairs[i].p, id: `C${cycle}-${i + 1}-${k + 1}` })));
+  const badFind = found.findIndex((r) => !r || r.fail);
+  if (badFind !== -1) return stopWith(found[badFind]?.fail ?? { status: "failed", reason: `plan finder ${pairs[badFind].p} (${pairs[badFind].l.name}) failed to run` }, issues);
   phase("Judge");
   const verdicts = await parallel(plans.map((p) => async () => {
     const mine = issues.filter((x) => x.plan === p);
     if (!mine.length) return { result: { verdicts: [] } };
     return ask([`Verify these plan-review issues of ${planPath(p)} against the plan and the code, read-only.`, `Issues (JSON): ${JSON.stringify(mine)}`, "Return JSON {verdicts: [{id, valid, evidence}]}.", ...lockedDecisions, policy, digestLine("checked", digest)].join("\n\n"), { label: `verify-${p}`, agentType: agentFor("plan_verifier"), readOnly: true, schema: VERIFY_SCHEMA, ...ro("plan_verifier") }, `plan verifier ${p}`);
   }));
-  for (const [i, r] of verdicts.entries()) if (!r || r.fail) return r?.fail ?? { status: "failed", reason: `plan verifier ${plans[i]} failed to run` };
+  const badVerify = verdicts.findIndex((r) => !r || r.fail);
+  if (badVerify !== -1) {
+    const answered = plans.filter((_p, i) => verdicts[i]?.result);
+    return stopWith(verdicts[badVerify]?.fail ?? { status: "failed", reason: `plan verifier ${plans[badVerify]} failed to run` }, issues.filter((x) => answered.includes(x.plan)));
+  }
   const allVerdicts = verdicts.flatMap((r) => r.result.verdicts ?? []);
   if (issues.some((x) => allVerdicts.filter((v) => v.id === x.id && typeof v.valid === "boolean").length !== 1)) return { status: "failed", reason: "plan verifier did not answer every issue exactly once", issues };
   // Only an explicit invalid verdict drops an issue.
