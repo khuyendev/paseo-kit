@@ -62,7 +62,8 @@ test("P67 F3 a contract issue that does not fall stops needs-owner at Contracts 
   assert.deepEqual([r.result.status, r.result.stage], ["needs-owner", "Contracts"], JSON.stringify(r.result));
   assert.match(r.result.reason, /contract issues not falling: 1, was 1/);
   assert.equal(r.result.issues[0].kind, "consumer-signature");
-  assert.deepEqual(labels(r).filter((l) => l.startsWith("contract-")).sort(), ["contract-01-01-1", "contract-01-02-1"], "both named plans got the issue once");
+  // Kit feedback 100 F1: a missing consumed quotation goes to the consumer only (it named both plans before).
+  assert.deepEqual(labels(r).filter((l) => l.startsWith("contract-")).sort(), ["contract-01-02-1"], "the consumer got the issue once");
   assert.equal(w.events.filter((e) => e.startsWith("handoff")).length, 0);
 });
 

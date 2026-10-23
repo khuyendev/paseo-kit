@@ -20,6 +20,7 @@ const answers = {
   guidance: () => ({ verb: "reviewGuidance", args: { reviewGuidance: "<the owner's answer to the issues>" }, command: `set reviewGuidance (the owner's answer) in the args file, then ${RERUN}` }),
   fix: (what) => ({ verb: "fix-and-rerun", command: `${what}, then ${RERUN} (same args)` }),
   workflow: (name, what) => ({ verb: "workflow", command: `${what}: run ${name}, then ${RERUN} (same args)` }),
+  contracts: (changes) => ({ verb: "contracts-change", changes, command: `if the owner accepts the planner's contract changes, apply each with node .agents/harness/ph.mjs gsd contracts change ${N} (stdin JSON {plan, symbol, old, new, reason}; the next contract gate revises the consumers), then ${RERUN} (same args)` }),
 };
 const GUIDE = ["give guidance and rerun", "adjust CONTEXT", "abandon"];
 const REVIEW_OPTIONS = ["give reviewGuidance and rerun", "record the decision in CONTEXT and rerun", "disable plan review (planReview false) and rerun"];
@@ -69,11 +70,12 @@ const agents = Object.fromEntries(Object.entries({ planner: "gsd-planner", check
 // strategy, the plans sent back to the outline, the incremental recheck scope and the contract gate (parts of plan-progress.json).
 const [warnings, advisories, dependents, reallocated, sharedChanges] = [[], [], [], [], []];
 const contractReport = { checks: 0, rounds: 0, issues: 0, changes: [] };
-let [flowReport, streamed, handEdits, validationReport, recheckReport, manifestFresh, contractDirty, depRounds] = [null, null, null, null, null, null, false, 0];
+let [flowReport, streamed, handEdits, validationReport, recheckReport, manifestFresh, contractDirty, depRounds, inputsAt] = [null, null, null, null, null, null, false, 0, null];
 const result = (status, extra = {}) => ({ status, phaseDir, mode, warnings, advisories, ...(flowReport ?? {}), ...(handEdits ? { handEdits } : {}), ...(validationReport ? { validation: validationReport } : {}), ...(reallocated.length ? { reallocated } : {}), ...(recheckReport ? { recheck: recheckReport } : {}), ...(contractReport.checks ? { contracts: contractReport } : {}), ...extra });
 const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reason, ...extra });
 const failedCall = (what, reason) => result("failed", { reason: `${what}${reason ? `: ${reason}` : " returned nothing"}` });
-const ownerStop = (stage, r) => owner(stage, `planner returned ${ownerMarker(r)}`, { marker: ownerMarker(r), question: r?.question ?? r?.summary ?? null, summary: r?.summary ?? null, plans: r?.plans ?? null, conflict: r?.conflict ?? null, options: ["answer and rerun with the same args", "adjust CONTEXT and rerun", "abandon"], answer: answers.context(`the planner's ${ownerMarker(r)} (its question, conflict or proposal)`) });
+// Kit feedback 98 F3, 101 F3: a conflict with the planner's contract_changes answers `contracts change`; one about plans `ids` adds replanPlans.
+const ownerStop = (stage, r, ids = null) => owner(stage, `planner returned ${ownerMarker(r)}`, { marker: ownerMarker(r), question: r?.question ?? r?.summary ?? null, summary: r?.summary ?? null, plans: r?.plans ?? null, conflict: r?.conflict ?? null, options: ["answer and rerun with the same args", "adjust CONTEXT and rerun", "abandon"], answer: isConflict(r) && !r.conflict?.rejected && r.contract_changes?.length ? answers.contracts(r.contract_changes.map((c) => ({ plan: ids?.[0], ...c }))) : { ...answers.context(`the planner's ${ownerMarker(r)} (its question, conflict or proposal)`), ...(isConflict(r) && ids?.length && inputsAt ? { args: { replanPlans: { plans: ids, inputs: inputsAt } } } : {}) } });
 // G017: the settings each revision key hashes (plan-args): a changed lane, role or limit reruns the judgments it decides.
 const settingsDigest = {};
 for (const [key, value] of Object.entries(A.settings)) settingsDigest[key] = await sha(JSON.stringify(value));
@@ -109,6 +111,7 @@ if (anti.code !== 0) return owner("Discuss", `blocking anti-patterns lack their 
 const started = await flow(["plan-run", phaseDir], { run: runId, settings: settingsDigest, force: a.forceProceed ? { reason: a.forceProceed.reason, issues: forcedIssues } : null });
 if (started.code !== 0) return result("failed", { reason: `plan state: ${started.json?.reason ?? started.json?.error ?? `exit ${started.code}`}` });
 const ownRecorded = started.json.recorded ?? [];
+const marks = new Set(started.json.replan ?? []);
 if (started.json.resumed) log(`resumed run (instance ${started.json.instance})${ownRecorded.length ? `: plans this run recorded before it stopped: ${ownRecorded.join(", ")}` : ""}`);
 const research = await gsd(["research", "status", phaseDir]);
 let approvedResearch = null;
@@ -165,6 +168,8 @@ async function plannerCall(session, label, kind, data, extra = {}) {
   const nth = (labelCalls.get(label) ?? 0) + 1;
   labelCalls.set(label, nth);
   const r = await call(await promptFor(kind, data), { label, session, agentType: agents.planner, schema: S.planner, ...roles[session === "planner:outline" ? "outline" : "planner"], ...extra });
+  // Kit feedback 99 F3: a change another plan needs (plan_changes) marks that plan for re-planning (verb plan-replan, plan-progress.json).
+  for (const c of r.result?.plan_changes ?? []) if (`planner:${c?.plan}` !== session && String(c?.plan).startsWith(`${nn}-`) && (await flow(["plan-replan", phaseDir], { run: runId, plan: c?.plan, by: label, change: c?.change })).code === 0) { marks.add(c.plan); log(`plan ${c.plan} marked for re-planning by ${label}: ${c.change}`); }
   return contractsOn && r.result && /^(revise|deprevise|contract|fix)-/.test(label) ? applyContractChanges(r, session, `${label}#${nth}`) : r;
 }
 const reviseCall = async (session, label, ids, issues) => plannerCall(session, label, "revise", { plans: ids.map(planPath), issues, shows: await shows(ids), key: "freeze", digest: freezeHash }, { judges: await plansJudges(ids) });
@@ -175,7 +180,8 @@ async function revisePlans(list, label, gapScoped = false) {
   const answered = list.filter((_, i) => revised[i] && revised[i].result !== null && !ownerMarker(revised[i].result)).map(([id]) => id);
   const stop = await recordEach(answered, gapScoped);
   const missed = revised.findIndex((r) => !r || r.result === null);
-  return { answered, stop, owned: revised.find((r) => ownerMarker(r?.result))?.result ?? null, conflicted: list.filter((_, i) => isConflict(revised[i]?.result)).map(([id]) => id), missed: missed === -1 ? null : { id: list[missed][0], reason: revised[missed]?.reason ?? null } };
+  const owners = list.map(([id], i) => [id, revised[i]?.result]).filter(([, r]) => ownerMarker(r));
+  return { answered, stop, owners, conflicted: owners.filter(([, r]) => isConflict(r)).map(([id]) => id), missed: missed === -1 ? null : { id: list[missed][0], reason: revised[missed]?.reason ?? null } };
 }
 // Kit feedback 87: one step of a part of the run's planning log in plan-progress.json; the answers are a function of the ops sent,
 // so a resumed run that replays the same replies gets the same answers.
@@ -188,9 +194,7 @@ async function planStep(verb, part, step, ops) {
 // recorded (gsd.review_metrics) when it ends, if a checker agent judged in it (`ran`).
 const checkerPart = (name) => ({ name, ran: false, step: (id, ops) => planStep("plan-checker", name, id, ops) });
 const depLedger = checkerPart("dependents");
-async function partFindings(ledger, part) {
-  if (ledger.ran) await prereview("checker", (await flow(["plan-state", phaseDir])).json?.views?.[ledger.name]?.findings ?? [], part);
-}
+async function partFindings(ledger, part) { if (ledger.ran) await prereview("checker", (await flow(["plan-state", phaseDir])).json?.views?.[ledger.name]?.findings ?? [], part); }
 async function withPart(name, fn, part) {
   const ledger = checkerPart(name);
   try { return await fn(ledger); } finally { await partFindings(ledger, part); }
@@ -216,8 +220,8 @@ async function applyContractChanges(r, session, callId) {
   return r;
 }
 // Kit feedback 67 F3, 76: `ph gsd verify contracts` after the planners of a wave, after the checker and plan-review edits and at
-// handoff (--complete). Each plan a failure names is revised by its planner; the rounds are counted here, not in the checker's caps.
-// Still failing after maxCheckIterations rounds, or not falling, stops needs-owner. Returns the stop, or null.
+// handoff (--complete). Each failure goes to the planner of the plan that can fix it; the rounds are counted here, not in the checker's caps.
+// Still failing after maxCheckIterations rounds, or not falling, stops needs-owner (verb plan-contract-route). Returns the stop, or null.
 let contractGates = 0;
 async function contractGate(stage, { complete = false } = {}) {
   if (!contractsOn) return null;
@@ -228,7 +232,8 @@ async function contractGate(stage, { complete = false } = {}) {
     contractDirty = d.dirty;
   };
   await contracts(`g${gate}`, "clean");
-  let prev = Infinity;
+  // Kit feedback 100 F2: a reviser's REVISION_CONFLICT stands only while the check after its round still routes an issue to its plan.
+  let [prev, conflicts] = [null, []];
   for (let round = 1; ; round++) {
     const c = await gsd(["verify", "contracts", N, ...(complete ? ["--complete"] : [])]);
     const verdict = Boolean(c.json) && [0, 1].includes(c.code);
@@ -236,20 +241,21 @@ async function contractGate(stage, { complete = false } = {}) {
     await contracts(`g${gate}:${round}`, "check", { errors: verdict && c.code !== 0 ? errors.length : 0 });
     if (!verdict) return failedCall("contract check", c.json?.error ?? c.json?.reason ?? `exit ${c.code}`);
     for (const w of c.json.warnings ?? []) if (!warnings.includes(w)) warnings.push(w);
-    if (c.code === 0 || !errors.length) return null;
+    const route = (await flow(["plan-contract-route"], { errors: c.code === 0 ? [] : errors, planIds, round, prev, cap: maxCheckIterations, conflicts: conflicts.map(([id]) => id) })).json;
+    for (const id of route.dropped) log(`contract gate (${stage}): REVISION_CONFLICT of ${id} dropped: the check after round ${round - 1} routes no issue to it`);
+    const standing = conflicts.find(([id]) => route.standing.includes(id));
+    const dropped = standing ? ownerStop("Contracts", standing[1], [standing[0]]) : await recordEach(route.dropped, false);
+    if (dropped || c.code === 0 || !errors.length) return dropped;
     log(`contract gate (${stage}) round ${round}: ${errors.length} issues`);
-    const options = ["fix the named plans or the manifest by hand, then rerun", "give guidance and rerun", "abandon"];
-    const answer = answers.fix(`fix the contract issues in the named plans or ${MANIFEST} by hand and record each plan (ph gsd revisions record ${N} plan:<id>)`);
-    if (errors.some((e) => e.kind === "plan-missing")) return owner("Contracts", `${errors.filter((e) => e.kind === "plan-missing").map((e) => e.plan).join(", ")} in the manifest but not planned`, { issues: errors, options, answer });
-    if (round > maxCheckIterations || errors.length >= prev) return owner("Contracts", round > maxCheckIterations ? `${errors.length} contract issues left after ${round - 1} revisions` : `contract issues not falling: ${errors.length}, was ${prev}`, { issues: errors, options, answer });
+    if (route.stop) return owner("Contracts", route.stop, { issues: errors, options: ["fix the named plans or the manifest by hand, then rerun", "give guidance and rerun", "abandon"], answer: answers.fix(`fix the contract issues in the named plans or ${MANIFEST} by hand and record each plan (ph gsd revisions record ${N} plan:<id>)`) });
     prev = errors.length;
     await contracts(`g${gate}:${round}:round`, "round");
-    const byPlan = new Map();
-    for (const e of errors) for (const p of e.plans ?? [e.plan]) if (planIds.includes(p)) byPlan.set(p, [...(byPlan.get(p) ?? []), { plan: p, dimension: "contract", severity: "blocker", required_property: `${e.kind}${e.symbol ? ` ${e.symbol}` : ""}`, description: e.message, fix_hint: e.fix_hint, related_plans: (e.plans ?? []).filter((x) => x !== p) }]);
-    const v = await revisePlans([...byPlan], (id) => `contract-${id}-${round}`);
-    if (v.owned) return ownerStop("Contracts", v.owned);
+    const v = await revisePlans(route.byPlan, (id) => `contract-${id}-${round}`);
+    const other = v.owners.find(([, r]) => !isConflict(r));
+    if (other) return ownerStop("Contracts", other[1], [other[0]]);
     if (v.missed) return failedCall(`contract revision ${v.missed.id} (round ${round})`, v.missed.reason);
     if (v.stop) return v.stop;
+    conflicts = v.owners;
     await contracts(`g${gate}:${round}:clean`, "clean");
   }
 }
@@ -267,10 +273,7 @@ async function prereview(stage, findings, part) {
   const w = await flow(["prereview-record", phaseDir], { stage, runId, mode, ...(part ? { part } : {}), findings });
   log(w.code !== 0 ? `warning: ${stage} review record not written: ${(w.json?.errors ?? [w.json?.error ?? `exit ${w.code}`]).join("; ")}` : `review metrics: ${w.json.record}`);
 }
-async function commitDocs(message, paths) {
-  const c = g.commit_policy.docs ? await gsd(["commit", message, "--files", ...paths]) : { code: 0 };
-  if (c.code !== 0) log(`warning: docs commit failed: ${c.json?.error ?? c.stderr ?? c.code}`);
-}
+async function commitDocs(message, paths) { const c = g.commit_policy.docs ? await gsd(["commit", message, "--files", ...paths]) : { code: 0 }; if (c.code !== 0) log(`warning: docs commit failed: ${c.json?.error ?? c.stderr ?? c.code}`); }
 // Kit feedback 69: reallocation rounds still open to this run. The digest line of plan and checker prompts: the freeze hash, or the
 // verification report in gap mode.
 let reallocLeft = reallocRounds;
@@ -293,20 +296,30 @@ phase("Outline");
 const outlineCheckArgs = ["outline", "check", N, ...(tracer ? [] : ["--tracer", "false"])];
 let outlineFilesMode = "error";
 const outlineCheck = async () => gsd([...outlineCheckArgs, ...(outlineFilesMode === "warn" ? ["--files-per-plan", "warn"] : [])]);
-async function fixOutline(turns, stage) {
-  let check = await outlineCheck();
+// Kit feedback 98 F1, F2: the prose may not reshape a symbol the manifest still freezes since `base` (verb plan-contract-drift, as errors).
+const outlineText = async () => ({ outline: (await flow(["read", OUTLINE])).json?.text ?? "", manifest: (await flow(["read", MANIFEST])).json?.text ?? "" });
+const driftCheck = async (base) => { const c = await outlineCheck(); const d = base && contractsOn ? (await flow(["plan-contract-drift"], { before: base, after: await outlineText() })).json : null; return d?.errors?.length ? { code: 1, json: { ...c.json, errors: [...(c.json?.errors ?? []), ...d.errors] }, drift: d.drift, driftOnly: c.code === 0 } : c; };
+async function fixOutline(turns, stage, base = null) {
+  let check = await driftCheck(base);
   for (let t = 0; check.code !== 0 && t < turns; t++) {
     const errors = check.json?.errors ?? [check.json?.error ?? `outline check exit ${check.code}`];
     const { result: r, reason } = await plannerCall("planner:outline", "outline-fix", "outline-fix", { errors, digest: await hashOf("inputs") }, { judges: await outlineJudges() });
     if (fatal(reason)) return { stop: failedCall("outline fixer", reason) };
     if (ownerMarker(r)) return { stop: ownerStop(stage, r) };
-    check = await outlineCheck();
+    check = await driftCheck(base);
   }
+  if (check.driftOnly) return { stop: owner(stage, `the outline revision reshaped ${check.drift.map((d) => d.symbol).join(", ")} in the prose but not in the manifest contract`, { drift: check.drift, answer: answers.fix(`make each named ${MANIFEST} produces signature the shape the outline gives it (or the outline's code span the manifest signature)`) }) };
   if (check.code !== 0) return { stop: result("failed", { reason: "outline check still failing", errors: check.json?.errors ?? [] }) };
   for (const w of check.json?.warnings ?? []) warnings.push(`outline: ${typeof w === "string" ? w : JSON.stringify(w)}`);
   return { check };
 }
 const parsed = await gsd(["outline", "parse", N]);
+// Kit feedback 101 F3: the owner's answer to a conflict about some plans keeps the outline, its review and the other plans (plan-replan-keep).
+const keyArgs = { inputs: ["inputs"], freeze: FREEZE(), skeleton: ["skeleton"], ...Object.fromEntries((parsed.json?.rows ?? []).map((r) => [`plan:${r.id}`, [`plan:${r.id}`, "--settings", settingsDigest.plan]])) };
+const keyChecks = {};
+for (const [k, argv] of a.replanPlans ? Object.entries(keyArgs) : []) keyChecks[k] = await gsd(["revisions", "check", phaseDir, ...argv]).then(({ code, json }) => ({ code, changed: json?.changed ?? null, recorded: json?.recorded ?? null }));
+const keep = a.replanPlans ? (await flow(["plan-replan-keep"], { replanPlans: a.replanPlans, keys: keyArgs, checks: keyChecks, files: [OUTLINE, MANIFEST, WIRING, P("RESEARCH.md")] })).json : null;
+if (keep) { log(keep.log); for (const k of keep.record) await record(...k); }
 const inputsCheck = await gsd(["revisions", "check", phaseDir, "inputs"]);
 const inputsSame = inputsCheck.code === 0;
 // F40 (kit-feedback 40): name the input that changed, so a regenerated outline has a visible cause.
@@ -335,7 +348,7 @@ if (fixed.stop) return fixed.stop;
 let outline = fixed.check.json;
 const ownOutlineRecord = !outlineReused ? await flow(["plan-outline", phaseDir], { run: runId, inputs: await hashOf("inputs"), sha: await fileSha(OUTLINE) }) : null;
 if (ownOutlineRecord && ownOutlineRecord.code !== 0) log(`warning: outline record not written: ${ownOutlineRecord.json?.reason ?? ownOutlineRecord.json?.error ?? `exit ${ownOutlineRecord.code}`}`);
-if (!outlineReused || !inputsSame) await record("inputs");
+inputsAt = (!outlineReused || !inputsSame ? (await record("inputs")).json?.hash : inputsCheck.json?.recorded) ?? null;
 
 // ---- wiring contract (GSDF-20): only with an adapter architect agent ----
 phase("Wiring");
@@ -386,6 +399,7 @@ const laneOpts = async (label, schema, lane) => ({ label, agentType: agents.skel
 const reviewLane = async (lane) => callTwice(await promptFor("skeleton-lane", { lens: lane.text, files: await snapshotList(), warnings: outline?.warnings ?? [], edges: outline?.crossPlan ?? [], focus: skeletonFocus, digest: await hashOf(...FREEZE()) }), await laneOpts(`skeleton-${lane.id}`, S.issues, lane));
 const resolutionCheck = async (lane, open) => call(await promptFor("skeleton-resolve", { lens: lane.text, files: await snapshotList(), open, digest: await hashOf(...FREEZE()) }), await laneOpts(`resolve-${lane.id}`, S.resolution, lane));
 async function skeletonGate() {
+  const base = await outlineText();
   // A failed lane keeps the findings of the lanes that answered; the stop lists the failed lanes.
   let s = await skel("first", { replies: await parallel(sk.lanes.map((l) => () => reviewLane(l))), outlineChanges: outlineChangeIssues });
   if (s.failed) return { status: "failed", stop: result("failed", { reason: s.failed }) };
@@ -398,7 +412,7 @@ async function skeletonGate() {
       const { result: r, reason } = await plannerCall("planner:outline", `outline-revise-${pass}`, "revise", { plans: [OUTLINE, MANIFEST], issues: toOutline, shows: null, key: "inputs", digest: await hashOf("inputs") }, { judges: await outlineJudges() });
       if (fatal(reason)) return { status: "failed", stop: failedCall("outline reviser", reason) };
       if (ownerMarker(r)) return { status: "needs-owner", stop: ownerStop("Skeleton review", r) };
-      const f = await fixOutline(1, "Skeleton review");
+      const f = await fixOutline(1, "Skeleton review", base);
       if (f.stop) return { status: f.stop.status, stop: f.stop };
       outline = f.check.json;
       if (!edgesBefore && hasEdges(outline) && wiringInUse) {
@@ -456,10 +470,7 @@ let frozen = (await gsd(["outline", "parse", N])).json ?? {};
 const rows = frozen.rows ?? outline?.rows ?? [];
 const planIds = rows.map((r) => r.id);
 freezeHash = await hashOf(...FREEZE());
-async function supersede() {
-  const moved = await gsd(["supersede", phaseDir, "--keep", planIds.join(",")]);
-  for (const m of moved.json?.moved ?? []) log(`superseded ${typeof m === "string" ? m : m.from ?? JSON.stringify(m)}`);
-}
+async function supersede() { for (const m of (await gsd(["supersede", phaseDir, "--keep", planIds.join(",")])).json?.moved ?? []) log(`superseded ${typeof m === "string" ? m : m.from ?? JSON.stringify(m)}`); }
 await supersede();
 const wiringText = (await flow(["read", WIRING])).json?.text ?? "";
 // G039: the medium and low plan-review notes gsd-execute reads; the streams flow writes them once, at its join.
@@ -469,6 +480,7 @@ if (streamed?.stop) return streamed.stop;
 // A plan with a valid record (unchanged since recorded, on the skeleton it was written on) and a passing structure check is kept (the
 // check is returned). Kit feedback 87: a plan this run recorded before it stopped and edited since is kept and recorded again.
 async function keptPlan(id) {
+  if (marks.delete(id)) { log(`plan ${id} planned again: marked for re-planning`); return null; }
   const same = (await gsd(["revisions", "check", phaseDir, `plan:${id}`, "--settings", settingsDigest.plan])).code === 0;
   const own = !same && ownRecorded.includes(id);
   const st = !skeletonFresh && (same || own) ? await gsd(["verify", "plan-structure", planPath(id)]) : null;
@@ -497,10 +509,7 @@ async function waveOf(ids, plan, onKept = null) {
   }
   return { todo, outcomes: await parallel(todo.map((id) => () => plan(id))) };
 }
-function failedOf({ todo, outcomes }) {
-  const i = outcomes.findIndex((o) => !o || o.stop);
-  return i >= 0 ? outcomes[i]?.stop ?? failedCall(`planner ${todo[i]}`, null) : null;
-}
+function failedOf({ todo, outcomes }) { const i = outcomes.findIndex((o) => !o || o.stop); return i >= 0 ? outcomes[i]?.stop ?? failedCall(`planner ${todo[i]}`, null) : null; }
 // The staged flow: wave by wave; returns the stop, or null. The checker's reallocation runs it again. G015: the plans that finished are
 // recorded before the batch stops, so a failed sibling does not drop them.
 const stagedWaves = () => eachWave(async (ids) => {
@@ -548,18 +557,16 @@ async function planStreams() {
   });
   const ids = planIds.filter((id) => reviews.has(id));
   const done = await Promise.all(ids.map((id) => reviews.get(id)));
-  const reviewOf = new Map(ids.map((id, i) => [id, done[i]]));
-  for (const [id, r] of reviewOf) log(`plan stream ${id}: review ${r?.status ?? "failed"}${r?.cycles ? ` after ${r.cycles} cycles` : ""}`);
-  flowReport = { planFlow: "streams", streams: planIds.map((id) => ({ plan: id, planned: planned.has(id), review: reviewOf.get(id) ? reviewOf.get(id).status ?? "failed" : planReview ? "not started" : "off", cycles: reviewOf.get(id)?.cycles ?? 0, counts: reviewOf.get(id)?.counts ?? [] })), dependents };
-  const bad = ids.map((id) => reviewOf.get(id)).find((r) => r?.status !== "converged");
-  if (stop && stop !== "join" && !bad) return { stop: { ...stop, ...flowReport } };
-  const s = bad && { stage: "Plan review", plan: bad.plan ?? null, reason: bad.reason ?? "plan review did not converge", issues: bad.issues ?? [], conflict: bad.conflict ?? null, counts: bad.counts ?? [] };
-  if (bad) return { stop: bad.status === "needs-owner" ? result("needs-owner", { ...s, options: REVIEW_OPTIONS, answer: answers.guidance() }) : result("failed", s) };
+  // The streams report, the first stream that did not converge and the plan-review notes (verb plan-streams-end).
+  const e = (await flow(["plan-streams-end"], { planIds, ids, done, planned: [...planned], planReview })).json;
+  for (const line of e.logs) log(line);
+  flowReport = { ...e.flowReport, dependents };
+  if (stop && stop !== "join" && !e.bad) return { stop: { ...stop, ...flowReport } };
+  if (e.bad) return { stop: e.bad.status === "needs-owner" ? result("needs-owner", { ...e.bad.stop, options: REVIEW_OPTIONS, answer: answers.guidance() }) : result("failed", e.bad.stop) };
   if (!planReview) return { ok: true };
-  const notes = ids.flatMap((id) => reviewOf.get(id).issues ?? []);
-  await flow(["write", notesPath], JSON.stringify(notes.map(({ plan, severity, description }) => ({ plan, severity, description })), null, 2));
-  for (const r of done) for (const st of r.structure ?? []) setStructureWarnings(st.plan, st.warnings);
-  advisories.push(...notes.map((x) => ({ lane: "plan-review", plan: x.plan ?? null, severity: x.severity, description: x.description })));
+  await flow(["write", notesPath], JSON.stringify(e.notes, null, 2));
+  for (const st of e.structure) setStructureWarnings(st.plan, st.warnings);
+  advisories.push(...e.advisories);
   return { ok: true };
 }
 // O67 (kit-feedback 67): the surface other plans build on: the artifacts and key_links of must_haves and the <interfaces> blocks.
@@ -574,14 +581,9 @@ function sameInterface(x, y) { return JSON.stringify(x) === JSON.stringify(y); }
 async function propagate(changed) {
   try {
     while (changed.size) {
-      const providersOf = new Map();
-      for (const p of (await gsd(["phase-plan-index", N])).json?.plans ?? []) {
-        const from = (p.depends_on ?? []).filter((d) => changed.has(d));
-        if (from.length && planIds.includes(p.id)) providersOf.set(p.id, from);
-      }
-      if (!providersOf.size) return null;
-      log(`plan interfaces changed: ${[...changed.keys()].join(", ")}; checking ${[...providersOf.keys()].join(", ")}`);
-      const list = [...providersOf];
+      const { list, log: line } = (await flow(["plan-dependents"], { index: (await gsd(["phase-plan-index", N])).json?.plans ?? [], changed: [...changed.keys()], planIds })).json;
+      if (!list.length) return null;
+      log(line);
       const k = ++depRounds;
       const outs = await parallel(list.map(([id, from]) => () => dependentStream(id, from.map((plan) => ({ plan, path: planPath(plan), ...changed.get(plan) })), `${k}:${id}`)));
       const bad = outs.findIndex((o) => !o || o.stop);
@@ -610,7 +612,7 @@ async function dependentStream(id, providers, stream) {
     if (d.stuck) return { stop: owner("Dependents", `${id} still uses the old interface of ${providers.map((p) => p.plan).join(", ")} after ${round - 1} revisions (${d.open.length} blockers)`, { plan: id, issues: d.open, options: ["give guidance and rerun", "revise the plan by hand, then rerun", "abandon"], answer: answers.fix(`revise ${planPath(id)} to the providers' interface by hand and record it (ph gsd revisions record ${N} plan:${id})`) }) };
     const r = await reviseCall(`planner:${id}`, `deprevise-${id}-${round}`, [id], d.open);
     if (isConflict(r.result)) await depLedger.step(`dep:${stream}:${round}:conflict`, [{ op: "conflict", plans: [id] }]);
-    if (ownerMarker(r.result)) return { stop: ownerStop("Dependents", r.result) };
+    if (ownerMarker(r.result)) return { stop: ownerStop("Dependents", r.result, [id]) };
     if (r.result === null) return { stop: failedCall(`dependent revision ${id}`, r.reason) };
     const s = await recordEach([id], false);
     if (s) return { stop: s };
@@ -621,11 +623,11 @@ async function planOne(id) {
   const marked = await flow(["plan-mark", phaseDir], { run: runId, plans: [id], stage: "planned" });
   if (marked.code !== 0) return { stop: result("failed", { reason: `plan state: ${marked.json?.reason ?? marked.json?.error ?? `exit ${marked.code}`}` }) };
   const entry = ((manifestFresh ?? frozen.manifest)?.plans ?? []).find((p) => p.id === id) ?? { id };
-  const carried = warnings.filter((w) => w.includes(`(${id})`));
+  const carried = [...warnings.filter((w) => w.includes(`(${id})`)), ...(marked.json.notes?.[id] ?? []).map((n) => `re-plan request of ${n.by}: ${n.change}`)];
   const contract = contractsOn ? { show: (await gsd(["contracts", "show", N, "--plan", id])).json } : null;
   const { result: r, reason } = await plannerCall(`planner:${id}`, `plan-${id}`, "write", { id, entry, wiringText, carried, contract, digest: freezeHash }, { judges: await plansJudges([id]) });
   if (fatal(reason)) return { stop: failedCall(`planner ${id}`, reason) };
-  if (ownerMarker(r)) return { stop: ownerStop("Plan", r) };
+  if (ownerMarker(r)) return { stop: ownerStop("Plan", r, [id]) };
   const known = A.knownMarkers.some((m) => markerOf(r).includes(m));
   if (!known && !(await flow(["exists", planPath(id)])).json?.exists?.[planPath(id)]) return { stop: owner("Plan", `planner for ${id} returned no recognised marker and wrote no plan (inconclusive)`, { options: ["rerun", "adjust CONTEXT", "abandon"], answer: answers.rerun("") }) };
   if (!known) log(`planner ${id}: no recognised marker; the structure check decides`);
@@ -715,16 +717,12 @@ async function checkerCall(iter, live, gapScoped, probeFile, earlier, judged) {
   const filesPerPlan = sendBack ? null : (await gsd(["check", "owns", N])).json?.files_per_plan;
   const prompt = await promptFor("checker", { live, gapScoped, filesPerPlan, tracerExtraFiles, sendBack, probeFile, carried, earlier, freeze: freezeHash, checked: await hashOf(...CHECKED()) });
   const c = await callTwice(prompt, await checkerOpts(`checker-${iter}`, sendBack ? S.checkerRealloc : S.checker, judged));
-  // A reply's info issues go to the advisories; the others are warnings or blockers (unknown severity = blocker).
-  const sev = (i) => String(i.severity).toLowerCase();
-  for (const i of c.result?.issues ?? []) if (sev(i) === "info") advisories.push({ lane: "checker", plan: i.plan ?? null, description: i.description });
-  return { ...c, findings: (c.result?.issues ?? []).filter((i) => sev(i) !== "info").map((i) => ({ ...i, severity: sev(i) === "warning" ? "warning" : "blocker" })) };
+  // A reply's info issues go to the advisories; the others are warnings or blockers (verb plan-checker-reply).
+  const v = (await flow(["plan-checker-reply"], { issues: c.result?.issues ?? [] })).json;
+  advisories.push(...v.advisories);
+  return { ...c, findings: v.findings };
 }
-async function checkerSkipped() {
-  const same = await holds(...CHECKED());
-  if (same) log("checker skipped: plans unchanged since the last passing check");
-  return same;
-}
+async function checkerSkipped() { const same = await holds(...CHECKED()); if (same) log("checker skipped: plans unchanged since the last passing check"); return same; }
 // The checker loop (part checker, checker:<part> after a reallocation, or gaps). The cap and the stall test count per plan
 // (kit-feedback 9): a plan that stops converging leaves the loop as stuck, the others go on. The round op keeps the counts, the stuck
 // plans, the carried warnings and the blockers no checker confirmed resolved (kit-feedback 44), asked again as `earlier`.
@@ -769,7 +767,7 @@ async function checkerRounds(scopeIds, gapScoped, ledger) {
     const v = await revisePlans(perPlan, (id) => `revise-${id}-${iter}`, gapScoped);
     if (scope) agentScope = [...new Set([...agentScope, ...v.answered, ...(await linkedPlans(v.answered, scopeIds))])];
     // kit-feedback 37: a REVISION_CONFLICT on one plan does not skip the phase-level revision; the conflict stops the loop after it.
-    const conflict = v.owned ? ownerStop("Checker", v.owned) : null;
+    const conflict = v.owners.length ? ownerStop("Checker", v.owners[0][1], [v.owners[0][0]]) : null;
     if (v.conflicted.length) await ledger.step(`i${iter}:conflict`, [{ op: "conflict", keys: v.conflicted }]);
     if (!conflict && v.missed) return { stop: failedCall(`planner revision ${v.missed.id} (checker iteration ${iter})`, v.missed.reason) };
     if (!conflict && v.stop) return { stop: v.stop };
@@ -905,7 +903,7 @@ async function checkerJoin(scopeIds, ledger) {
       for (const id of scope) if (!shapeBefore.has(id)) shapeBefore.set(id, await planInterface(id));
       const r = await reviseCall(key ? `planner:${key}` : "planner:outline", `revise-${name}-${round}`, scope, gr.open);
       if (isConflict(r.result)) await ledger.step(`route:${name}:${round}:conflict`, [{ op: "conflict", keys: [key] }]);
-      if (ownerMarker(r.result)) return { conflict: ownerStop("Checker", r.result) };
+      if (ownerMarker(r.result)) return { conflict: ownerStop("Checker", r.result, key ? [key] : null) };
       if (r.result === null) return { stop: failedCall(`planner revision ${name} (checker join round ${round})`, r.reason) };
       const s = await recordEach(scope, false);
       if (s) return { stop: s };
@@ -950,6 +948,7 @@ async function checkerJoin(scopeIds, ledger) {
 }
 
 async function handoffStage(ids, docs, override, handoffArgs = [], gap = null) {
+  const marked = [...marks].filter((id) => ids.includes(id)); if (marked.length) return owner("Plans", `${marked.join(", ")} marked for re-planning after their planner ran in this run (plan-progress.json replan)`, { replan: marked, answer: answers.rerun("") });
   // Kit feedback 67 F3: the last contract check, with every manifest plan written. Gap plans have no manifest entry.
   const contractStop = gap ? null : await contractGate("Handoff", { complete: true });
   if (contractStop) return contractStop;

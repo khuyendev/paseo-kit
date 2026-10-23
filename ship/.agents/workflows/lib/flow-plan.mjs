@@ -8,14 +8,20 @@
 //   plan-probes        the checker's deterministic probes as issues (countProbes, the Files/plan lines)
 //   plan-linked        the plans a plan edit can affect (incremental recheck, kit feedback 76)
 //   plan-realloc-diff  what an outline reallocation changed (kit feedback 69)
+//   plan-contract-route the contract gate's issues per plan and its stop rule, and which revision conflicts still stand (100)
+//   plan-contract-drift a symbol an outline revision reshaped in the prose but not in the manifest (98)
+//   plan-replan-keep   what the owner's answer to a conflict about some plans keeps on the rerun (101 F3)
+//   plan-streams-end, plan-checker-reply, plan-dependents: the streams flow's end, a checker reply's issues, the dependent plans (O65, O67)
 import fs from "node:fs";
 import { read } from "./flow-files.mjs";
 import { fillTemplate, templateFile, templateText } from "./flow-prompt.mjs";
 import { readText } from "../../harness/lib/io.mjs";
+import { contractDrift, fixPlans } from "../../harness/gsd/contracts.mjs";
 import { kitHelpers } from "../../harness/workflow/script.mjs";
 
 const { PH, policyBlock, digestLine } = kitHelpers({ shell: null, agent: null });
 const isObj = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
+const asArray = (v) => (Array.isArray(v) ? v : []);
 const isInt13 = (v) => Number.isInteger(v) && v >= 1 && v <= 3;
 const cut300 = (s) => String(s ?? "").replace(/\s+/g, " ").replace(/\|/g, "/").slice(0, 300);
 const failedText = (what, reason) => `${what}${reason ? `: ${reason}` : " returned nothing"}`;
@@ -25,7 +31,7 @@ export const OWNER_MARKERS = ["REVISION_CONFLICT", "PHASE SPLIT RECOMMENDED", "S
 export const KNOWN_MARKERS = [...OWNER_MARKERS, "OUTLINE COMPLETE", "PLANNING COMPLETE", "REVISION COMPLETE", "WIRING COMPLETE", "CONTRACT_CHANGE"];
 const PLANNER_SCHEMA = {
   type: "object",
-  properties: { marker: { type: "string" }, summary: { type: "string" }, question: { type: "string" }, plans: { type: "array", items: { type: "string" }, description: "with an owner marker: the proposal, one string per proposed split group (PHASE SPLIT RECOMMENDED) or per audit option (SOURCE AUDIT)" }, conflict: { type: "object" }, changes: { type: "array" }, contract_changes: { type: "array", items: { type: "object", properties: { plan: { type: "string" }, symbol: { type: "string" }, old: { type: "string" }, new: { type: "string" }, reason: { type: "string" } }, required: ["symbol", "old", "new", "reason"] }, description: "CONTRACT_CHANGE: a produced signature that has to change, one entry per symbol" } },
+  properties: { marker: { type: "string" }, summary: { type: "string" }, question: { type: "string" }, plans: { type: "array", items: { type: "string" }, description: "with an owner marker: the proposal, one string per proposed split group (PHASE SPLIT RECOMMENDED) or per audit option (SOURCE AUDIT)" }, conflict: { type: "object" }, changes: { type: "array" }, contract_changes: { type: "array", items: { type: "object", properties: { plan: { type: "string" }, symbol: { type: "string" }, old: { type: "string" }, new: { type: "string" }, reason: { type: "string" } }, required: ["symbol", "old", "new", "reason"] }, description: "CONTRACT_CHANGE: a produced signature that has to change, one entry per symbol" }, plan_changes: { type: "array", items: { type: "object", properties: { plan: { type: "string" }, change: { type: "string" } }, required: ["plan", "change"] }, description: "a change another plan of this phase needs because of your work, which you may not edit (one entry per plan, its id NN-MM): the flow has that plan planned again with this change; never leave such a follow-up only in the summary" } },
   required: ["marker"],
 };
 const ISSUE = { type: "object", properties: { plan: { type: ["string", "null"] }, dimension: { type: "string" }, severity: { type: "string" }, required_property: { type: "string" }, description: { type: "string" }, evidence: { type: "string" }, fix_hint: { type: "string" }, target: { type: "string" } }, required: ["severity", "required_property", "description"] };
@@ -79,6 +85,10 @@ export function planArgs(root, { args = {}, policy = {}, gsd: g = {}, adapter = 
   const forcedIssues = a.forceProceed?.issues ?? null;
   if (forcedIssues !== null && (!Array.isArray(forcedIssues) || !forcedIssues.length || forcedIssues.some((i) => !i || typeof i !== "object" || !(i.plan === null || (typeof i.plan === "string" && i.plan.trim())) || typeof i.dimension !== "string" || !i.dimension.trim()))) return failed("forceProceed.issues needs a non-empty list of {plan (a plan id, null for a phase-level issue), dimension}");
   if (a.reviewGuidance !== undefined && (typeof a.reviewGuidance !== "string" || !a.reviewGuidance.trim())) return failed("reviewGuidance needs non-empty text");
+  // Kit feedback 101 F3: the answer to a planner's conflict about these plans (the stop's args), for the inputs record it names.
+  const rp = a.replanPlans;
+  if (rp !== undefined && (!isObj(rp) || !Array.isArray(rp.plans) || !rp.plans.length || rp.plans.some((id) => typeof id !== "string" || !/^\d+(\.\d+)?-\d+$/.test(id)) || typeof rp.inputs !== "string" || !rp.inputs)) return failed("replanPlans needs {plans: [plan ids NN-MM], inputs: the inputs digest the stop named}");
+  if (rp !== undefined && a.replan) return failed("replanPlans keeps the outline and the other plans; it cannot go with replan");
   if (a.skipResearch && typeof a.researchSkipReason !== "string") return { status: "needs-owner", stage: "Research", reason: "skipResearch needs a researchSkipReason", code: 1 };
   const lanes = lanesArg.map((l, i) => ({ id: `L${i + 1}`, lens: l.lens, model: l.model, effort: l.effort, text: lensText(l.lens, kitLenses, adapter), opts: roleOpts(roleOverrides, "skeleton_lane", { model: l.model, effort: l.effort }) }));
   const unknownLens = lanes.find((l) => !l.text);
@@ -417,4 +427,80 @@ export function planValidation(root, { off = null, approvedResearch = null, stra
   };
 }
 
-export const PLAN_VERBS = Object.freeze(["plan-args", "plan-prompt", "plan-skeleton", "plan-probes", "plan-linked", "plan-realloc-diff", "plan-validation"]);
+// ---- plan-contract-route (kit feedback 67 F3, 100): the issues of a contract check per plan, and the gate's stop rule ----
+// Each error goes to its `fixers` (the plans whose planner can fix it, `ph gsd verify contracts`; fixPlans for an error without the
+// field) that are plans of the run, else to the plans it names. `conflicts`: the plans whose reviser returned REVISION_CONFLICT in
+// the last round; a conflict stands while this check still routes an issue to its plan, else it is dropped (100 F2).
+export function planContractRoute(root, { errors = [], planIds = [], round = 1, prev = null, cap = 1, conflicts = [] } = {}) {
+  const byPlan = new Map();
+  for (const e of errors) {
+    const ours = (list) => list.filter((p) => planIds.includes(p));
+    const to = ours(asArray(e.fixers).length ? asArray(e.fixers) : fixPlans(e));
+    for (const p of to.length ? to : ours(asArray(e.plans).length ? e.plans : [e.plan])) byPlan.set(p, [...(byPlan.get(p) ?? []), { plan: p, dimension: "contract", severity: "blocker", required_property: `${e.kind}${e.symbol ? ` ${e.symbol}` : ""}`, description: e.message, fix_hint: e.fix_hint, related_plans: asArray(e.plans).filter((x) => x !== p) }]);
+  }
+  const missing = errors.filter((e) => e.kind === "plan-missing").map((e) => e.plan);
+  const over = errors.length > 0 && (round > cap || (prev !== null && errors.length >= prev));
+  const stop = missing.length ? `${missing.join(", ")} in the manifest but not planned` : over ? (round > cap ? `${errors.length} contract issues left after ${round - 1} revisions` : `contract issues not falling: ${errors.length}, was ${prev}`) : null;
+  return { byPlan: [...byPlan], stop, standing: conflicts.filter((id) => byPlan.has(id)), dropped: conflicts.filter((id) => !byPlan.has(id)) };
+}
+
+// ---- plan-contract-drift (kit feedback 98 F1): an outline revision that reshaped a symbol in the prose but not in the manifest ----
+/** Flow verb `plan-contract-drift` {before: {outline, manifest}, after: {outline, manifest}} -> {drift, errors, warnings}. */
+export const planContractDrift = (root, { before = {}, after = {} } = {}) => contractDrift(before, after);
+
+// ---- plan-replan-keep (kit feedback 101 F3): what the owner's answer to a conflict about some plans keeps ----
+// `replanPlans` {plans, inputs}; `keys` {<name>: revisions key argv} for inputs, freeze, skeleton and plan:<id>; `checks`
+// {<name>: {code, changed, recorded}} their `revisions check` answers; `files`: the outline, manifest, wiring and research report.
+// The answer applies once: the inputs record is still the one the stop named. An input that changed since may be the owner's
+// answer (CONTEXT.md, a decision record), never the outline files, the research, a requirement, a role file, the roadmap or the
+// settings. Then inputs, freeze and every plan not named are recorded again; the named plans are planned again.
+export function planReplanKeep(root, { replanPlans = null, keys = {}, checks = {}, files = [] } = {}) {
+  const no = (why) => ({ keep: false, record: [], kept: [], log: `replanPlans not applied: ${why}; the run plans as without it` });
+  if (!replanPlans) return no("none given");
+  if (checks.inputs?.code === 0) return no("the inputs did not change since the stop");
+  if (checks.inputs?.recorded !== replanPlans.inputs) return no(`the inputs record is not the one the stop named (${replanPlans.inputs}): used already, or the outline was written again since`);
+  const denied = (label) => files.includes(label) || ["settings", "roadmap"].includes(label) || /^(requirement|harness):/.test(label) || /-PLAN\.md$/.test(label);
+  const answerOnly = (c) => c?.code === 1 && Array.isArray(c.changed) && c.changed.length > 0 && !c.changed.some(denied);
+  for (const k of ["inputs", "freeze"]) if (!answerOnly(checks[k])) return no(`the ${k} record changed in ${checks[k]?.changed?.join(", ") || "parts it cannot name"}, not only in the owner's answer`);
+  if (checks.skeleton?.code !== 0) return no("the skeleton review inputs changed");
+  const kept = Object.keys(keys).filter((k) => k.startsWith("plan:") && !replanPlans.plans.includes(k.slice(5)) && answerOnly(checks[k])).map((k) => k.slice(5));
+  return { keep: true, record: [keys.inputs, keys.freeze, ...kept.map((id) => keys[`plan:${id}`])], kept, log: `replanPlans: the owner's answer to the conflict of ${replanPlans.plans.join(", ")} changed ${checks.inputs.changed.join(", ")}; the outline, its review and ${kept.length ? kept.join(", ") : "no other plan"} are kept, ${replanPlans.plans.join(", ")} planned again` };
+}
+
+// ---- plan-streams-end (O65, O67): the end of the streams flow once every review stream returned ----
+// `done`: the reviews of `ids` (the plans whose stream started), in that order. Answers the log lines, the streams report, the first
+// review that did not converge (`bad` {status, stop}) and the plan-review notes with their advisories and structure warnings. The
+// script adds its live dependents list to the report (the checker join fills it later).
+export function planStreamsEnd(root, { planIds = [], ids = [], done = [], planned = [], planReview = false } = {}) {
+  const reviewOf = new Map(ids.map((id, i) => [id, done[i]]));
+  const logs = [...reviewOf].map(([id, r]) => `plan stream ${id}: review ${r?.status ?? "failed"}${r?.cycles ? ` after ${r.cycles} cycles` : ""}`);
+  const flowReport = { planFlow: "streams", streams: planIds.map((id) => ({ plan: id, planned: planned.includes(id), review: reviewOf.get(id) ? reviewOf.get(id).status ?? "failed" : planReview ? "not started" : "off", cycles: reviewOf.get(id)?.cycles ?? 0, counts: reviewOf.get(id)?.counts ?? [] })) };
+  const b = ids.map((id) => reviewOf.get(id)).find((r) => r?.status !== "converged");
+  const bad = b ? { status: b.status ?? null, stop: { stage: "Plan review", plan: b.plan ?? null, reason: b.reason ?? "plan review did not converge", issues: b.issues ?? [], conflict: b.conflict ?? null, counts: b.counts ?? [] } } : null;
+  const notes = bad || !planReview ? [] : ids.flatMap((id) => reviewOf.get(id).issues ?? []);
+  return {
+    logs, flowReport, bad, notes: notes.map(({ plan, severity, description }) => ({ plan, severity, description })),
+    structure: bad || !planReview ? [] : done.flatMap((r) => r.structure ?? []), advisories: notes.map((x) => ({ lane: "plan-review", plan: x.plan ?? null, severity: x.severity, description: x.description })),
+  };
+}
+
+// ---- plan-checker-reply (GSDF-26): a checker reply's info issues are advisories, the others warnings or blockers ----
+export function planCheckerReply(root, { issues = [] } = {}) {
+  const sev = (i) => String(i.severity).toLowerCase();
+  return {
+    advisories: issues.filter((i) => sev(i) === "info").map((i) => ({ lane: "checker", plan: i.plan ?? null, description: i.description })),
+    findings: issues.filter((i) => sev(i) !== "info").map((i) => ({ ...i, severity: sev(i) === "warning" ? "warning" : "blocker" })),
+  };
+}
+
+// ---- plan-dependents (O67): the plans whose depends_on names a plan whose interface changed, with those providers ----
+export function planDependents(root, { index = [], changed = [], planIds = [] } = {}) {
+  const list = [];
+  for (const p of index) {
+    const from = (p.depends_on ?? []).filter((d) => changed.includes(d));
+    if (from.length && planIds.includes(p.id)) list.push([p.id, from]);
+  }
+  return { list, log: list.length ? `plan interfaces changed: ${changed.join(", ")}; checking ${list.map(([id]) => id).join(", ")}` : null };
+}
+
+export const PLAN_VERBS = Object.freeze(["plan-args", "plan-prompt", "plan-skeleton", "plan-probes", "plan-linked", "plan-realloc-diff", "plan-validation", "plan-contract-route", "plan-contract-drift", "plan-replan-keep", "plan-streams-end", "plan-checker-reply", "plan-dependents"]);
