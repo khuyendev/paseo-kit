@@ -93,7 +93,7 @@ Use a workflow if you can define the batches in advance.
 ```javascript
 const MIGRATION_RESULT = { type: 'object', required: ['worktreePath', 'changedFiles'], properties: {
   worktreePath: { type: 'string', minLength: 1 },
-  changedFiles: { type: 'array', minItems: 1, uniqueItems: true,
+  changedFiles: { type: 'array', minItems: 1,
     items: { type: 'string', minLength: 1 } } } }
 const MIGRATION_VERDICT = { type: 'object', required: ['status', 'reason'], properties: {
   status: { type: 'string', enum: ['confirmed', 'refuted', 'uncertain'] },

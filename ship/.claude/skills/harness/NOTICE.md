@@ -116,6 +116,7 @@ Region inventory (source line ranges of the carried file; each region is replace
 - `references/team-examples.md` lines 35-36 -> 2 line(s): (c)
 - `references/team-examples.md` lines 38-39 -> 2 line(s): (c)
 - `references/team-examples.md` lines 41-43 -> 3 line(s): (c)
+- `references/team-examples.md` lines 96-96 -> 1 line(s): (c)
 - `references/team-examples.md` lines 118-119 -> 2 line(s): (c)
 - `references/team-examples.md` lines 121-121 -> 1 line(s): (c)
 - `references/team-examples.md` lines 132-133 -> 2 line(s): (c)
