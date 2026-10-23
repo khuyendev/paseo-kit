@@ -274,7 +274,7 @@ Every `gsd.*` and `adapter.*` key of 4.1 and 4.2 is one of two kinds, decided by
 
 | kind | keys (reader in the kit) |
 | --- | --- |
-| verb or invariant setting | `gsd.roles` (model resolution, outline verbs, gate settings), `gsd.plan_limits` (`ph gsd outline`, plan checks), `gsd.tracer_extra_files` (outline), `gsd.files_per_plan` (outline, plan checks), `gsd.execution_mode` (outline), `gsd.isolation` (worktree setup checks of doctor and lint), `gsd.commit_policy` (`ph gsd commit`), `gsd.requirement_id_regex` (phase, roadmap and project verbs), `gsd.research_ahead` (`ph gsd research status`), `gsd.review_metrics` (`ph gsd hand-edit scan`), `gsd.contract_check` (outline verbs, gate), `gsd.unowned_outside_roots` (flow lib `flow-execute.mjs`), `adapter.commands` (gate, evidence, lint), `adapter.verify_vocabulary` (gate, adapter check), `adapter.ownership` (the owns matcher), `adapter.review_lenses` (gate, `phase complete` proposals, workflow argument check), `adapter.syntax_checkers` (syntax hook), `adapter.instructions` (revision keys, gate), `adapter.envelope` (adapter contract text), `adapter.stack_skill` (gate, doctor, lint), `adapter.agents` (outline, revisions, gate, doctor), `adapter.mutex` (gate, adapter check), `adapter.hook_timeout_s` (adapter hooks), `adapter.dependency_probe` and `adapter.dependency_probe_timeout_s` (`ph gsd check` dependencies), `adapter.command_probes` (lint), `adapter.attribution` (gate, doctor), `adapter.worktree_setup` (runtime worktrees) |
+| verb or invariant setting | `gsd.roles` (model resolution, outline verbs, gate settings), `gsd.plan_limits` (`ph gsd outline`, plan checks), `gsd.tracer_extra_files` (outline), `gsd.files_per_plan` (outline, plan checks), `gsd.execution_mode` (outline), `gsd.isolation` (worktree setup checks of doctor and lint), `gsd.commit_policy` (`ph gsd commit`), `gsd.requirement_id_regex` (phase, roadmap and project verbs), `gsd.research_ahead` (`ph gsd research status`), `gsd.review_metrics` (`ph gsd hand-edit scan`), `gsd.contract_check` (outline verbs, gate), `gsd.unowned_outside_roots` (flow lib `flow-execute.mjs`), `adapter.commands` (gate, evidence, lint), `adapter.verify_vocabulary` (gate, adapter check), `adapter.ownership` (the owns matcher), `adapter.review_lenses` (gate, `phase complete` proposals, workflow argument check), `adapter.syntax_checkers` (syntax hook), `adapter.instructions` (revision keys, gate), `adapter.envelope` (adapter contract text), `adapter.stack_skill` (gate, doctor, lint), `adapter.agents` (outline, revisions, gate, doctor), `adapter.mutex` (gate, adapter check), `adapter.hook_timeout_s` (adapter hooks), `adapter.dependency_probe` and `adapter.dependency_probe_timeout_s` (`ph gsd check` dependencies), `adapter.command_probes` (lint), `adapter.attribution` (gate, doctor), `adapter.worktree_setup` (runtime worktrees), `adapter.checks` (the check-weakening step of every gate, `ph doctor`) |
 | composition policy | `gsd.granularity` (gsd-plan), `gsd.execute_schedule` (gsd-execute), `gsd.request_check` (gsd-execute), `gsd.batch_review` (gsd-execute), `gsd.fixer_verifies_itself` (gsd-execute), `gsd.max_verify_rounds` (gsd-execute), `gsd.branching` (gsd-execute), `gsd.protected_branches` (gsd-execute), `gsd.research` (skill gsd-discuss), `gsd.plan_review` (gsd-plan), `gsd.plan_review_check` (gsd-plan-review), `gsd.plan_flow` (gsd-plan), `gsd.checker_reallocate` (gsd-plan), `gsd.checker_recheck` (gsd-plan), `gsd.skeleton_lanes` (gsd-plan; the workflow argument check validates its lenses), `gsd.max_skeleton_passes` (gsd-plan), `gsd.max_check_iterations` (gsd-plan), `gsd.drift_threshold` (gsd-plan), `gsd.map_mode` (gsd-map-codebase), `gsd.debug` (gsd-debug), `gsd.fixer` (gsd-execute), `gsd.parallelization` (gsd-execute, gsd-verify), `gsd.code_review` (gsd-execute), `gsd.review_depth` (gsd-execute), `gsd.verify_mode` (gsd-verify), `gsd.validation_strategy` (gsd-plan), `gsd.pending_request_tasks` (gsd-execute), `adapter.smoke_triggers` (gsd-execute, passed to the `smoke-due` verb), `adapter.startup_globs` (skill gsd-verify) |
 
 `gsd.protected_branches` is a guard that today only the default gsd-execute enforces: a composition that stops reading it commits on any branch (doctor notes it as for every policy).
@@ -575,6 +575,20 @@ error, `{status: "error", error}`); `ph gsd` verbs exit 0, 1, 66 (nothing matche
 | `review-record` | `<phaseDir>`, `{waveId, record}` | `{ok, record, review}` or `{ok: false, errors}` | `<phaseDir>/review/<name>.json` and `<NN>-REVIEW.md` |
 | `prereview-record` | `<phaseDir>`, the record | `{ok, ...}` or `{ok: false, errors}` | `<phaseDir>/prereview/<name>.json` |
 | `validation-strategy` | `<phaseDir>` | `{ok, status}` | `<phaseDir>/<NN>-VALIDATION.md` |
+| `check-weakening` | `<phaseDir>`, `{base?, files?}` | `{status: ok\|weakened\|off, weakened, allowed, notes}`, exit 1 when a weakening stands | none (runs inside every gate; section 11 Check weakening) |
+| `state-read` | `<phaseDir>` | the typed execute state (a 3c00968 record is migrated in memory) | none |
+| `state-plan` | `<phaseDir>`, `{plan, stage: dispatched\|executed\|transferred\|committed\|tracked\|halted, ...}` | `{status: ok\|refused, state}` | `execute-progress.json` (single writer, contract-checked) |
+| `state-shared` | `<phaseDir>`, `{op: add\|tag\|applied, ...}` | `{status, state}` | `execute-progress.json` |
+| `state-request` | `<phaseDir>`, `{op: route\|close, plan, path, by?, why?, via?, outputs?}` | `{status, state}` | `execute-progress.json` |
+| `state-integration` | `<phaseDir>`, `{op: add, files, why}` | `{status, state}` | `execute-progress.json` |
+| `state-answer` | `<phaseDir>`, `{id}` | `{status, state}` | `execute-progress.json` (owner answer taken) |
+| `state-smoke` | `<phaseDir>`, the smoke record | `{status, state}` | `execute-progress.json` |
+| `plan-state` | `<phaseDir>` | the typed planning state | none |
+| `plan-run` | `<phaseDir>`, `{run, settings, force}` | `{status, resumed?, ...}` | `plan-progress.json` (single writer) |
+| `plan-end` | `<phaseDir>`, `{run}` | `{status}` | `plan-progress.json` |
+| `plan-mark` | `<phaseDir>`, `{run, plans, stage: planned\|recorded}` | `{status}` | `plan-progress.json` |
+| `plan-outline` | `<phaseDir>`, `{run, inputs, sha}` | `{status}` | `plan-progress.json` |
+| `plan-checker`, `plan-contracts`, `plan-realloc`, `plan-recheck` | `<phaseDir>`, `{run, part, step, ops}` | `{status, log}` | `plan-progress.json` (op log per part) |
 
 ### `ph gsd` verbs
 
@@ -625,6 +639,7 @@ error, `{status: "error", error}`); `ph gsd` verbs exit 0, 1, 66 (nothing matche
 | `debug.status`, `debug.list` | `<slug>`, none | the session; the sessions | none |
 | `upstream.vendor`, `upstream.build`, `upstream.check`, `upstream.bump` | `--from`, `--commit`, `--target` | the vendoring report and its problems | `.agents/gsd/upstream/`, `.agents/gsd/generated/` (`check`: none) |
 | `verbs` | none | `{ported: [verb]}` | none |
+| `allow` | `<phase\|debug> --path <file> --reason <text>` | the owner answer | `owner-answers.json` (a check weakening allowed for that path and phase) |
 
 Upstream verbs the kit names but does not serve (`gsd/verb-table.mjs` `NOT_PORTED`) answer exit 69 with their reason;
 a composition that calls one is reported by the verb check.
