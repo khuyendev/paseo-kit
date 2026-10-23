@@ -258,8 +258,10 @@ export function worktreeChanges(dir) {
 }
 
 // A tracked file whose only difference from its base commit is line endings (a toolchain rewrote CRLF or LF). An
-// untracked file has no base copy to compare with, so it never qualifies.
+// untracked file has no base copy to compare with, and a file equal to its base (a restored seed, GSDF-94) differs in
+// more than line endings from what the worktree was given, so neither qualifies.
 const eolOnly = (wt, base, rel) => git(wt, ["cat-file", "-e", `${base}:${rel}`], { allowFail: true }).code === 0
+  && git(wt, ["diff", "--quiet", base, "--", rel], { allowFail: true }).code !== 0
   && git(wt, ["diff", "--ignore-cr-at-eol", "--quiet", base, "--", rel], { allowFail: true }).code === 0;
 
 // GSDF-94: validate everything first, then copy file by file; a refusal writes nothing and keeps the worktree.
