@@ -84,6 +84,17 @@ const PLAN = `${q.dir}/${q.id}-PLAN.md`;
 const SUMMARY = `${q.dir}/${q.id}-SUMMARY.md`;
 const data = `DATA_START\n${description}\nDATA_END`;
 const context = a.contextPath ? `Owner decisions: ${a.contextPath} (locked).` : "";
+// G103: a structure error the planner can fix in place gets one repair turn in its own session, as gsd-plan does (GSDF-25).
+async function structureFix(label, stage) {
+  let st = await gsd(["verify", "plan-structure", PLAN]);
+  if (st.code === 0) return null;
+  const errors = st.json?.errors ?? [st.json?.error ?? `exit ${st.code}`];
+  const fix = await call([`Fix ${PLAN} in place. verify plan-structure reported exactly these errors:`, errors.map((e) => `- ${typeof e === "string" ? e : JSON.stringify(e)}`).join("\n"), "Return JSON {marker}. Never ask the owner; never commit."].join("\n\n"), { label, session: "planner:quick", agentType: "gsd-planner", role: "planner", schema: PLAN_SCHEMA });
+  if (!fix.result && fatal(fix.reason)) return { status: "failed", reason: `planner failed: ${fix.reason}`, dir: q.dir };
+  if (ownerMarker(fix)) return { status: "needs-owner", stage, reason: `planner returned ${ownerMarker(fix)}`, marker: fix.result.marker, conflict: fix.result.conflict ?? null, dir: q.dir };
+  st = await gsd(["verify", "plan-structure", PLAN]);
+  return st.code === 0 ? null : { status: "failed", reason: `quick plan still invalid after repair: ${(st.json?.errors ?? []).join("; ")}`, dir: q.dir };
+}
 
 let carried = [];
 phase("Plan");
@@ -95,8 +106,8 @@ const planPrompt = [`Write ONE plan ${PLAN} of 1-3 tasks for this quick task; ev
 const p = await call(planPrompt, { label: "quick-plan", session: "planner:quick", agentType: agentFor("planner", "gsd-planner"), role: "planner", schema: PLAN_SCHEMA });
 if (!p.result && fatal(p.reason)) return { status: "failed", reason: `planner failed: ${p.reason}` };
 if (ownerMarker(p)) return { status: "needs-owner", stage: "Plan", reason: `planner returned ${ownerMarker(p)}`, marker: p.result.marker, dir: q.dir };
-let st = await gsd(["verify", "plan-structure", PLAN]);
-if (st.code !== 0) return { status: "failed", reason: `quick plan invalid: ${(st.json?.errors ?? []).join("; ")}`, dir: q.dir };
+const invalid = await structureFix("quick-fix-plan", "Plan");
+if (invalid) return invalid;
 
 if (a.full) {
   phase("Check");
@@ -112,8 +123,8 @@ if (a.full) {
     const rv = await call([`Revise ${PLAN} for these issues:`, JSON.stringify(open)].join("\n\n"), { label: `quick-revise-${i}`, session: "planner:quick", agentType: agentFor("planner", "gsd-planner"), role: "planner", schema: PLAN_SCHEMA });
     if (!rv.result && fatal(rv.reason)) return { status: "failed", reason: `planner failed: ${rv.reason}`, dir: q.dir };
     if (ownerMarker(rv)) return { status: "needs-owner", stage: "Check", reason: `planner returned ${ownerMarker(rv)}`, marker: rv.result.marker, conflict: rv.result.conflict ?? null, issues: open, dir: q.dir };
-    st = await gsd(["verify", "plan-structure", PLAN]);
-    if (st.code !== 0) return { status: "failed", reason: "quick plan invalid after revision", dir: q.dir };
+    const revised = await structureFix(`quick-fix-${i}`, "Check");
+    if (revised) return revised;
   }
 }
 
