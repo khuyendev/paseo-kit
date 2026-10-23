@@ -99,6 +99,7 @@ if (!isInt13(maxCheckIterations)) return { status: "failed", reason: `maxCheckIt
 if (!Array.isArray(lanesArg) || !lanesArg.length || lanesArg.some((l) => typeof l?.lens !== "string" || !l.lens.trim())) return { status: "failed", reason: "skeletonLanes needs at least one lane with a non-empty lens" };
 if (!["auto", "always", "never"].includes(wiringMode)) return { status: "failed", reason: `wiring must be auto, always or never, not ${wiringMode}` };
 if (a.forceProceed !== undefined && !String(a.forceProceed?.reason ?? "").trim()) return { status: "failed", reason: "forceProceed needs a non-empty reason" };
+if (a.reviewGuidance !== undefined && (typeof a.reviewGuidance !== "string" || !a.reviewGuidance.trim())) return { status: "failed", reason: "reviewGuidance needs non-empty text" };
 if (a.skipResearch && typeof a.researchSkipReason !== "string") return needsOwner("Research", "skipResearch needs a researchSkipReason");
 const N = phaseNumber(phaseDir);
 const nn = phaseDir.split("/").pop().split("-")[0];
@@ -545,8 +546,12 @@ docPaths.push(...planIds.map(planPath));
 // ---- optional plan review (GSDF-37) ----
 if (planReview) {
   phase("Plan review");
-  const pr = await workflow("gsd-plan-review", { phaseDir, plans: planIds, roles: roleOverrides, researchPath: approvedResearch });
-  if (pr?.status !== "converged") return result(pr?.status === "failed" ? "failed" : "needs-owner", { stage: "Plan review", reason: pr?.reason ?? "plan review did not converge", issues: pr?.issues ?? [] });
+  const pr = await workflow("gsd-plan-review", { phaseDir, plans: planIds, roles: roleOverrides, researchPath: approvedResearch, guidance: a.reviewGuidance ?? null });
+  if (pr?.status !== "converged") {
+    const stop = { stage: "Plan review", reason: pr?.reason ?? "plan review did not converge", issues: pr?.issues ?? [], conflict: pr?.conflict ?? null };
+    // The owner answers here and reruns: reviewGuidance goes to the review prompts, a CONTEXT decision is read by them too.
+    return pr?.status === "failed" ? result("failed", stop) : result("needs-owner", { ...stop, options: ["give reviewGuidance and rerun", "record the decision in CONTEXT and rerun", "disable plan review (planReview false) and rerun"] });
+  }
   for (const s of pr.structure ?? []) setStructureWarnings(s.plan, s.warnings);
 }
 
