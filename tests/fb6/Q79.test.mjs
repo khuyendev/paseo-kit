@@ -39,7 +39,9 @@ function run(res, { overlay, extra = {} } = {}) {
 test("Q79 F1 a pending-request task naming the request it routed is done: the shared step runs, the gate proves it, the plan commits", async () => {
   const { w, r } = await run({ taskResults: [okTask, pendingTask()], deviations: [], requests: [request] });
   assert.equal(r.result.status, "executed", JSON.stringify(r.result.reason));
-  assert.deepEqual(r.result.pendingRequestTasks, [{ plan: "01-01", task: "3", blockedBy: [REPAIR], via: "blockedBy" }]);
+  // Kit feedback 96 c: the wave commit holds the repaired file after a green gate, so the task is settled, no longer pending.
+  assert.equal(r.result.pendingRequestTasks, undefined);
+  assert.deepEqual(r.result.pendingSettled.map(({ commit, ...p }) => p), [{ plan: "01-01", task: "3", blockedBy: [REPAIR], via: "blockedBy" }]);
   assert.ok(r.result.events.includes("pending-request 01-01 3"));
   assert.ok(r.result.events.some((e) => e.startsWith("shared w1")), "the shared step ran");
   assert.ok(r.result.events.indexOf("shared w1 1") < r.result.events.findIndex((e) => e.startsWith("gate w1")), "the shared step comes before the gate");
@@ -86,7 +88,7 @@ test("Q79 F2 a partial task whose blockedBy or evidence names only routed reques
   ]) {
     const { r } = await run({ taskResults: [okTask, t], deviations: [], requests: [request] });
     assert.equal(r.result.status, "executed", name);
-    assert.equal(r.result.pendingRequestTasks[0].via, name === "blockedBy" ? "blockedBy" : "evidence", name);
+    assert.equal(r.result.pendingSettled[0].via, name === "blockedBy" ? "blockedBy" : "evidence", name);
   }
 });
 

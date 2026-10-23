@@ -17,6 +17,8 @@ import { kitHelpers } from "../../harness/workflow/script.mjs";
 const { PH, policyBlock, digestLine } = kitHelpers({ shell: null, agent: null });
 const isObj = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 const isInt13 = (v) => Number.isInteger(v) && v >= 1 && v <= 3;
+// Kit feedback 89 F3: words of a promise in a forceProceed reason (a follow-up the reason says will happen).
+export const FORCE_PROMISE = /\b(?:will|shall|going to|later|follow[- ]?ups?|todo|remember to|next run|before (?:execut(?:e|ion|ing)|the executors?))\b/i;
 const cut300 = (s) => String(s ?? "").replace(/\s+/g, " ").replace(/\|/g, "/").slice(0, 300);
 const failedText = (what, reason) => `${what}${reason ? `: ${reason}` : " returned nothing"}`;
 
@@ -75,6 +77,10 @@ export function planArgs(root, { args = {}, policy = {}, gsd: g = {}, adapter = 
   if (!["auto", "always", "never"].includes(wiringMode)) return failed(`wiring must be auto, always or never, not ${wiringMode}`);
   if (!["staged", "streams"].includes(planFlow)) return failed(`planFlow must be staged or streams, not ${planFlow}`);
   if (a.forceProceed !== undefined && !String(a.forceProceed?.reason ?? "").trim()) return failed("forceProceed needs a non-empty reason");
+  // Kit feedback 89 F3: the accepted issues are records gsd-execute stops on until the owner answers them; a reason that promises
+  // a follow-up (which nothing would track) is refused.
+  const promise = a.forceProceed !== undefined ? FORCE_PROMISE.exec(String(a.forceProceed.reason)) : null;
+  if (promise) return failed(`forceProceed reason promises a follow-up ("${promise[0]}"); the accepted issues are recorded (ph gsd accepted list) and gsd-execute stops before their plans until the owner confirms or resolves each one, so the reason says only why they are accepted now`);
   // Kit feedback 71: forceProceed.issues names the checker issues the owner accepts; without it every issue still stuck is accepted.
   const forcedIssues = a.forceProceed?.issues ?? null;
   if (forcedIssues !== null && (!Array.isArray(forcedIssues) || !forcedIssues.length || forcedIssues.some((i) => !i || typeof i !== "object" || !(i.plan === null || (typeof i.plan === "string" && i.plan.trim())) || typeof i.dimension !== "string" || !i.dimension.trim()))) return failed("forceProceed.issues needs a non-empty list of {plan (a plan id, null for a phase-level issue), dimension}");

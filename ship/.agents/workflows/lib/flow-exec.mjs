@@ -5,8 +5,12 @@ import { spawnSync } from "node:child_process";
 import * as files from "./flow-files.mjs";
 import { digest } from "./flow-gate.mjs";
 import { ownersOf } from "./flow-execute.mjs";
+import { readState } from "./flow-state.mjs";
 import { changedLines, reviewScope, writePrereview } from "./flow-review.mjs";
+import { acceptedStatus } from "../../harness/gsd/accepted.mjs";
+import { waitsForCode } from "../../harness/gsd/shared-changes.mjs";
 import { errText } from "../../harness/lib/cli.mjs";
+import { resolveInside } from "../../harness/lib/paths.mjs";
 import { kitHelpers } from "../../harness/workflow/script.mjs";
 
 const { PHASE_DIR_RE, phaseNumber } = kitHelpers({ shell: null, agent: null, parallel: null });
@@ -144,10 +148,27 @@ export function execHandoff(root, phaseDir, { prefix = "" }) {
 }
 
 // exec-records <phaseDir>: what the owner and earlier runs left for this run. {runId, plan?, summary?, worktrees?, worktreeDir?}
-// -> {grants: [path], ownerAnswers: [answer] | null (not a list), and for a plan: answers (its halt answers, G055), notes (its
+// -> {grants: [path], ownerAnswers: [answer] | null (not a list), accepted (kit feedback 89: without a plan the open accepted
+// checker issues with the plans they affect ("*": every plan) and, with stopFor (plan ids), acceptedStop {reason, accepted, plans,
+// options} or null; for a plan the confirmed ones it runs with), and for a plan:
+// answers (its halt answers, G055), notes (its
 // plan-review notes, G039), and with worktrees: discard (worktrees of cleared halts of earlier runs, kit feedback 75), resume
 // (the finished worktree a `halt clear --resume` hands over, kit feedback 79) or resumeNote (why that tree is not used)}.
-export function execRecords(root, phaseDir, { runId, plan = null, summary = null, worktrees = false, worktreeDir = "" }) {
+// The stop of the open accepted issues that affect the plans `ids` about to run (kit feedback 89), or null.
+function acceptedStop(N, open, ids) {
+  const hits = (x) => (id) => x.affects.includes("*") || x.affects.includes(id);
+  const list = open.filter((x) => ids.some(hits(x)));
+  if (!list.length) return null;
+  const plans = ids.filter((id) => list.some((x) => hits(x)(id)));
+  return {
+    reason: `checker issues accepted by forceProceed at planning wait for the owner before ${plans.join(", ")} run: ${list.map((x) => `${x.id} ${x.plan ?? "phase"}${x.dimension ? ` [${x.dimension}]` : ""}: ${String(x.text).slice(0, 200)}`).join("; ")}`,
+    accepted: list,
+    plans,
+    options: [`resolve the contract and replan with gsd-plan ${N} (a plan changed since the accept no longer stops), then rerun with the same args`, `ph gsd accepted confirm ${N} --id <AI-n> --reason "<why the plan runs with it>", then rerun with the same args (its executor gets the issue in its brief)`, `ph gsd accepted resolve ${N} --id <AI-n> --reason "<how it was resolved>", then rerun with the same args`],
+  };
+}
+
+export function execRecords(root, phaseDir, { runId, plan = null, summary = null, worktrees = false, worktreeDir = "", stopFor = null }) {
   const read = (rel) => files.read(root, `${phaseDir}/${rel}`);
   const parsed = (rel, fn, fallback) => {
     try { const r = read(rel); return r.exists ? fn(JSON.parse(r.text)) : fallback; } catch { return fallback; }
@@ -155,7 +176,17 @@ export function execRecords(root, phaseDir, { runId, plan = null, summary = null
   const out = { grants: parsed("grants.json", (x) => x.map((g) => g.path), []) };
   const answers = parsed("owner-answers.json", (x) => x, []);
   out.ownerAnswers = Array.isArray(answers) ? answers.filter((x) => x?.id && ["shared", "request"].includes(x.kind)) : null;
-  if (plan === null) return out;
+  // Kit feedback 89: the checker issues forceProceed accepted; an unreadable record is an open issue of every plan (fail closed).
+  let accepted;
+  try { accepted = acceptedStatus(resolveInside(root, phaseDir)); } catch (e) { accepted = [{ id: "accepted-issues.json", status: "open", plan: null, plans: [], dimension: "record", text: `unreadable: ${errText(e)}`, affects: ["*"] }]; }
+  const brief = ({ id, plan: p, plans, dimension, text, required_property: property, answer }) => ({ id, plan: p, plans, dimension, ...(property ? { required_property: property } : {}), text, ...(answer ? { owner: answer.reason } : {}) });
+  if (plan === null) {
+    const open = accepted.filter((x) => x.status === "open").map((x) => ({ ...brief(x), affects: x.affects, reason: x.reason ?? null }));
+    if (open.length) out.accepted = open;
+    if (stopFor) out.acceptedStop = acceptedStop(phaseNumber(phaseDir), open, stopFor);
+    return out;
+  }
+  out.accepted = accepted.filter((x) => x.status === "confirmed" && x.affects.includes(plan)).map(brief);
   out.answers = parsed("halt-answers.json", (x) => x.filter((h) => h.plan === plan).map(({ halt, answer }) => ({ halt, answer })), []);
   out.notes = parsed("plan-review-notes.json", (x) => x.filter((n) => n.plan === plan).map(({ severity, description }) => ({ severity, description })), []);
   if (!worktrees) return out;
@@ -239,13 +270,15 @@ export function execBranch(root, phaseDir) {
   return { status: "ok", switched: true, branch, base };
 }
 
-// exec-route: the requests and kit notes of an agent reply. {from, reply, plans: [{id, owns, summary}]} -> {notes (kit feedback
-// 79: kitNotes and requests for the kit-feedback document), routes: [{plan (the plan owning the path most specifically, G072,
+// exec-route: the requests and kit notes of an agent reply. {from, reply, plans: [{id, owns, summary}], known (the run's notes)} ->
+// {notes (kit feedback 79: kitNotes and requests for the kit-feedback document, none twice), routes: [{plan (the plan owning the path most specifically, G072,
 // or null), q (the request as state-request and state-shared take it)}], asked: [{...request, path, plan}]}.
-export function execRoute(root, { from = null, reply = null, plans = [] }) {
+export function execRoute(root, { from = null, reply = null, plans = [], known = [] }) {
   const res = reply ?? {};
   const kitAsks = (res.requests ?? []).filter((rq) => rq && typeof rq.path === "string" && isKitDoc(rq.path));
-  const notes = [...(Array.isArray(res.kitNotes) ? res.kitNotes.filter((n) => typeof n === "string" && n.trim()).map((n) => ({ plan: from, note: n.trim() })) : []), ...kitAsks.map((rq) => ({ plan: from, note: String(rq.change ?? rq.reason ?? "").trim(), from: "request", path: slashPath(rq.path) }))];
+  const all = [...(Array.isArray(res.kitNotes) ? res.kitNotes.filter((n) => typeof n === "string" && n.trim()).map((n) => ({ plan: from, note: n.trim() })) : []), ...kitAsks.map((rq) => ({ plan: from, note: String(rq.change ?? rq.reason ?? "").trim(), from: "request", path: slashPath(rq.path) }))];
+  // A note the run already has (`known`, the same plan and text) is not repeated.
+  const notes = all.filter((n, i) => ![...known, ...all.slice(0, i)].some((k) => k.plan === n.plan && k.note === n.note));
   const list = (res.requests ?? []).filter((rq) => rq && typeof rq.path === "string" && rq.path.trim() && !isKitDoc(rq.path)).map((rq) => ({ ...rq, path: slashPath(rq.path) }));
   let owners = {};
   if (list.length) try { owners = ownersOf(root, { paths: list.map((rq) => rq.path), plans }).owners; } catch { owners = {}; }
@@ -449,6 +482,48 @@ export function execPause({ by, nextWave, stopAfterWave = null, stop = null, run
     ? `rerun with the same args without stopAfterWave (or a higher one); with stopAfterWave ${stopAfterWave} the run pauses again at once. The committed waves are tracked; the run goes on with wave ${nextWave}`
     : `rerun with the same args${run ? ` (or ph workflow --resume ${run})` : ""}; the committed waves are tracked and the run goes on with wave ${nextWave}`;
   return { reason, pausedAt: { by, afterWave, nextWave }, answer: { verb: "rerun", command } };
+}
+
+// exec-shared-before <phaseDir> (kit feedback 95 F1): the shared changes made before the executors of a wave start. {waveId, plans
+// (every plan of the handoff: {id, owns, summary})} -> {ids, later}: ids are the declared changes of the wave in the execute state
+// (their key starts with `<waveId>:`) not applied yet whose file and outputs no plan without a commit owns and whose lines for
+// that file do not wait for the plan's code (gsd/shared-changes.mjs); later names the declared ones left to the turn after the
+// code, with why.
+export function execSharedBefore(root, phaseDir, { waveId, plans = [] }) {
+  const st = readState(root, phaseDir);
+  const open = plans.filter((p) => st.plans[p.id]?.commit === undefined);
+  const mine = st.shared.filter((s) => !s.applied && typeof s.key === "string" && s.key.startsWith(`${waveId}:`));
+  const files = [...new Set(mine.flatMap((s) => [s.path, ...(s.outputs ?? [])]).filter(Boolean))];
+  let owners = {};
+  if (files.length) try { owners = ownersOf(root, { paths: files, plans: open }).owners; } catch { owners = Object.fromEntries(files.map((f) => [f, ["?"]])); }
+  const ids = [];
+  const later = [];
+  for (const s of mine) {
+    const owned = [s.path, ...(s.outputs ?? [])].filter(Boolean).flatMap((f) => owners[f] ?? []);
+    if (owned.length) later.push({ id: s.id, why: `an open plan owns its file (${[...new Set(owned)].join(", ")})` });
+    else if (s.path && waitsForCode(s.change, s.path)) later.push({ id: s.id, why: "its text waits for the plan's code" });
+    else ids.push(s.id);
+  }
+  return { ids, later };
+}
+
+// The outside text of a shared-change fixer names a failure unless it says there is none ("none", "n/a", "No failures outside
+// the shared files were observed") without naming a file or a "but".
+const NO_FAILURE = /^\s*(?:none\b|n\/a\b|nothing\b|no\b)/i;
+const namesFailure = (text) => {
+  const t = String(text ?? "").trim();
+  return Boolean(t) && !(NO_FAILURE.test(t) && !/\bbut\b/i.test(t) && !(t.replace(/\bn\/a\b/gi, "").match(PATH_TOKEN) ?? []).length);
+};
+// exec-shared-reply (kit feedback 82, 96 b): the shared-change fixer's reply. {waveId, open: [{id}] (the changes asked, in index
+// order), reply} -> {made: [ids reported present (per change, or every one when status fixed has no list)], logs}.
+export function execSharedReply({ waveId, open = [], reply = {} }) {
+  const rep = reply ?? {};
+  const entries = Array.isArray(rep.changes) && rep.changes.length ? rep.changes : null;
+  const made = open.filter((s, i) => (entries ? entries.some((c) => Number(c?.index) === i && c.applied === true) : rep.status === "fixed")).map((s) => s.id);
+  const logs = [];
+  if (namesFailure(rep.outside)) logs.push(`shared ${waveId}: the fixer saw a failure outside the shared files, left to the gate: ${String(rep.outside).trim().slice(0, 300)}`);
+  if (made.length && rep.status !== "fixed") logs.push(`shared ${waveId}: ${made.length} of ${open.length} change(s) reported present although the fixer answered ${rep.status}; the gate verifies them`);
+  return { made, logs };
 }
 
 // exec-groups (GSDF-40): plans of a wave sharing a files_modified entry never run at the same time; a later one moves to a later

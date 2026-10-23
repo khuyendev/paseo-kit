@@ -45,7 +45,14 @@ test("Q77 F83 stop after code (the executor died after writing its files and SUM
 
 test("Q77 F83 stop after the transfer (worktree): the next run does not run the executors again and applies the shared step", async () => {
   const w = world({ isolation: "worktree" });
-  const first = await exec(w, {}, { ...shared(w), "shared-": died("shared fixer") });
+  // Kit feedback 95: the declared shared change is made before the executor; the shared step after the transfer is the one
+  // of the executor's request, and that fixer dies.
+  const fix = shared(w)["shared-"];
+  const die = died("shared fixer");
+  let n = 0;
+  const run = executor(w);
+  const ask = { "exec-01-01": async (...a) => ({ ...(await run(...a)), requests: [{ path: "config/other.json", change: "add key y", reason: "shared" }] }) };
+  const first = await exec(w, {}, { ...ask, "shared-": (...a) => (++n === 1 ? fix(...a) : die(...a)) });
   assert.equal(first.error?.message, "killed shared fixer");
   assert.ok(fs.existsSync(path.join(w.root, `${PHASE_DIR}/transfers/01-01.json`)));
   const r = await exec(w, {}, shared(w), SECOND);

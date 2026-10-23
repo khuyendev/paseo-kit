@@ -11,7 +11,8 @@ import { runScript } from "../gsd-flows/host.mjs";
 import { PHASE_DIR } from "../gsd-flows/world.mjs";
 
 const SCRIPT = fs.readFileSync(path.join(SHIP_DIR, ".agents/workflows/gsd-execute.js"), "utf8");
-const VERBS = ["halt.clear", "shared.clear", "request.clear", "grant", "allow", "fix-and-rerun", "rerun", "workflow"];
+// accepted.confirm: kit feedback 89 (an open accepted checker issue before its plans run).
+const VERBS = ["halt.clear", "shared.clear", "request.clear", "grant", "allow", "accepted.confirm", "fix-and-rerun", "rerun", "workflow"];
 
 // The top-level arguments of the call whose "(" is at `open` (strings, template literals and nesting skipped).
 function callArgs(text, open) {

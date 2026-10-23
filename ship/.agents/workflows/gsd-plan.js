@@ -789,7 +789,7 @@ async function checkerRounds(scopeIds, gapScoped, ledger) {
 }
 // The end of a checker loop or join: passed, or the stuck plans as a needs-owner stop or a forceProceed override (GSDF-28). The settle
 // op decides what forceProceed may accept (kit feedback 71: only the {plan, dimension} issues it names, or with `{reason}` alone every
-// issue still stuck; F40: never a plan a planner of this run wrote) and the run writes it to STATE.
+// issue still stuck; F40: never a plan a planner of this run wrote); the run writes it to STATE and accepted-issues.json (89).
 async function settleStuck(ledger, scopeIds) {
   const [s] = await ledger.step("settle", [{ op: "settle", scope: scopeIds }]);
   warnings.push(...s.carried);
@@ -799,7 +799,8 @@ async function settleStuck(ledger, scopeIds) {
   if (s.stop === "uncovered") return { stop: owner("Checker", s.why, { issues: s.issues, accepted: s.accepted, options: ["rerun with forceProceed {reason, issues} naming these issues too (plan and dimension)", "give guidance and retry", "abandon"], answer: answers.forceProceed(s.answer) }) };
   if (s.stop === "fresh") return { stop: owner("Checker", `forceProceed refused: ${s.plans.join(", ")} written by a planner in this run; a rerun can accept them`, { issues: s.issues, options: ["rerun with forceProceed {reason}", "give guidance and retry", "abandon"], answer: answers.rerun("start a new run (not --resume) with the same forceProceed; the checker judges the kept plans again") }) };
   const saved = await gsd(["state", "override", "--phase", N], { reason: a.forceProceed.reason, issues: s.lines });
-  if (saved.code !== 0) return { stop: failedCall("state override failed", saved.json?.error ?? `exit ${saved.code}`) };
+  const kept = saved.code === 0 ? await flow(["accepted-record", phaseDir], { run: runId, reason: a.forceProceed.reason, issues: s.override.accepted }) : saved;
+  if (kept.code !== 0) return { stop: failedCall(saved.code !== 0 ? "state override failed" : "accepted-issue record failed", kept.json?.error ?? `exit ${kept.code}`) };
   if (s.warnAll) warnings.push("forceProceed without issues accepted every issue still stuck; name them with forceProceed.issues [{plan, dimension}] to accept only those");
   log(`override: ${s.override.why || `${s.override.accepted.length} accepted issues`}; proceeding (${a.forceProceed.reason})`);
   return { passed: true, override: s.override };

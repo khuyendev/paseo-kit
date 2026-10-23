@@ -9,6 +9,7 @@ import { contractsChange, contractsShow, verifyContractsVerb } from "./contracts
 import { debugBudget, debugCheckpoint, debugClose, debugCreate, debugExtend, debugList, debugStatus } from "./debug.mjs";
 import { commitAdopt } from "./commit-adopt.mjs";
 import { commitVerb, evaluationScope, selectRevertCommits } from "./gitverbs.mjs";
+import { acceptedAnswer, acceptedList } from "./accepted.mjs";
 import { allowVerb } from "./allow.mjs";
 import { grantPath } from "./grants.mjs";
 import { haltClear } from "./halts.mjs";
@@ -127,6 +128,10 @@ export const verbHandlers = {
   "request.clear": { usage: "ph gsd request.clear <phase> --plan <NN-MM> --path <file> --reason <text>", options: { plan: "string", path: "string", reason: "string" }, run: (g, a, o) => requestClear(g, phaseOf(g, a), o.plan, o) },
   grant: { usage: "ph gsd grant <phase> --path <file> [--plan <NN-MM>]", options: { path: "string", plan: "string" }, run: (g, a, o) => grantPath(g, phaseOf(g, a), o.path, o.plan) },
   allow: { usage: "ph gsd allow <phase | debug> --path <file> --reason <text>", options: { path: "string", reason: "string" }, run: (g, a, o) => allowVerb(g, a[0], o) },
+  // Kit feedback 89: the checker issues forceProceed accepted (gsd-plan records them); confirm or resolve is the owner's answer.
+  "accepted.list": { usage: "ph gsd accepted.list <phase>", options: {}, run: (g, a) => acceptedList(g, phaseOf(g, a)) },
+  "accepted.confirm": { usage: "ph gsd accepted.confirm <phase> --id <AI-n>[,<AI-m>] --reason <why the plan runs with it>", options: { id: "string", reason: "string" }, run: (g, a, o) => acceptedAnswer(g, phaseOf(g, a), "confirm", o) },
+  "accepted.resolve": { usage: "ph gsd accepted.resolve <phase> --id <AI-n>[,<AI-m>] --reason <how it was resolved>", options: { id: "string", reason: "string" }, run: (g, a, o) => acceptedAnswer(g, phaseOf(g, a), "resolve", o) },
   "verify.plan-structure": {
     usage: "ph gsd verify.plan-structure <phase | path/NN-MM-PLAN.md> [--plans <ids>]",
     options: { plans: "string" },

@@ -4,7 +4,8 @@ Contract: the reply is the exec schema of flow verb exec-setup (taskResults, dev
 plan_defects with gsd.review_metrics); exec-verdict judges it, exec-route routes its requests, transfer and spot-check take its
 SUMMARY. Variables: plan (plan file), snapshot (input snapshot root or empty), summary, owns (JSON list), stackSkill,
 generated (JSON list of adapter.ownership.regenerated or empty), pending (gsd.pending_request_tasks), metrics
-(gsd.review_metrics), answers, notes, requests (JSON lists or empty), digest.
+(gsd.review_metrics), answers, notes, accepted (the confirmed accepted checker issues of the plan, kit feedback 89),
+requests (JSON lists or empty), digest.
 -->
 <kit_executor_runtime>
 Plan: {{plan}}
@@ -42,6 +43,10 @@ Owner answers to earlier halts of this plan (JSON); follow them: {{answers}}
 
 Plan-review notes for this plan (medium or low, not blocking; act on each one inside your owns, else say why in your SUMMARY): {{notes}}
 {{/notes}}
+{{#accepted}}
+
+Checker issues of this plan that the owner accepted at planning (forceProceed) and confirmed for execution (JSON): {{accepted}}. The plan runs with them as they are: do not work around them outside your owns; when a task cannot be done because of one, return it partial with the issue id in its evidence.
+{{/accepted}}
 {{#requests}}
 
 Change requests from other plans for files you own (JSON): {{requests}}. Make them inside your owns and list each request path you resolved in resolvedRequests.
