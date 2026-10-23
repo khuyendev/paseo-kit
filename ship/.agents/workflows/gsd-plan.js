@@ -3,7 +3,7 @@ export const meta = {
   description: "GSD phase planning: outline, wiring, skeleton review, per-plan planners, checker loop, coverage and handoff (or one gap-closure wave)",
   phases: [
     { title: "Preconditions" }, { title: "Outline" }, { title: "Wiring" }, { title: "Skeleton review" },
-    { title: "Plans" }, { title: "Checker" }, { title: "Plan review" }, { title: "Handoff" }, { title: "Gaps" },
+    { title: "Plans" }, { title: "Checker" }, { title: "Plan review" }, { title: "Dependencies" }, { title: "Handoff" }, { title: "Gaps" },
   ],
 };
 
@@ -721,6 +721,13 @@ async function checkerLoop(scopeIds, gapScoped) {
 async function handoffStage(ids, docs, override, handoffArgs = [], gap = null) {
   const cov = await gsd(["check", "coverage", N]);
   if (cov.code !== 0) return owner("Handoff", "coverage gate failed", { coverage: cov.json, options: ["re-plan (recommended)", "move the requirement or decision to a later phase", "tag the decision informational"] });
+  // G022: with adapter.dependency_probe, the dependencies the plans declare must resolve together before the handoff writes waves.
+  if (cfg.adapter.dependency_probe) {
+    phase("Dependencies");
+    const dep = await gsd(["check", "dependencies", N, "--plans", ids.join(",")]);
+    phase(gap ? "Gaps" : "Handoff");
+    if (dep.code !== 0) return owner("Dependencies", dep.json?.reason ?? `dependency check exit ${dep.code}`, { output: dep.json?.output ?? null, dependencies: dep.json?.dependencies ?? [], options: ["edit the dependency lines of the plans or the probe, then rerun", "give guidance and rerun with replan", "abandon"] });
+  }
   const h = await gsd(["handoff", N, ...handoffArgs]);
   if (h.code !== 0) return result("failed", { reason: `handoff refused: ${h.json?.error ?? h.json?.errors?.join?.("; ") ?? h.code}`, errors: h.json?.errors ?? [] });
   for (const w of h.json?.warnings ?? []) warnings.push(`handoff: ${typeof w === "string" ? w : JSON.stringify(w)}`);

@@ -160,6 +160,19 @@ export function parseTasks(body) {
 
 export const sharedChanges = (body) => [...String(body ?? "").matchAll(/<shared_changes>([\s\S]*?)<\/shared_changes>/g)].map((m) => m[1].trim());
 
+// G022: a `<path>: dependency <name> [<constraint>] [dev]` line of a <shared_changes> body declares a package the plan adds or
+// changes. The line stays a file change of its path (gsd-execute applies it), and the dependency probe checks the declared set.
+// A line that names no package has name null, so the check refuses it instead of skipping it.
+export function sharedDependencies(body) {
+  return String(body ?? "").split(/\r?\n/).flatMap((line) => {
+    const m = /^\s*(?:[-*]\s+)?`?([^\s:`]+)`?\s*:\s*dependency(?:\s+(.*?))?\s*$/.exec(line);
+    if (!m) return [];
+    const rest = (m[2] ?? "").replace(/\s*\[dev\]$/, "");
+    const [name, ...constraint] = rest.split(/\s+/);
+    return [{ path: m[1].replace(/\\/g, "/"), name: name || null, constraint: constraint.join(" ") || null, dev: rest !== (m[2] ?? "") }];
+  });
+}
+
 // A plan file read with its frontmatter, tasks and declared write sets.
 export function readPlan(phase, id) {
   const file = planPath(phase, id);

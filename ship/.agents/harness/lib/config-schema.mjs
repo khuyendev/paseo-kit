@@ -119,6 +119,9 @@ export const SCHEMA = obj({
     mutex: nullable(str({ nonEmpty: true })),
     startup_globs: strs(),
     hook_timeout_s: int(1),
+    // G022: the argv that checks the dependency set the plans declare; null = no probe.
+    dependency_probe: nullable(argv()),
+    dependency_probe_timeout_s: int(1),
     attribution: nullable(str({ nonEmpty: true, repoPath: true })),
     worktree_setup: obj({ copy: strs(), link: strs() }),
   }),

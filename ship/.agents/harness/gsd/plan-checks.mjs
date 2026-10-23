@@ -1,8 +1,13 @@
 // Plan checks: structure (GSDC-18), verify-command probe (GSDC-19), failure directions (GSDC-20), decision and
-// requirement coverage (GSDC-21, GSDC-22) and disjoint write sets (GSDC-23). Adapter data only through hooks.
+// requirement coverage (GSDC-21, GSDC-22), disjoint write sets (GSDC-23) and the dependency probe (G022). Adapter data only
+// through hooks and the argv of adapter.dependency_probe.
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { runArgv } from "../lib/proc.mjs";
 import { done, mentions, readIf, unavailable } from "./common.mjs";
 import { HookError, builtinResolve, callHook, classify, covers, filesUnder, overlaps, ownsPath, pathKey, physicalPath, sharedPaths, targetsOf } from "./adapter-hooks.mjs";
-import { phaseFile, readPlans } from "./planning.mjs";
+import { phaseFile, readPlans, sharedDependencies } from "./planning.mjs";
 import { loadRoadmap, roadmapPhase } from "./roadmap.mjs";
 
 export const REQUIRED_PLAN_FIELDS = ["phase", "plan", "type", "wave", "depends_on", "files_modified", "autonomous", "requirements", "must_haves"];
@@ -314,4 +319,34 @@ export async function checkOwns(g, phase, ids) {
   const { problems, owned } = await ownershipProblems(g, plans);
   problems.push(...waveOverlaps(plans, (p) => owned.get(p.id) ?? []));
   return done({ passed: problems.length === 0, problems, plans: plans.map((p) => ({ id: p.id, wave: p.wave, owns: p.owns, files_modified: p.filesModified })), files_per_plan: filesPerPlanLines(g, readPlans(phase)) }, problems.length ? 1 : 0);
+}
+
+// --- dependencies (G022) ---
+
+const PROBE_TAIL_CHARS = 4000;
+
+// The dependency lines of the plans as one JSON file, passed as the last argument of adapter.dependency_probe (argv, run in the
+// project root). Exit 0 passes the set, a non-zero exit fails it, and a probe that cannot run is unresolvable (exit 69, never a
+// pass). No probe configured or no dependency line: nothing runs.
+export async function checkDependencies(g, phase, plans) {
+  const dependencies = plans.flatMap((p) => p.sharedChanges.flatMap((text) => sharedDependencies(text).map((d) => ({ plan: p.id, ...d }))));
+  const probe = g.cfg.adapter.dependency_probe;
+  if (!dependencies.length) return done({ status: "none", dependencies });
+  if (!probe) return done({ status: "skipped", reason: "adapter.dependency_probe is unset", dependencies });
+  const nameless = dependencies.filter((d) => !d.name);
+  if (nameless.length) return done({ status: "failed", reason: `dependency line(s) name no package: ${nameless.map((d) => `${d.plan} ${d.path}`).join(", ")}`, dependencies }, 1);
+  const secs = g.cfg.adapter.dependency_probe_timeout_s;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ph-deps-"));
+  try {
+    const file = path.join(dir, "dependencies.json");
+    fs.writeFileSync(file, `${JSON.stringify({ phase: phase.padded, dependencies }, null, 2)}\n`, "utf8");
+    const run = await runArgv([...probe, file], { cwd: g.codeRoot, env: g.env, timeoutMs: secs * 1000, tailChars: PROBE_TAIL_CHARS });
+    const output = `${run.stdout}${run.stderr}`.trim();
+    if (run.timedOut) return done({ status: "unresolvable", reason: `dependency probe timed out after ${secs}s`, output, dependencies }, 69);
+    if (run.error || run.code === null) return done({ status: "unresolvable", reason: `dependency probe could not run: ${run.error?.message ?? "stopped by a signal"}`, output, dependencies }, 69);
+    if (run.code !== 0) return done({ status: "failed", reason: `dependency probe exited ${run.code}`, output, dependencies }, 1);
+    return done({ status: "passed", dependencies });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }

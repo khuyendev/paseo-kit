@@ -9,7 +9,7 @@ export const NOT_PORTED = {
   "agent-skills": "project skills come from adapter.stack_skill in your prompt",
   "audit-open": "cross-phase verification-debt audits are not in the kit (later)",
   "audit-uat": "cross-phase verification-debt audits are not in the kit (later)",
-  check: "name the check: ph gsd check <coverage|decision-coverage|verify-command-paths|verify-failure-directions|owns|evaluation-scope>",
+  check: "name the check: ph gsd check <coverage|decision-coverage|verify-command-paths|verify-failure-directions|owns|dependencies|evaluation-scope>",
   "check.auto-mode": "auto-advance mode is not in the kit; every stage runs as the orchestrator dispatches it",
   "check.predicate": NOT_IN_KIT,
   "check.tdd-red-evidence": "TDD gate is not in the kit (later)",

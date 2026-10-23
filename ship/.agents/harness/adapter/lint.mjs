@@ -32,6 +32,7 @@ function adapterArgvScripts(a) {
   const lists = [["adapter.commands.build", a.commands.build], ["adapter.commands.test", a.commands.test]];
   for (const g of a.commands.gates ?? []) lists.push([`adapter.commands.gates.${g.name}`, g.argv]);
   for (const [k, v] of Object.entries(a.commands.verify)) lists.push([`adapter.commands.verify.${k}`, v.argv]);
+  lists.push(["adapter.dependency_probe", a.dependency_probe]);
   for (const [ext, v] of Object.entries(a.syntax_checkers)) lists.push([`adapter.syntax_checkers.${ext}`, v.argv]);
   return lists.flatMap(([where, argv]) => scriptOperands(argv).map((rel) => ({ where, rel })));
 }

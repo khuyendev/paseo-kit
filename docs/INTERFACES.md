@@ -171,6 +171,8 @@ Thinking levels (`THINKING_LEVELS`): `off, low, medium, high, xhigh, max`.
 | `mutex` | `null` or non-empty string (machine-wide lock name) | `null` |
 | `startup_globs` | string[] | `[]` |
 | `hook_timeout_s` | int >= 1 | 30 |
+| `dependency_probe` | `null` or argv (non-empty string[]): the command that checks the dependency set the plans declare (`<path>: dependency <name> [<constraint>] [dev]` lines of `<shared_changes>`). It runs in the project root with the set's JSON file as its last argument; exit 0 passes, a non-zero exit stops gsd-plan at stage Dependencies (needs-owner, with the output), a probe that cannot run stops it too | `null` (no probe; nothing runs) |
+| `dependency_probe_timeout_s` | int >= 1 (seconds) | 300 |
 | `attribution` | `null` or path | `null` |
 | `worktree_setup` | `{copy: string[], link: string[]}` (both keys required; git-ignored paths copied or linked into each new harness worktree) | `{copy: [], link: []}` |
 

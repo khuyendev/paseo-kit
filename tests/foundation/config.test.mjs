@@ -273,6 +273,8 @@ const GOLDEN = {
     mutex: null,
     startup_globs: [],
     hook_timeout_s: 30,
+    dependency_probe: null,
+    dependency_probe_timeout_s: 300,
     attribution: null,
     worktree_setup: { copy: [], link: [] },
   },

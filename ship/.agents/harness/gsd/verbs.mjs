@@ -9,7 +9,7 @@ import { debugBudget, debugCheckpoint, debugClose, debugCreate, debugExtend, deb
 import { commitVerb, evaluationScope, selectRevertCommits } from "./gitverbs.mjs";
 import { haltClear } from "./halts.mjs";
 import { handoff, outlineCheck, outlineParseVerb, wavesVerb } from "./outline.mjs";
-import { checkOwns, coverage, decisionCoverage, failureDirections, planStructure, verifyCommandPaths } from "./plan-checks.mjs";
+import { checkDependencies, checkOwns, coverage, decisionCoverage, failureDirections, planStructure, verifyCommandPaths } from "./plan-checks.mjs";
 import { findPhaseVerb, phaseAdd, phaseComplete, phaseInsert, phaseRemove, planIndex, requirementsVerb, roadmapVerb, uatPassed } from "./phases.mjs";
 import { normPlanId, planIds, readPlan, readPlans, requirePhase } from "./planning.mjs";
 import { ATTEMPT_KINDS, readAttempt, recordAttempt, revisionsVerb } from "./revisions.mjs";
@@ -154,6 +154,7 @@ export const verbHandlers = {
   "check.verify-command-paths": { usage: "ph gsd check.verify-command-paths <phase> [--plans <ids>]", options: { plans: "string" }, run: async (g, a, o) => done(await verifyCommandPaths(g, phaseOf(g, a), readPlans(phaseOf(g, a), subset(o, phaseOf(g, a))))) },
   "check.verify-failure-directions": { usage: "ph gsd check.verify-failure-directions <phase> [--plans <ids>]", options: { plans: "string" }, run: (g, a, o) => done(failureDirections(g, readPlans(phaseOf(g, a), subset(o, phaseOf(g, a))))) },
   "check.owns": { usage: "ph gsd check.owns <phase> [--plans <ids>]", options: { plans: "string" }, run: (g, a, o) => checkOwns(g, phaseOf(g, a), subset(o, phaseOf(g, a))) },
+  "check.dependencies": { usage: "ph gsd check.dependencies <phase> [--plans <ids>]", options: { plans: "string" }, run: (g, a, o) => checkDependencies(g, phaseOf(g, a), readPlans(phaseOf(g, a), subset(o, phaseOf(g, a)))) },
   "check.evaluation-scope": {
     usage: "ph gsd check.evaluation-scope (--phase <N> | --plan <NN-MM> | --quick <id>) [--since <rev>] [--commits-only] [--max-commits <n>]",
     options: { phase: "string", plan: "string", quick: "string", since: "string", "commits-only": "bool", "max-commits": "string" },
