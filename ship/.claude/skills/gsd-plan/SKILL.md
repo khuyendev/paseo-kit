@@ -23,5 +23,13 @@ Args file `_workspace/args/gsd-plan.json`, e.g. `{"phaseDir": ".planning/phases/
 - `needs-owner`: show `stage`, `reason`, the issues or the conflict, and the `options` numbered. For an owner marker also show `summary`, `question` and every item of `plans` (the planner's proposed split or audit options) so the owner decides without opening the run journal. Typical stages: Discuss (finish gsd-discuss), Research (run gsd-research, or rerun with `skipResearch` and a reason the owner gives), Skeleton review / Checker (open blockers or a stall: guidance and rerun, or `forceProceed {reason}` at the checker cap, never over an open REVISION_CONFLICT), Plan (owner marker such as PHASE SPLIT RECOMMENDED), Handoff (coverage gate: re-plan, move to a later phase, or tag the decision informational in CONTEXT).
 - `failed` / `refused`: report the reason; nothing to chain.
 
+### Standalone plan review (GSDF-37)
+To review plans that already exist without the rest of gsd-plan, write an args file such as `{"phaseDir": ".planning/phases/02-api", "plans": ["02-01", "02-02"]}` and run `node .agents/harness/ph.mjs workflow --name gsd-plan-review --args-file _workspace/args/gsd-plan-review.json --detach`.
+- `phaseDir` (required) matches `.planning/phases/NN-name`. `plans` (required) lists plan ids in the `NN-MM` form; an id outside that form is dropped without a message, and when none is left the run fails.
+- Optional `roles {role: {model, effort}}` for `plan_finder`, `plan_verifier`, `plan_judge` and `plan_editor`, and `researchPath`, the one research report the reviewers may read. Without `researchPath` no RESEARCH.md is read.
+- Each cycle runs one finder per plan and lens. The `plan_review` lenses from `adapter.review_lenses` run first, then the built-in `source-grounding` lens, which always runs when plan review runs (there is no switch).
+- Up to 3 cycles. The editor rewrites the listed PLAN.md files in place and the handoff is regenerated. Only the review runs: no outline, skeleton review, checker or coverage step, so a `converged` result does not replace them.
+- Results: `converged` (`cycles`, `planRevision`), `needs-owner` (`reason` with `issues` or `conflict`) or `failed` (`reason`).
+
 ### Gap closure (GSDF-30, GSDF-56)
 After `gsd-verify` returns `gaps_found`, run with `{"phaseDir": ..., "mode": "gaps"}`: one gap wave only, `handoff/gap-w1.args.json`, then `gsd-execute --gaps-only` and `gsd-verify` again. A second gap attempt after a gap wave ran returns `needs-owner`: leftovers go to the owner (a new phase).

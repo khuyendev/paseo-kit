@@ -162,7 +162,7 @@ Thinking levels (`THINKING_LEVELS`): `off, low, medium, high, xhigh, max`.
 | `commands` | `{build: argv\|null, test: argv\|null, build_timeout_s: int>=1, test_timeout_s: int>=1, gates: [{name, argv}], verify: {<runner>: {argv, timeout_s}}}`; argv = non-empty string[] | `{build: null, test: null, build_timeout_s: 300, test_timeout_s: 600, gates: [], verify: {}}` |
 | `verify_vocabulary` | map kind -> `{prefix: string, parser: path\|null, resolver: path\|null, runner: <key of commands.verify>\|null, evidence_parser: path\|null, exit_code_sufficient: bool}`; `runner: null` = core built-in (`build` -> `commands.build`, `cmd` -> the obligation argument run as argv) | `build` (`prefix: "build"`) and `cmd` (`prefix: "cmd:"`), both all-null with `exit_code_sufficient: true` |
 | `ownership` | `{owns_forms: [{prefix, maps_to}], shared: {globs: string[], predicate: path\|null}, source_roots: string[], ignore: string[]}` | `{owns_forms: [{prefix: "Path:", maps_to: "<path>"}], shared: {globs: [], predicate: null}, source_roots: [], ignore: []}` |
-| `review_lenses` | `[{name, text, stage?: skeleton\|plan_review\|code, applies_to?: string[]}]` (stage default `code`, applies_to default all files) | `[]` (code review then uses the kit lens `correctness`, owned by gsd-flows) |
+| `review_lenses` | `[{name, text, stage?: skeleton\|plan_review\|code, applies_to?: string[]}]` (stage default `code`, applies_to default all files) | `[]` (code review then uses the kit lens `correctness`, owned by gsd-flows; plan review runs the `plan_review` lenses, then the built-in `source-grounding` lens, which always runs) |
 | `syntax_checkers` | map extension (`.ext`) -> `{argv, timeout_s?: int>=1, max_parallel?: int>=1}` (consumer defaults: hook budget, 3) | `{}` |
 | `instructions` | string[] repo-relative paths | `[]` |
 | `envelope` | `null` or `[{axis, values?: array, range?: array, source}]` (exactly one of values/range) | `null` |
@@ -192,7 +192,7 @@ Paths in the adapter are repo-relative script paths; the adapter hook protocol (
 | `protected_branches` | string[] | `[]` |
 | `requirement_id_regex` | string, valid RegExp source | `^[A-Z][A-Z0-9]*-\d+$` |
 | `research` | bool | true |
-| `plan_review` | bool | false |
+| `plan_review` | bool (true: gsd-plan runs the plan-review stage; the built-in `source-grounding` lens always runs in plan review, see `review_lenses`) | false |
 | `skeleton_lanes` | non-empty `[{lens, model?, effort?}]` | `[{lens: "fidelity"}, {lens: "integration"}]` |
 | `max_skeleton_passes` | int 1..3 | 3 |
 | `max_check_iterations` | int 1..3 | 3 |
