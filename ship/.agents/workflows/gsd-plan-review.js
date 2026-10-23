@@ -105,7 +105,9 @@ let planRevision = null;
 let structure = [];
 // A plan whose last pass kept no issue is not re-found until its file changes; an edit by the editor re-opens it.
 const clean = new Set();
-for (let cycle = 1; cycle <= MAX_CYCLES; cycle++) {
+// The cap bounds the edits: after the last allowed edit one more review-only pass judges the revised plans, so the
+// owner never gets an unreviewed revision or an issue list that predates the edit.
+for (let cycle = 1; cycle <= MAX_CYCLES + 1; cycle++) {
   // Recomputed every cycle: the editor changes the plans being judged (CR-GSF-19).
   const digest = (await gsd(["revisions", "hash", phaseDir, "checked"])).json?.hash ?? "none";
   phase("Find");
@@ -148,6 +150,7 @@ for (let cycle = 1; cycle <= MAX_CYCLES; cycle++) {
   // Kept issues that do not count are advisories: returned here, never sent to the editor.
   if (count === 0) return { status: "converged", cycles: cycle, planRevision, structure, issues: kept };
   if (count >= prev) return { status: "needs-owner", reason: `plan review not converging: ${count} issues, not below ${prev}`, issues: kept };
+  if (cycle > MAX_CYCLES) return { status: "needs-owner", reason: `plan review did not converge in ${MAX_CYCLES} cycles`, issues: kept };
   prev = count;
   phase("Edit");
   const before = new Map(await Promise.all(plans.map(async (p) => [p, await fileSha(planPath(p))])));
@@ -168,4 +171,3 @@ for (let cycle = 1; cycle <= MAX_CYCLES; cycle++) {
   if (h.code !== 0) return { status: "failed", reason: "handoff refused after the plan-review edit", errors: h.json?.errors ?? [] };
   planRevision = h.json?.planRevision ?? null;
 }
-return { status: "needs-owner", reason: `plan review did not converge in ${MAX_CYCLES} cycles` };
