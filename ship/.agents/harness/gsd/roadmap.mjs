@@ -224,6 +224,15 @@ export function renumberText(text, mapping) {
 const DEP_BEGIN = "<!-- gsd:dependencies:begin -->";
 const DEP_END = "<!-- gsd:dependencies:end -->";
 
+// The phase section without its generated dependency block: annotate-dependencies writes that block after the plans
+// are handed off, so it must not stale the revisions built on the section.
+export function sectionContent(section) {
+  const b = section.indexOf(DEP_BEGIN);
+  const e = section.indexOf(DEP_END);
+  if (b < 0 || e < b) return section;
+  return `${section.slice(0, b)}${section.slice(e + DEP_END.length)}`.trimEnd();
+}
+
 // Replace (or add) the generated wave/constraint block at the end of a phase section; same input, same bytes.
 export function annotateSection(text, phase, blockLines) {
   const lines = lf(text).split("\n");

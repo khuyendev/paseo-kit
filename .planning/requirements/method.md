@@ -174,7 +174,7 @@ Conventions used below:
 - Scope: v1
 
 ### GSDC-28 Revision hashes (`revisions.json`)
-- Requirement: `revisions record|check|hash|show <phaseDir> [key]` over keys `research` (CONTEXT, REQUIREMENTS, PROJECT, specs of the phase's requirements, `<canonical_refs>` files, `adapter.instructions` files, researcher role text), `inputs` (research + RESEARCH.md + research attempt), `freeze` (outline, manifest, WIRING, inputs), `plan:<id>`, `plans`, `checked`, `handoff`; every key also hashes the phase's ROADMAP section; `revisions.json` stores each key's hash and file list once (no duplicated lists); `check` exits 0 same, 1 changed, 66 never recorded and reports `headChanged` without invalidating; writes are atomic.
+- Requirement: `revisions record|check|hash|show <phaseDir> [key]` over keys `research` (CONTEXT, PROJECT, the phase's own requirement entries and their specs, `<canonical_refs>` files, `adapter.instructions` files, researcher role text), `inputs` (research + RESEARCH.md without its attempt key and completion marker), `freeze` (outline, manifest, WIRING, inputs), `plan:<id>`, `plans`, `checked`, `handoff`; every key also hashes the phase's ROADMAP section without its generated dependency block; `revisions.json` stores each key's hash and file list once (no duplicated lists); `check` exits 0 same, 1 changed, 66 never recorded and reports `headChanged` without invalidating; writes are atomic.
 - Acceptance: fixture: record `freeze`; editing CONTEXT makes `check freeze` exit 1; editing another phase's ROADMAP section keeps 0; editing this phase's section exits 1; a code-only commit keeps 0 with `headChanged:true`.
 - Source: GSP-29, HIS-47, D-75, INV-39.
 - Scope: v1

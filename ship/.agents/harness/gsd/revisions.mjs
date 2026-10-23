@@ -9,7 +9,7 @@ import { loadAgentDef } from "../runtime/agents.mjs";
 import { headOf } from "./git.mjs";
 import { phaseFile, planPath, planIds } from "./planning.mjs";
 import { loadRequirements } from "./requirements.mjs";
-import { loadRoadmap, roadmapPhase } from "./roadmap.mjs";
+import { loadRoadmap, roadmapPhase, sectionContent } from "./roadmap.mjs";
 
 const RESEARCHER = "gsd-phase-researcher";
 export const RESEARCH_FRAGMENT = ".agents/gsd/upstream/capabilities/research/fragments/plan-pre.md";
@@ -29,19 +29,26 @@ function roleFiles(g, type) {
 
 const backticked = (text) => [...String(text ?? "").matchAll(/`([^`\s]+)`/g)].map((m) => m[1]).filter((p) => /[/.]/.test(p) && !/^https?:/.test(p));
 
-// The files of one key: `{label, abs}` entries; harness files (role text) are read from the invoking checkout.
+// The research report without its bookkeeping: the attempt key and the completion marker that carries it change on
+// every run, the findings do not.
+const reportContent = (text) => text?.replace(/^attempt_key:[^\r\n]*\r?\n?/gm, "").replace(/^<!-- gsd:research-complete\b[^\r\n]*-->\r?\n?/gm, "") ?? null;
+
+// The files of one key: `{label, abs}` entries, or `{label, text}` for content derived from a file (null when the
+// file is missing); harness files (role text) are read from the invoking checkout.
 export function keyFiles(g, phase, key) {
   const code = (p) => ({ label: p, abs: path.resolve(g.codeRoot, p) });
   const harness = (p) => ({ label: `harness:${p}`, abs: path.resolve(g.harnessRoot, p) });
   const inPhase = (name) => code(rel(g.codeRoot, path.join(phase.dir, name)));
   const research = () => {
     const ctxFile = phaseFile(phase, "CONTEXT.md");
-    const out = [inPhase(`${phase.padded}-CONTEXT.md`), code(".planning/REQUIREMENTS.md"), code(".planning/PROJECT.md")];
+    const out = [inPhase(`${phase.padded}-CONTEXT.md`), code(".planning/PROJECT.md")];
     const roadmapEntry = roadmapPhase(loadRoadmap(g.codeRoot, g.cfg), phase.number);
     const reqs = loadRequirements(g.codeRoot);
+    // The phase's own requirement entries, not the whole REQUIREMENTS.md: another phase's entry or a formatting edit is no input.
     for (const id of roadmapEntry?.requirements ?? []) {
-      const spec = reqs.map.get(id)?.spec;
-      if (spec) out.push(code(spec.replace(/^`|`$/g, "")));
+      const req = reqs.map.get(id);
+      out.push({ label: `requirement:${id}`, text: req ? JSON.stringify([req.text, req.spec]) : null });
+      if (req?.spec) out.push(code(req.spec.replace(/^`|`$/g, "")));
     }
     const refs = /<canonical_refs>([\s\S]*?)<\/canonical_refs>/.exec(readIf(ctxFile) ?? "")?.[1];
     for (const p of backticked(refs)) out.push(code(p));
@@ -49,7 +56,11 @@ export function keyFiles(g, phase, key) {
     for (const p of [...roleFiles(g, RESEARCHER), RESEARCH_FRAGMENT]) out.push(harness(p));
     return out;
   };
-  const inputs = () => [...research(), inPhase(`${phase.padded}-RESEARCH.md`), inPhase("research-attempt.json")];
+  const report = () => {
+    const file = inPhase(`${phase.padded}-RESEARCH.md`);
+    return { label: file.label, text: reportContent(readIf(file.abs)) };
+  };
+  const inputs = () => [...research(), report()];
   const freeze = () => [...inputs(), inPhase(`${phase.padded}-PLAN-OUTLINE.md`), inPhase(`${phase.padded}-PLAN-OUTLINE.manifest.json`), inPhase(`${phase.padded}-WIRING.md`)];
   // G009: the skeleton lanes (lens, model, effort, lens texts) are written by gsd-plan beside the outline; the reviewer
   // definition is hashed here, since the freeze key covers the outline and wiring only.
@@ -65,23 +76,25 @@ export function keyFiles(g, phase, key) {
   throw fail(`unknown revisions key ${key} (research, inputs, freeze, skeleton, plan:<id>, plans, checked, handoff)`);
 }
 
-function digestOf(abs) {
+function digestOf(entry) {
+  if ("text" in entry) return entry.text === null ? "missing" : textDigest(entry.text);
   try {
-    return textDigest(fs.readFileSync(abs, "utf8"));
+    return textDigest(fs.readFileSync(entry.abs, "utf8"));
   } catch (e) {
     if (e.code === "ENOENT" || e.code === "EISDIR") return "missing";
     throw e;
   }
 }
 
-// Hash of a key: its files (deduplicated, sorted) plus this phase's ROADMAP section, never another phase's.
+// Hash of a key: its files (deduplicated, sorted) plus this phase's ROADMAP section without its generated block, never
+// another phase's section.
 export function keyHash(g, phase, key) {
   const seen = new Map();
-  for (const f of keyFiles(g, phase, key)) seen.set(f.label, f.abs);
+  for (const f of keyFiles(g, phase, key)) seen.set(f.label, f);
   const labels = [...seen.keys()].sort();
   const lines = labels.map((label) => `${label}\0${digestOf(seen.get(label))}\n`);
   const section = roadmapPhase(loadRoadmap(g.codeRoot, g.cfg), phase.number)?.section ?? null;
-  lines.push(`roadmap\0${section === null ? "missing" : textDigest(section)}\n`);
+  lines.push(`roadmap\0${section === null ? "missing" : textDigest(sectionContent(section))}\n`);
   return { hash: sha256(lines.join("")), files: labels };
 }
 
