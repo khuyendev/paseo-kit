@@ -12,13 +12,20 @@ import * as execute from "./flow-execute.mjs";
 import * as review from "./flow-review.mjs";
 import * as gate from "./flow-gate.mjs";
 import * as validation from "./flow-validation.mjs";
+import * as state from "./flow-state.mjs";
+
+// execute-progress.json has one writer, the state-* verbs (kit feedback 83 F1, 87); a raw write would skip their contracts.
+const notState = (p) => {
+  if (state.isStateFile(p)) throw new Error(`${p} is written only by the state-* verbs (state-plan, state-shared, state-request, state-integration, state-answer, state-smoke)`);
+  return p;
+};
 
 const COMMANDS = {
   exists: (root, args) => files.exists(root, args),
   read: (root, [p]) => files.read(root, p),
-  write: (root, [p], input) => files.write(root, p, input),
-  append: (root, [p], input) => files.append(root, p, input),
-  "json-push": (root, [p], input) => files.jsonPush(root, p, JSON.parse(input)),
+  write: (root, [p], input) => files.write(root, notState(p), input),
+  append: (root, [p], input) => files.append(root, notState(p), input),
+  "json-push": (root, [p], input) => files.jsonPush(root, notState(p), JSON.parse(input)),
   secrets: (root, args) => map.secrets(root, args),
   stamp: (root, args) => map.stamp(root, args.length ? args : undefined),
   drift: (root, [threshold]) => map.drift(root, Number(threshold)),
@@ -42,7 +49,7 @@ const COMMANDS = {
   "dependency-seed": (root, [phaseDir], input) => execute.dependencySeed(root, phaseDir, JSON.parse(input)),
   "pending-transfers": (root, [phaseDir]) => execute.pendingTransfers(root, phaseDir),
   owners: (root, _args, input) => execute.ownersOf(root, JSON.parse(input)),
-  remove: (root, [p]) => files.remove(root, p),
+  remove: (root, [p]) => files.remove(root, notState(p)),
   lock: (root, [name, runId, kind]) => files.lock(root, name, runId, undefined, kind ?? null),
   unlock: (root, [name, runId]) => files.unlock(root, name, runId),
   "lock-check": (root, [name, runId]) => files.lockCheck(root, name, runId),
@@ -58,13 +65,20 @@ const COMMANDS = {
   "quick-dir": (root, [slugSource]) => project.quickDir(root, slugSource),
   "quick-verification": (root, [dir, action]) => project.quickVerification(root, dir, action),
   "forensics-path": (root, _args, input) => project.forensicsPath(root, input),
+  "state-read": (root, [phaseDir]) => state.stateRead(root, phaseDir),
+  "state-plan": (root, [phaseDir], input) => state.statePlan(root, phaseDir, JSON.parse(input)),
+  "state-shared": (root, [phaseDir], input) => state.stateShared(root, phaseDir, JSON.parse(input)),
+  "state-request": (root, [phaseDir], input) => state.stateRequest(root, phaseDir, JSON.parse(input)),
+  "state-integration": (root, [phaseDir], input) => state.stateIntegration(root, phaseDir, JSON.parse(input)),
+  "state-answer": (root, [phaseDir], input) => state.stateAnswer(root, phaseDir, JSON.parse(input)),
+  "state-smoke": (root, [phaseDir], input) => state.stateSmoke(root, phaseDir, JSON.parse(input)),
 };
 
 export const COMMAND_NAMES = Object.keys(COMMANDS);
 
 // Verbs whose handler reads JSON or text from stdin; every other verb never touches stdin, so a person running
 // `gsd-flow.mjs remove <path>` from a shell whose stdin is an open pipe is not left waiting (G088).
-const STDIN = new Set(["write", "append", "json-push", "summary-heal", "resume-gate", "transfer", "discard-worktree", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "evidence-check", "review-scope", "review-record", "prereview-record", "changed-lines", "forensics-path"]);
+const STDIN = new Set(["write", "append", "json-push", "summary-heal", "resume-gate", "transfer", "discard-worktree", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "evidence-check", "review-scope", "review-record", "prereview-record", "changed-lines", "forensics-path", "state-plan", "state-shared", "state-request", "state-integration", "state-answer", "state-smoke"]);
 export const readsStdin = (cmd) => STDIN.has(cmd);
 
 export async function main(argv, { root = configRoot(), input = "", out = (l) => process.stdout.write(`${l}\n`) } = {}) {

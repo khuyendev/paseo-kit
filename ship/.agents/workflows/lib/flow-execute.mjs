@@ -13,6 +13,7 @@ import { matchesGlob } from "../../harness/adapter/contract.mjs";
 import { readWorktreeSeed } from "../../harness/runtime/worktree-seed.mjs";
 import { leftoverWorktrees, retireWorktree, runGit } from "../../harness/runtime/worktrees.mjs";
 import { DEFAULT_RUNS_DIR } from "../../harness/workflow/journal.mjs";
+import { readState } from "./flow-state.mjs";
 
 const ANSWER_KEYS = ["what", "manifested", "prevention"];
 
@@ -181,12 +182,13 @@ export function scheduleGraph(root, { plans = [] }) {
 }
 
 // input: {plans: [{id, owns[], summary, complete}], integration?: [path]} — the plans of the phase with their SUMMARY
-// state, and the paths the run's integration fixer was given (orchestrator output, recorded in execute-progress.json).
+// state, and the paths the run's integration fixer was given (orchestrator output; default: the integration files of
+// execute-progress.json, kit feedback 83 F2).
 // A moved HEAD is checked commit by commit: a commit the orchestrator made but could not record (its `Plans:` trailer
 // names plans of this phase and every file it touches is theirs) is written into commits.json (`reconciled`); a
 // commit touching no file any plan of the phase owns (a docs commit between runs, kit-feedback 24) is `accepted`;
 // any other commit is foreign.
-export function resumeGate(root, phaseDir, { plans, integration = [] }) {
+export function resumeGate(root, phaseDir, { plans, integration = readState(root, phaseDir).integration }) {
   const base = readJsonIf(baselineFile(root, phaseDir), null);
   if (!base) throw new Error(`no execute baseline in ${phaseDir}`);
   const prefixes = ownsPrefixes(root);
@@ -242,13 +244,14 @@ export function resumeGate(root, phaseDir, { plans, integration = [] }) {
 }
 
 // Every change of the main tree since the baseline, assigned for the commit manifest (GSDF-53, CR-GSF-07):
-// input {plans: [{id, owns, summary, claimed?}], pending?: [{id, owns, summary}], integration?: [path], ignore?: [prefix]}.
+// input {plans: [{id, owns, summary, claimed?}], pending?: [{id, owns, summary}], integration?: [path] (default: those of
+// execute-progress.json), ignore?: [prefix]}.
 // A path claimed by a plan's transfer record goes to that plan, else to every plan owning it; deleted paths go to
 // `removed`; unowned paths the integration fixer was given go to `integration`; paths owned only by `pending` plans
 // (committed later in the run) are left alone; an unowned tracked file whose only change is line endings (`eolOnly`, kit feedback 80)
 // or that lies outside adapter.ownership.source_roots (`outside`, kit feedback 77) is reported and never committed; everything
 // else is `unowned` and must stop the commit.
-export function ownedChanges(root, phaseDir, { plans, pending = [], integration = [], ignore = [] }) {
+export function ownedChanges(root, phaseDir, { plans, pending = [], integration = readState(root, phaseDir).integration, ignore = [] }) {
   const base = readJsonIf(baselineFile(root, phaseDir), null);
   if (!base) throw new Error(`no execute baseline in ${phaseDir}`);
   const prefixes = ownsPrefixes(root);

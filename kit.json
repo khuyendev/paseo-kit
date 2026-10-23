@@ -433,6 +433,7 @@
     ".agents/workflows/lib/flow-owns.mjs",
     ".agents/workflows/lib/flow-project.mjs",
     ".agents/workflows/lib/flow-review.mjs",
+    ".agents/workflows/lib/flow-state.mjs",
     ".agents/workflows/lib/flow-validation.mjs",
     ".agents/workflows/lib/gsd-flow.mjs",
     ".agents/workflows/overlays/gsd-debugger.md",
