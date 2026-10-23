@@ -3,26 +3,25 @@
 // (refused, nothing written, when the contract does not hold), writes the record under its lock and answers with the whole
 // state after the update, so a composition decides from what is on disk, never from its own memory. `rev` grows with every
 // write; a caller keeping a copy takes only a newer one. A record of an older kit is migrated when read and stored on the next
-// write. Readers outside the flow (ph gsd shared clear, request clear) use readStateFile.
+// write. The record shape and its reader are harness/lib/execute-state.mjs (the answer verbs read it there).
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../../harness/config.mjs";
 import { matchesGlob } from "../../harness/adapter/contract.mjs";
 import { withFileLock } from "../../harness/gsd/common.mjs";
 import { textDigest } from "../../harness/lib/hash.mjs";
-import { readJsonIf, readText, writeJsonAtomic } from "../../harness/lib/io.mjs";
+import { PLAN_STAGES, STATE_FILE, readStateFile } from "../../harness/lib/execute-state.mjs";
+import { readText, writeJsonAtomic } from "../../harness/lib/io.mjs";
 import { OWNER_ANSWERS_FILE, readAnswers, waveMatches } from "../../harness/lib/owner-answers.mjs";
 import { resolveInside } from "../../harness/lib/paths.mjs";
 import { git } from "./flow-git.mjs";
 
-export const STATE_FILE = "execute-progress.json";
-export const STATE_VERSION = 2;
-export const PLAN_STAGES = Object.freeze(["dispatched", "executed", "transferred", "committed", "tracked", "halted"]);
 // How a cross-plan request closes: tree (its path changed since the request), shared change (an applied or cleared shared
 // change names its path), resolver (the read-only resolver found it present), owner (ph gsd request clear, taken with
 // state-answer), reply (the owner plan named it in resolvedRequests).
 export const CLOSE_BY = Object.freeze(["tree", "shared change", "resolver", "owner", "reply"]);
 const BY_ALIAS = { "changed-since-request": "tree", "shared-change": "shared change" };
+export { PLAN_STAGES, STATE_FILE, readStateFile };
 const PLAN_ID = /^\d+(\.\d+)?-\d+$/;
 // Optional containers left out of the file while empty (gsd.request_check off records no requestBase).
 const OPTIONAL = ["requestBase", "stages", "closed", "answered", "integrationBy"];
@@ -37,63 +36,11 @@ class Refused extends Error {}
 const refuse = (why) => { throw new Refused(why); };
 // A refused route says that its target is generated, so the composition can hold it for the owner.
 const refuseGenerated = (why) => { throw Object.assign(new Refused(why), { generated: true }); };
-const isObj = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
-
-function fresh() {
-  return { version: STATE_VERSION, rev: 0, plans: {}, stages: {}, requests: {}, requestBase: {}, shared: [], integration: [], integrationBy: {}, closed: [], answered: [] };
-}
-
-// Schema check of a stored record; `file` names it in the error.
-function check(data, file) {
-  const bad = (what) => { throw new Error(`${file}: ${what}; it is written only by the state-* flow verbs`); };
-  if (!isObj(data)) bad("not a JSON object");
-  const mapOf = (key, test, what) => {
-    if (data[key] === undefined) return;
-    if (!isObj(data[key])) bad(`${key} is not an object`);
-    for (const [k, v] of Object.entries(data[key])) if (!test(v)) bad(`${key}.${k} ${what}`);
-  };
-  const listOf = (key, test, what) => {
-    if (data[key] === undefined) return;
-    if (!Array.isArray(data[key])) bad(`${key} is not a list`);
-    data[key].forEach((v, i) => { if (!test(v)) bad(`${key}[${i}] ${what}`); });
-  };
-  mapOf("plans", (p) => isObj(p) && (p.commit === undefined || typeof p.commit === "string") && (p.tracked === undefined || typeof p.tracked === "boolean"), "is not {commit, verify, evidence, tracked}");
-  mapOf("stages", (s) => isObj(s) && PLAN_STAGES.includes(s.stage), `has no stage of ${PLAN_STAGES.join("|")}`);
-  mapOf("requests", (l) => Array.isArray(l) && l.every((q) => isObj(q) && typeof q.path === "string"), "is not a list of requests with a path");
-  mapOf("requestBase", (h) => h === null || typeof h === "string", "is not a digest or null");
-  mapOf("integrationBy", (w) => typeof w === "string", "is not a reason");
-  listOf("shared", (s) => isObj(s) && (s.path === null || s.path === undefined || typeof s.path === "string"), "is not a shared change");
-  listOf("integration", (f) => typeof f === "string", "is not a path");
-  listOf("closed", isObj, "is not a closure");
-  listOf("answered", (x) => typeof x === "string", "is not an answer id");
-  if (data.smoke !== undefined && data.smoke !== null && !isObj(data.smoke)) bad("smoke is not an object");
-  if (data.version !== undefined && !(Number.isInteger(data.version) && data.version <= STATE_VERSION)) bad(`version ${data.version} is newer than this kit (${STATE_VERSION})`);
-}
-
-// A stored record as the typed state. A 3c00968 record (no version) gets ids for its shared changes and the empty containers.
-function normalize(data) {
-  const st = { ...fresh(), ...data };
-  for (const k of ["plans", "stages", "requests", "requestBase", "integrationBy"]) st[k] = { ...(data[k] ?? {}) };
-  for (const k of ["integration", "closed", "answered"]) st[k] = [...(data[k] ?? [])];
-  let n = (data.shared ?? []).reduce((m, s) => Math.max(m, Number(/^S(\d+)$/.exec(s.id ?? "")?.[1] ?? 0)), 0);
-  st.shared = (data.shared ?? []).map((s) => ({ ...s, id: s.id ?? `S${++n}`, applied: s.applied === true }));
-  st.rev = Number.isInteger(data.rev) ? data.rev : 0;
-  st.version = STATE_VERSION;
-  return st;
-}
 
 function compact(st) {
   const out = { ...st };
   for (const k of OPTIONAL) if (Array.isArray(out[k]) ? !out[k].length : !Object.keys(out[k] ?? {}).length) delete out[k];
   return out;
-}
-
-/** The typed state of one execute-progress.json (a fresh state when there is none); never writes. */
-export function readStateFile(file) {
-  const data = readJsonIf(file, null);
-  if (data === null) return { state: fresh(), exists: false, migrated: false };
-  check(data, file);
-  return { state: normalize(data), exists: true, migrated: data.version !== STATE_VERSION };
 }
 
 export const readState = (root, phaseDir) => readStateFile(stateFile(root, phaseDir)).state;

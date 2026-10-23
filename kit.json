@@ -354,6 +354,7 @@
     ".agents/harness/gsd/yaml.mjs",
     ".agents/harness/lib/cli.mjs",
     ".agents/harness/lib/config-schema.mjs",
+    ".agents/harness/lib/execute-state.mjs",
     ".agents/harness/lib/hand-edit-log.mjs",
     ".agents/harness/lib/hash.mjs",
     ".agents/harness/lib/io.mjs",

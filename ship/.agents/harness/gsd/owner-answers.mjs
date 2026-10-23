@@ -1,11 +1,11 @@
 // The typed answer verbs of the stops of gsd-execute (kit feedback 82, 85, 83 F3): `ph gsd shared clear` answers an Integration
 // stop (shared changes the owner made, or accepts, by hand) and `ph gsd request clear` a cross-plan request that a Commit stop
 // lists. A verb never edits execute-progress.json (its one writer is workflows/lib/flow-state.mjs, kit feedback 87): it reads it
-// through flow-state, appends the answer to <phase>/owner-answers.json and the next gsd-execute run takes it with state-answer
+// through lib/execute-state.mjs, appends the answer to <phase>/owner-answers.json and the next gsd-execute run takes it with state-answer
 // (lib/owner-answers.mjs holds the shape). `halt clear` appends its answer here too.
 import path from "node:path";
 import { readJsonIf, writeJsonAtomic } from "../lib/io.mjs";
-import { STATE_FILE, readStateFile } from "../../workflows/lib/flow-state.mjs";
+import { STATE_FILE, readStateFile } from "../lib/execute-state.mjs";
 import { OWNER_ANSWERS_FILE, readAnswers, waveMatches } from "../lib/owner-answers.mjs";
 import { done, fail, none, nowIso, rel, withFileLock } from "./common.mjs";
 import { normPlanId } from "./planning.mjs";
