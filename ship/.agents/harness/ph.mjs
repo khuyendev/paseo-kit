@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { configProvenance, configRoot, loadConfig, loadConfigLenient } from "./config.mjs";
-import { UsageError, errText, isMain, parseArgs, phCommand } from "./lib/cli.mjs";
+import { UsageError, errText, helpAsked, isMain, parseArgs, phCommand } from "./lib/cli.mjs";
 import { realClock } from "./lib/proc.mjs";
 import { connect } from "./paseo-client/index.mjs";
 
@@ -98,9 +98,11 @@ export async function main(argv, { env = process.env, cwd = process.cwd(), out, 
   try {
     ctx.commands = await loadCommands();
     const [name, ...rest] = argv;
-    if (name === undefined || name === "--help") return printHelp(ctx);
+    if (name === undefined || name === "--help" || name === "-h") return printHelp(ctx);
     const def = ctx.commands.get(name);
     if (!def) return printHelp(ctx, name);
+    // Options null: the command gets raw argv and answers -h and --help itself (ph gsd, G153).
+    if (def.options && helpAsked(rest, def.options)) return printHelp(ctx, name);
     Object.assign(ctx, { name, argv: rest, opts: {}, args: rest, cfg: null, configError: null });
     if (def.options) Object.assign(ctx, parseArgs(rest, def.options));
     if (def.config === "required") ctx.cfg = loadConfig(ctx.root);

@@ -3,13 +3,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { configRoot, loadConfig } from "../config.mjs";
-import { UsageError, errText, parseArgs } from "../lib/cli.mjs";
+import { UsageError, errText, helpAsked, parseArgs } from "../lib/cli.mjs";
 import { GsdError, fail, unavailable } from "./common.mjs";
 import { hasGit } from "./git.mjs";
 import { NOT_PORTED } from "./verb-table.mjs";
 import { verbHandlers } from "./verbs.mjs";
 
 export const GLOBAL_OPTIONS = ["pick", "root"];
+
+const GSD_USAGE = "ph gsd <verb> [args] [--pick a.b[-1].c] [--root <checkout>]   verbs: ph gsd verbs";
 
 // Every verb the kit knows: ported handlers plus the upstream verbs it declares unavailable (with a reason).
 export const VERBS = Object.freeze({
@@ -77,30 +79,9 @@ export async function runGsd(argv, { env = process.env, root = configRoot(env), 
   try {
     const { verb, args, global } = resolveVerb(argv);
     pick = global.pick;
-    const entry = VERBS[verb];
-    if (!entry) throw unavailable(`not ported: unknown gsd verb ${verb}; continue without it`, { status: "unavailable", verb, reason: "unknown verb" });
-    if (!entry.ported) throw unavailable(`${verb} is not ported: ${entry.reason}`, { status: "unavailable", verb, reason: entry.reason });
-    const cfg = loadConfig(root);
-    let codeRoot = root;
-    if (global.root !== undefined) {
-      codeRoot = path.resolve(root, global.root);
-      if (!fs.existsSync(codeRoot) || !hasGit(codeRoot)) throw unavailable(`--root ${global.root} is not a git checkout (no .git)`);
-    }
-    const handler = verbHandlers[verb];
-    const parsed = handler.options === null ? { opts: {}, args } : parseArgs(args, handler.options);
-    const g = {
-      verb,
-      env,
-      cfg,
-      harnessRoot: root,
-      codeRoot,
-      out: say,
-      err: warn,
-      write: write ?? ((t) => process.stdout.write(t)),
-      errWrite: errWrite ?? ((t) => process.stderr.write(t)),
-      stdin: () => (stdin !== undefined ? String(stdin) : readStdin()),
-    };
-    result = await handler.run(g, parsed.args, parsed.opts);
+    // `ph gsd -h` (no verb) prints the gsd usage; a verb's own -h is answered in runVerb (G153).
+    if (verb === "-h" || verb === "--help") result = { code: 0, json: { status: "help", usage: GSD_USAGE } };
+    else result = await runVerb(verb, args, global, { env, root, stdin, say, warn, write, errWrite });
   } catch (e) {
     if (e instanceof GsdError) result = { code: e.exitCode, json: { status: e.extra.status ?? "error", error: errText(e), ...e.extra } };
     else result = { code: 1, json: { status: "error", error: errText(e) } };
@@ -118,6 +99,36 @@ export async function runGsd(argv, { env = process.env, root = configRoot(env), 
   return result.code;
 }
 
+// One verb's {code, json}: its usage when the arguments ask for -h or --help (before config and root checks, so help
+// needs no config), else what its handler returns. `--` ends the options, so `-- -h` is data (G153).
+async function runVerb(verb, args, global, { env, root, stdin, say, warn, write, errWrite }) {
+  const entry = VERBS[verb];
+  if (!entry) throw unavailable(`not ported: unknown gsd verb ${verb}; continue without it`, { status: "unavailable", verb, reason: "unknown verb" });
+  if (!entry.ported) throw unavailable(`${verb} is not ported: ${entry.reason}`, { status: "unavailable", verb, reason: entry.reason });
+  const handler = verbHandlers[verb];
+  if (handler.help !== false && helpAsked(args, handler.options)) return { code: 0, json: { status: "help", verb, usage: handler.usage } };
+  const cfg = loadConfig(root);
+  let codeRoot = root;
+  if (global.root !== undefined) {
+    codeRoot = path.resolve(root, global.root);
+    if (!fs.existsSync(codeRoot) || !hasGit(codeRoot)) throw unavailable(`--root ${global.root} is not a git checkout (no .git)`);
+  }
+  const parsed = handler.options === null ? { opts: {}, args } : parseArgs(args, handler.options);
+  const g = {
+    verb,
+    env,
+    cfg,
+    harnessRoot: root,
+    codeRoot,
+    out: say,
+    err: warn,
+    write: write ?? ((t) => process.stdout.write(t)),
+    errWrite: errWrite ?? ((t) => process.stderr.write(t)),
+    stdin: () => (stdin !== undefined ? String(stdin) : readStdin()),
+  };
+  return handler.run(g, parsed.args, parsed.opts);
+}
+
 function readStdin() {
   try {
     return fs.readFileSync(0, "utf8").replace(/^\uFEFF/, "");
@@ -131,7 +142,7 @@ export const commands = [
   {
     name: "gsd",
     summary: "GSD planning verbs over .planning/ (JSON last line; exit 0 ok, 1 negative/error, 66 nothing in scope, 69 could not look)",
-    usage: "ph gsd <verb> [args] [--pick a.b[-1].c] [--root <checkout>]   verbs: ph gsd verbs",
+    usage: GSD_USAGE,
     options: null,
     config: "none",
     run: (ctx) => runGsd(ctx.argv, { env: ctx.env, root: ctx.root, out: ctx.out, err: ctx.err, write: ctx.write }),

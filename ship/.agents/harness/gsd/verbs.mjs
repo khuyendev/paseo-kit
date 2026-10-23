@@ -1,4 +1,5 @@
-// The ported verb handlers: verb -> {options (parseArgs spec, null = raw argv), run(g, args, opts)}.
+// The ported verb handlers: verb -> {options (parseArgs spec, null = raw argv), usage (the -h text), help (false: -h and
+// --help are the command's own), run(g, args, opts)}.
 import path from "node:path";
 import { textDigest } from "../lib/hash.mjs";
 import { isInside } from "../lib/paths.mjs";
@@ -51,13 +52,16 @@ function planScope(g, a, o) {
 }
 const bool = (v, dflt) => (v === undefined ? dflt : !/^(false|0|no|off)$/i.test(String(v)));
 
-// Multi-value options such as `--files a b c` (taken until the next --option).
+// Multi-value options such as `--files a b c` (taken until the next --option); after a bare `--` every token is positional.
 function multi(args, names) {
   const out = Object.fromEntries(names.map((n) => [n, []]));
   const pos = [];
   let cur = null;
+  let end = false;
   for (const a of args) {
-    if (a.startsWith("--")) {
+    if (end) pos.push(a);
+    else if (a === "--") end = true;
+    else if (a.startsWith("--")) {
       if (!names.includes(a.slice(2))) throw fail(`unknown option ${a}`);
       cur = a.slice(2);
     } else if (cur) out[cur].push(a);
@@ -66,43 +70,44 @@ function multi(args, names) {
   return { ...out, pos };
 }
 
-const state = (sub, options = {}) => ({ options: { phase: "string", status: "string", plan: "string", activity: "string", plans: "string", name: "string", wave: "string", text: "string", "text-file": "string", by: "string", milestone: "string", ...options }, run: (g, a, o) => stateVerb(g, sub, o) });
-const init = (workflow) => ({ options: {}, run: (g, a) => initPayload(g, workflow, a[0]) });
-const revisions = (sub) => ({ options: {}, run: (g, a) => revisionsVerb(g, sub, phaseOf(g, a), a[1]) });
+const state = (sub, usage, options = {}) => ({ usage, options: { phase: "string", status: "string", plan: "string", activity: "string", plans: "string", name: "string", wave: "string", text: "string", "text-file": "string", by: "string", milestone: "string", ...options }, run: (g, a, o) => stateVerb(g, sub, o) });
+const init = (workflow) => ({ usage: `ph gsd init.${workflow} <phase>`, options: {}, run: (g, a) => initPayload(g, workflow, a[0]) });
+const revisions = (sub) => ({ usage: `ph gsd revisions.${sub} <phase> <key>`, options: {}, run: (g, a) => revisionsVerb(g, sub, phaseOf(g, a), a[1]) });
 
 export const verbHandlers = {
-  "init.project": { options: {}, run: (g) => initProject(g) },
+  "init.project": { usage: "ph gsd init.project", options: {}, run: (g) => initProject(g) },
   "init.plan-phase": init("plan-phase"),
   "init.phase-op": init("phase-op"),
   "init.execute-phase": init("execute-phase"),
   "init.verify": init("verify"),
-  "state.load": state("load"),
-  "state.init": state("init"),
-  "state.position": state("position"),
-  "state.planned-phase": state("planned-phase"),
-  "state.wave": state("wave"),
-  "state.decision": state("decision"),
-  "state.override": state("override"),
-  "state.session-note": state("session-note"),
-  "state.rederive": state("rederive"),
-  "roadmap.get-phase": { options: {}, run: (g, a) => roadmapVerb(g, "get-phase", a) },
-  "roadmap.analyze": { options: {}, run: (g, a) => roadmapVerb(g, "analyze", a) },
-  "roadmap.annotate-dependencies": { options: {}, run: (g, a) => roadmapVerb(g, "annotate-dependencies", a) },
-  "roadmap.install-draft": { options: {}, run: (g, a) => roadmapVerb(g, "install-draft", a) },
-  "requirements.list": { options: {}, run: (g, a) => requirementsVerb(g, "list", a) },
-  "requirements.mark-complete": { options: {}, run: (g, a) => requirementsVerb(g, "mark-complete", a) },
-  "requirements.revert": { options: {}, run: (g, a) => requirementsVerb(g, "revert", a) },
-  "find-phase": { options: {}, run: (g, a) => findPhaseVerb(g, a[0]) },
-  "phase.add": { options: { goal: "string" }, run: (g, a, o) => done(phaseAdd(g, a.join(" "), o)) },
-  "phase.insert": { options: { goal: "string" }, run: (g, a, o) => done(phaseInsert(g, a[0], a.slice(1).join(" "), o)) },
-  "phase.remove": { options: {}, run: (g, a) => done(phaseRemove(g, a[0])) },
-  "phase.complete": { options: {}, run: (g, a) => done(phaseComplete(g, a[0])) },
-  "phase.uat-passed": { options: { "require-verification": "bool", "uat-only": "bool" }, run: (g, a, o) => uatPassed(g, phaseOf(g, a), { requireVerification: o["require-verification"], uatOnly: o["uat-only"] }) },
-  "phase.list-plans": { options: {}, run: (g, a) => done({ phase: phaseOf(g, a).number, plans: planIds(phaseOf(g, a)) }) },
-  "phase.list-artifacts": { options: { type: "string" }, run: (g, a, o) => listArtifacts(g, phaseOf(g, a), o.type) },
-  "phase-plan-index": { options: {}, run: (g, a) => planIndex(g, phaseOf(g, a)) },
-  "halt.clear": { options: { plan: "string", reason: "string" }, run: (g, a, o) => haltClear(g, phaseOf(g, a), o.plan, o.reason) },
+  "state.load": state("load", "ph gsd state.load"),
+  "state.init": state("init", "ph gsd state.init [--milestone <name>]"),
+  "state.position": state("position", "ph gsd state.position [--phase <N>] [--plan <NN-MM>] [--status <text>] [--activity <text>]"),
+  "state.planned-phase": state("planned-phase", "ph gsd state.planned-phase --phase <N> --plans <ids> [--name <text>]"),
+  "state.wave": state("wave", "ph gsd state.wave --phase <N> --wave <k> (--text <text> | --text-file <file> | stdin JSON {plans, verify, evidence})"),
+  "state.decision": state("decision", "ph gsd state.decision (--text <text> | --text-file <file>) [--by <who>]"),
+  "state.override": state("override", "ph gsd state.override (--text <text> | --text-file <file> | stdin JSON {reason, issues})"),
+  "state.session-note": state("session-note", "ph gsd state.session-note (--text <text> | --text-file <file>)"),
+  "state.rederive": state("rederive", "ph gsd state.rederive"),
+  "roadmap.get-phase": { usage: "ph gsd roadmap.get-phase <N>", options: {}, run: (g, a) => roadmapVerb(g, "get-phase", a) },
+  "roadmap.analyze": { usage: "ph gsd roadmap.analyze", options: {}, run: (g, a) => roadmapVerb(g, "analyze", a) },
+  "roadmap.annotate-dependencies": { usage: "ph gsd roadmap.annotate-dependencies <N>", options: {}, run: (g, a) => roadmapVerb(g, "annotate-dependencies", a) },
+  "roadmap.install-draft": { usage: "ph gsd roadmap.install-draft", options: {}, run: (g, a) => roadmapVerb(g, "install-draft", a) },
+  "requirements.list": { usage: "ph gsd requirements.list", options: {}, run: (g, a) => requirementsVerb(g, "list", a) },
+  "requirements.mark-complete": { usage: "ph gsd requirements.mark-complete <ids...>", options: {}, run: (g, a) => requirementsVerb(g, "mark-complete", a) },
+  "requirements.revert": { usage: "ph gsd requirements.revert <N>", options: {}, run: (g, a) => requirementsVerb(g, "revert", a) },
+  "find-phase": { usage: "ph gsd find-phase <ref>", options: {}, run: (g, a) => findPhaseVerb(g, a[0]) },
+  "phase.add": { usage: "ph gsd phase.add <name...> [--goal <text>]", options: { goal: "string" }, run: (g, a, o) => done(phaseAdd(g, a.join(" "), o)) },
+  "phase.insert": { usage: "ph gsd phase.insert <after> <name...> [--goal <text>]", options: { goal: "string" }, run: (g, a, o) => done(phaseInsert(g, a[0], a.slice(1).join(" "), o)) },
+  "phase.remove": { usage: "ph gsd phase.remove <phase>", options: {}, run: (g, a) => done(phaseRemove(g, a[0])) },
+  "phase.complete": { usage: "ph gsd phase.complete <phase>", options: {}, run: (g, a) => done(phaseComplete(g, a[0])) },
+  "phase.uat-passed": { usage: "ph gsd phase.uat-passed <phase> [--require-verification] [--uat-only]", options: { "require-verification": "bool", "uat-only": "bool" }, run: (g, a, o) => uatPassed(g, phaseOf(g, a), { requireVerification: o["require-verification"], uatOnly: o["uat-only"] }) },
+  "phase.list-plans": { usage: "ph gsd phase.list-plans <phase>", options: {}, run: (g, a) => done({ phase: phaseOf(g, a).number, plans: planIds(phaseOf(g, a)) }) },
+  "phase.list-artifacts": { usage: "ph gsd phase.list-artifacts <phase> [--type <kind>]", options: { type: "string" }, run: (g, a, o) => listArtifacts(g, phaseOf(g, a), o.type) },
+  "phase-plan-index": { usage: "ph gsd phase-plan-index <phase>", options: {}, run: (g, a) => planIndex(g, phaseOf(g, a)) },
+  "halt.clear": { usage: "ph gsd halt.clear <phase> [--plan <NN-MM>] [--reason <text>]", options: { plan: "string", reason: "string" }, run: (g, a, o) => haltClear(g, phaseOf(g, a), o.plan, o.reason) },
   "verify.plan-structure": {
+    usage: "ph gsd verify.plan-structure <phase | path/NN-MM-PLAN.md> [--plans <ids>]",
     options: { plans: "string" },
     run: async (g, a, o) => {
       // Upstream form: one PLAN file (also quick plans outside a phase); else a phase with optional --plans.
@@ -123,45 +128,50 @@ export const verbHandlers = {
       return done(results.length === 1 ? results[0] : { valid, plans: results }, valid ? 0 : 1);
     },
   },
-  "verify.artifacts": { options: { plans: "string" }, run: (g, a, o) => verifyArtifacts(g, planScope(g, a, o).plans) },
+  "verify.artifacts": { usage: "ph gsd verify.artifacts <phase | path/NN-MM-PLAN.md> [--plans <ids>]", options: { plans: "string" }, run: (g, a, o) => verifyArtifacts(g, planScope(g, a, o).plans) },
   "verify.key-links": {
+    usage: "ph gsd verify.key-links <phase | path/NN-MM-PLAN.md> [--plans <ids>]",
     options: { plans: "string" },
     run: (g, a, o) => {
       const s = planScope(g, a, o);
       return verifyKeyLinks(g, s.plans, s.allPlans);
     },
   },
-  "verification.status": { options: {}, run: (g, a) => verificationStatusVerb(g.codeRoot, phaseOf(g, a)) },
-  "verification.fingerprint": { options: {}, run: (g, a) => done(fingerprint(g.codeRoot, phaseOf(g, a), a.slice(1))) },
+  "verification.status": { usage: "ph gsd verification.status <phase>", options: {}, run: (g, a) => verificationStatusVerb(g.codeRoot, phaseOf(g, a)) },
+  "verification.fingerprint": { usage: "ph gsd verification.fingerprint <phase> [extra files...]", options: {}, run: (g, a) => done(fingerprint(g.codeRoot, phaseOf(g, a), a.slice(1))) },
   "check.coverage": {
+    usage: "ph gsd check.coverage <phase>",
     options: {},
     run: (g, a) => {
       const r = coverage(g, phaseOf(g, a), readPlans(phaseOf(g, a)));
       return done(r, r.passed ? 0 : 1);
     },
   },
-  "check.decision-coverage": { options: {}, run: (g, a) => decisionGate(g, a, true) },
-  "check.decision-coverage-plan": { options: {}, run: (g, a) => decisionGate(g, a, true) },
-  "check.decision-coverage-verify": { options: {}, run: (g, a) => decisionGate(g, a, false) },
-  "check.verify-command-paths": { options: { plans: "string" }, run: async (g, a, o) => done(await verifyCommandPaths(g, phaseOf(g, a), readPlans(phaseOf(g, a), subset(o, phaseOf(g, a))))) },
-  "check.verify-failure-directions": { options: { plans: "string" }, run: (g, a, o) => done(failureDirections(g, readPlans(phaseOf(g, a), subset(o, phaseOf(g, a))))) },
-  "check.owns": { options: { plans: "string" }, run: (g, a, o) => checkOwns(g, phaseOf(g, a), subset(o, phaseOf(g, a))) },
+  "check.decision-coverage": { usage: "ph gsd check.decision-coverage <phase>", options: {}, run: (g, a) => decisionGate(g, a, true) },
+  "check.decision-coverage-plan": { usage: "ph gsd check.decision-coverage-plan <phase>", options: {}, run: (g, a) => decisionGate(g, a, true) },
+  "check.decision-coverage-verify": { usage: "ph gsd check.decision-coverage-verify <phase>", options: {}, run: (g, a) => decisionGate(g, a, false) },
+  "check.verify-command-paths": { usage: "ph gsd check.verify-command-paths <phase> [--plans <ids>]", options: { plans: "string" }, run: async (g, a, o) => done(await verifyCommandPaths(g, phaseOf(g, a), readPlans(phaseOf(g, a), subset(o, phaseOf(g, a))))) },
+  "check.verify-failure-directions": { usage: "ph gsd check.verify-failure-directions <phase> [--plans <ids>]", options: { plans: "string" }, run: (g, a, o) => done(failureDirections(g, readPlans(phaseOf(g, a), subset(o, phaseOf(g, a))))) },
+  "check.owns": { usage: "ph gsd check.owns <phase> [--plans <ids>]", options: { plans: "string" }, run: (g, a, o) => checkOwns(g, phaseOf(g, a), subset(o, phaseOf(g, a))) },
   "check.evaluation-scope": {
+    usage: "ph gsd check.evaluation-scope (--phase <N> | --plan <NN-MM> | --quick <id>) [--since <rev>] [--commits-only] [--max-commits <n>]",
     options: { phase: "string", plan: "string", quick: "string", since: "string", "commits-only": "bool", "max-commits": "string" },
     run: (g, a, o) => evaluationScope(g, { phase: o.phase, plan: o.plan, quick: o.quick, since: o.since, commitsOnly: o["commits-only"], maxCommits: o["max-commits"] ? Number(o["max-commits"]) : undefined }),
   },
-  "outline.parse": { options: {}, run: (g, a) => outlineParseVerb(g, phaseOf(g, a)) },
+  "outline.parse": { usage: "ph gsd outline.parse <phase>", options: {}, run: (g, a) => outlineParseVerb(g, phaseOf(g, a)) },
   "outline.check": {
+    usage: "ph gsd outline.check <phase> [--tracer <bool>] [--plans-per-phase <n>] [--waves-per-phase <n>]",
     options: { tracer: "string", "plans-per-phase": "string", "waves-per-phase": "string" },
     run: (g, a, o) => outlineCheck(g, phaseOf(g, a), { tracer: bool(o.tracer, true), plansPerPhase: Number(o["plans-per-phase"]) || undefined, wavesPerPhase: Number(o["waves-per-phase"]) || undefined }),
   },
-  waves: { options: { plans: "string" }, run: (g, a, o) => wavesVerb(g, phaseOf(g, a), subset(o, phaseOf(g, a))) },
-  handoff: { options: { plans: "string", prefix: "string", "no-tracer-split": "bool" }, run: (g, a, o) => handoff(g, phaseOf(g, a), { subset: subset(o, phaseOf(g, a)), prefix: o.prefix, noTracerSplit: o["no-tracer-split"] === true }) },
+  waves: { usage: "ph gsd waves <phase> [--plans <ids>]", options: { plans: "string" }, run: (g, a, o) => wavesVerb(g, phaseOf(g, a), subset(o, phaseOf(g, a))) },
+  handoff: { usage: "ph gsd handoff <phase> [--plans <ids>] [--prefix <text>] [--no-tracer-split]", options: { plans: "string", prefix: "string", "no-tracer-split": "bool" }, run: (g, a, o) => handoff(g, phaseOf(g, a), { subset: subset(o, phaseOf(g, a)), prefix: o.prefix, noTracerSplit: o["no-tracer-split"] === true }) },
   "revisions.record": revisions("record"),
   "revisions.check": revisions("check"),
   "revisions.hash": revisions("hash"),
   "revisions.show": revisions("show"),
   supersede: {
+    usage: "ph gsd supersede <phase> --keep <ids>",
     options: { keep: "string" },
     run: (g, a, o) => {
       if (o.keep === undefined) throw fail("supersede needs --keep <ids>");
@@ -170,6 +180,7 @@ export const verbHandlers = {
     },
   },
   "attempt.record": {
+    usage: "ph gsd attempt.record <phase> --kind <gap|verify|research> (--run-id <id> [--input-digest <d>] [--before <text>] [--done <bool>] [--result <json>] | stdin JSON)",
     options: { kind: "string", "run-id": "string", "input-digest": "string", before: "string", done: "string", result: "string" },
     run: (g, a, o) => {
       const phase = phaseOf(g, a);
@@ -178,6 +189,7 @@ export const verbHandlers = {
     },
   },
   "attempt.show": {
+    usage: "ph gsd attempt.show <phase> --kind <gap|verify|research>",
     options: { kind: "string" },
     run: (g, a, o) => {
       if (!ATTEMPT_KINDS.has(o.kind)) throw fail("--kind must be gap, verify or research");
@@ -186,53 +198,59 @@ export const verbHandlers = {
       return done(at);
     },
   },
-  write: { options: {}, run: (g, a) => writeArtifact(g, a[0], a[1], g.stdin()) },
-  hash: { options: {}, run: (g) => done({ hash: textDigest(g.stdin()) }) },
-  "research.status": { options: {}, run: (g, a) => researchStatus(g, phaseOf(g, a)) },
-  "research.prompt": { options: {}, run: (g, a) => researchPrompt(g, phaseOf(g, a)) },
-  "frontmatter.get": { options: {}, run: (g, a) => frontmatterGet(g, a[0], a[1]) },
-  "frontmatter.validate": { options: { schema: "string" }, run: (g, a, o) => frontmatterValidate(g, a[0], o.schema) },
+  write: { usage: "ph gsd write <phase> <NAME> (text on stdin)", options: {}, run: (g, a) => writeArtifact(g, a[0], a[1], g.stdin()) },
+  hash: { usage: "ph gsd hash (text on stdin)", options: {}, run: (g) => done({ hash: textDigest(g.stdin()) }) },
+  "research.status": { usage: "ph gsd research.status <phase>", options: {}, run: (g, a) => researchStatus(g, phaseOf(g, a)) },
+  "research.prompt": { usage: "ph gsd research.prompt <phase>", options: {}, run: (g, a) => researchPrompt(g, phaseOf(g, a)) },
+  "frontmatter.get": { usage: "ph gsd frontmatter.get <file> <key>", options: {}, run: (g, a) => frontmatterGet(g, a[0], a[1]) },
+  "frontmatter.validate": { usage: "ph gsd frontmatter.validate <file> --schema <name>", options: { schema: "string" }, run: (g, a, o) => frontmatterValidate(g, a[0], o.schema) },
   "summary-extract": {
+    usage: "ph gsd summary-extract <glob...> [--fields <a,b>]",
     options: null,
     run: (g, a) => {
       const m = multi(a, ["fields"]);
       return summaryExtract(g, m.pos, m.fields.join(","));
     },
   },
-  "history-digest": { options: {}, run: (g) => historyDigest(g) },
+  "history-digest": { usage: "ph gsd history-digest", options: {}, run: (g) => historyDigest(g) },
   commit: {
+    usage: "ph gsd commit <message...> --files <paths...> [--files-removed <paths...>]",
     options: null,
     run: (g, a) => {
       const m = multi(a, ["files", "files-removed"]);
       return commitVerb(g, m.pos.join(" "), m.files, m["files-removed"]);
     },
   },
-  "select-revert-commits": { options: { phase: "string", plan: "string", range: "string" }, run: (g, a, o) => selectRevertCommits(g, o) },
+  "select-revert-commits": { usage: "ph gsd select-revert-commits (--phase <N> | --plan <NN-MM>) --range <revs>", options: { phase: "string", plan: "string", range: "string" }, run: (g, a, o) => selectRevertCommits(g, o) },
   "run-with-timeout": {
+    usage: "ph gsd run-with-timeout <seconds> -- <command...>",
+    // The wrapped command owns its -h and --help: without a `--`, `run-with-timeout 30 npm test --help` must still run it.
+    help: false,
     options: null,
     run: (g, a) => {
       const cut = a.indexOf("--");
       return runWithTimeout(g, a[0], cut < 0 ? a.slice(1) : a.slice(cut + 1));
     },
   },
-  "normalize-test-command": { options: null, run: (g, a) => done({ command: normalizeTestCommand(a.join(" ")) }) },
-  health: { options: { repair: "bool" }, run: (g, a, o) => health(g, o.repair) },
-  "debug.create": { options: {}, run: (g) => debugCreate(g, json(g.stdin())) },
-  "debug.status": { options: {}, run: (g, a) => debugStatus(g, a[0]) },
-  "debug.list": { options: {}, run: (g) => debugList(g) },
-  "debug.checkpoint": { options: {}, run: (g, a) => debugCheckpoint(g, a[0], json(g.stdin())) },
-  "debug.budget": { options: {}, run: (g, a) => debugBudget(g, a[0], json(g.stdin())) },
-  "debug.extend": { options: {}, run: (g, a) => debugExtend(g, a[0], json(g.stdin())) },
+  "normalize-test-command": { usage: "ph gsd normalize-test-command <command...>", help: false, options: null, run: (g, a) => done({ command: normalizeTestCommand(a.join(" ")) }) },
+  health: { usage: "ph gsd health [--repair]", options: { repair: "bool" }, run: (g, a, o) => health(g, o.repair) },
+  "debug.create": { usage: "ph gsd debug.create (stdin JSON)", options: {}, run: (g) => debugCreate(g, json(g.stdin())) },
+  "debug.status": { usage: "ph gsd debug.status <slug>", options: {}, run: (g, a) => debugStatus(g, a[0]) },
+  "debug.list": { usage: "ph gsd debug.list", options: {}, run: (g) => debugList(g) },
+  "debug.checkpoint": { usage: "ph gsd debug.checkpoint <slug> (stdin JSON)", options: {}, run: (g, a) => debugCheckpoint(g, a[0], json(g.stdin())) },
+  "debug.budget": { usage: "ph gsd debug.budget <slug> (stdin JSON)", options: {}, run: (g, a) => debugBudget(g, a[0], json(g.stdin())) },
+  "debug.extend": { usage: "ph gsd debug.extend <slug> (stdin JSON {turns, minutes, reason})", options: {}, run: (g, a) => debugExtend(g, a[0], json(g.stdin())) },
   "debug.close": {
     // --evidence-stdin: stdin {evidence} (the verify rerun, ADPT-17) is appended to ## Evidence before closing.
+    usage: "ph gsd debug.close <slug> --outcome <text> [--summary <text>] [--why <text>] [--guard <text>] [--evidence-stdin]",
     options: { outcome: "string", summary: "string", why: "string", guard: "string", "evidence-stdin": "bool" },
     run: (g, a, o) => debugClose(g, a[0], o.outcome, { ...o, ...(o["evidence-stdin"] ? { evidence: json(g.stdin()).evidence ?? null } : {}) }),
   },
-  "upstream.vendor": { options: null, run: (g, a) => upstreamVerb(g, "vendor", a) },
-  "upstream.build": { options: null, run: (g, a) => upstreamVerb(g, "build", a) },
-  "upstream.check": { options: null, run: (g, a) => upstreamVerb(g, "check", a) },
-  "upstream.bump": { options: null, run: (g, a) => upstreamVerb(g, "bump", a) },
-  verbs: { options: {}, run: () => done({ ported: Object.keys(verbHandlers).sort() }) },
+  "upstream.vendor": { usage: "ph gsd upstream.vendor --from <clone> [--commit <sha>] [--target <checkout>]", options: null, run: (g, a) => upstreamVerb(g, "vendor", a) },
+  "upstream.build": { usage: "ph gsd upstream.build [--target <checkout>]", options: null, run: (g, a) => upstreamVerb(g, "build", a) },
+  "upstream.check": { usage: "ph gsd upstream.check [--target <checkout>] [--verbose]", options: null, run: (g, a) => upstreamVerb(g, "check", a) },
+  "upstream.bump": { usage: "ph gsd upstream.bump --from <clone> --commit <sha> [--target <checkout>] [--verbose]", options: null, run: (g, a) => upstreamVerb(g, "bump", a) },
+  verbs: { usage: "ph gsd verbs", options: {}, run: () => done({ ported: Object.keys(verbHandlers).sort() }) },
 };
 
 function decisionGate(g, a, blocking) {

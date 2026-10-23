@@ -7,6 +7,8 @@ description: "The ph command-line contract of the kit runtime - start, message, 
 
 `ph` means `node .agents/harness/ph.mjs`, run from the project root (inside agents use the absolute form printed in
 your runtime notes). One entry, no other script. `ph help` lists the commands, `ph help <command>` shows one usage.
+`ph <command> -h` (or `--help`) prints the same usage and runs nothing; `ph gsd <verb> -h` prints that verb's usage.
+A bare `--` ends the options, so a value such as `-h` can still be passed as data.
 
 ## Rules for orchestrators
 

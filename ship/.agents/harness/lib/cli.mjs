@@ -32,12 +32,17 @@ export function isMain(moduleUrl) {
   }
 }
 
-// `--key value` options only; a string option takes the next token even when it starts with `--`.
+// `--key value` options only; a string option takes the next token even when it starts with `--`. A bare `--` ends the
+// options: every token after it is positional, so `-h` can be data (G153).
 export function parseArgs(argv, spec) {
   const opts = {};
   const args = [];
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
+    if (token === "--") {
+      args.push(...argv.slice(i + 1));
+      break;
+    }
     if (!token.startsWith("--")) {
       args.push(token);
       continue;
@@ -52,4 +57,16 @@ export function parseArgs(argv, spec) {
     opts[key] = argv[++i];
   }
   return { opts, args };
+}
+
+// `-h` or `--help` asks for usage: anywhere before a `--`, except as the value of a string option (`--goal -h`) (G153).
+export function helpAsked(argv, spec) {
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+    if (token === "--") return false;
+    if (token === "-h" || token === "--help") return true;
+    const key = token.startsWith("--") ? token.slice(2) : null;
+    if (key !== null && spec && Object.hasOwn(spec, key) && spec[key] !== "bool") i++;
+  }
+  return false;
 }
