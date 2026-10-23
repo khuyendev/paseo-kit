@@ -584,15 +584,21 @@ async function checkerLoop(scopeIds, gapScoped) {
     log("checker skipped: plans unchanged since the last passing check");
     return { skipped: true };
   }
-  let prev = Infinity;
+  // The cap and the stall test count per plan (kit-feedback 9): a plan that stops converging leaves the loop as stuck, and
+  // the other plans keep being checked and revised until they pass or get stuck too. Blockers with no plan use key null.
+  const tally = new Map(); // key -> { rounds, prev }
+  const stuck = new Map(); // key -> { why, issues }
+  const carriedBy = new Map(); // key -> warnings of that key's latest check, carried into the result when the loop ends
+  const keyOf = (i) => (i.plan && scopeIds.includes(i.plan) ? i.plan : null);
   for (let iter = 1; ; iter++) {
+    const live = scopeIds.filter((id) => !stuck.has(id));
     const probeIssues = await countProbes(scopeIds, gapScoped);
     const probeFile = `${phaseDir}/checker-probes.json`;
     await flow(["write", probeFile], JSON.stringify({ iteration: iter, probes: probeIssues }, null, 2));
     // The Files/plan thresholds grow with the phase's files, so the checker judges them against this phase's plans.
     const filesPerPlan = (await gsd(["check", "owns", N])).json?.files_per_plan;
     const prompt = [
-      `Check the plans of phase ${N} read-only: ${scopeIds.map(planPath).join(", ")}.`,
+      `Check the plans of phase ${N} read-only: ${live.map(planPath).join(", ")}.`,
       planningContext(gapScoped ? "gap_closure" : "standard"),
       filesPerPlan ? `Files per plan: warning at ${filesPerPlan.warning}+, blocker at ${filesPerPlan.blocker}+ (use these for the Files/plan thresholds).` : "",
       `Deterministic probe results are in ${probeFile}: they are already counted; do not re-derive them, do not repeat them as issues.`,
@@ -616,45 +622,64 @@ async function checkerLoop(scopeIds, gapScoped) {
     const all = [...checkerIssues, ...probeIssues];
     const blockers = all.filter((i) => i.severity === "blocker");
     const carried = all.filter((i) => i.severity === "warning");
-    const carry = () => warnings.push(...carried.map((w) => `checker${w.plan ? ` (${w.plan})` : ""}: ${w.description}`));
     log(`checker iteration ${iter}: ${checkerIssues.length} checker + ${probeIssues.length} probe issues, ${blockers.length} blockers`);
-    if (blockers.length === 0) {
-      carry();
-      return { passed: true };
+    for (const key of [...live, null]) {
+      if (!stuck.has(key)) carriedBy.set(key, carried.filter((w) => keyOf(w) === key).map((w) => `checker${w.plan ? ` (${w.plan})` : ""}: ${w.description}`));
     }
-    if (iter >= maxCheckIterations || blockers.length >= prev) {
-      const why = iter >= maxCheckIterations ? `checker cap ${maxCheckIterations} reached with ${blockers.length} issues` : `stalled: ${blockers.length} issues, not below ${prev}`;
-      if (a.forceProceed) {
-        const override = { reason: a.forceProceed.reason, why, remaining: blockers };
-        const saved = await gsd(["state", "override", "--phase", N], { reason: a.forceProceed.reason, issues: blockers.map((x) => `${x.plan ?? "phase"}: ${x.description}`) });
-        if (saved.code !== 0) return { stop: failedCall("state override failed", saved.json?.error ?? `exit ${saved.code}`) };
-        log(`override: ${why}; proceeding (${a.forceProceed.reason})`);
-        carry();
-        return { passed: true, override };
+    const blockersByKey = new Map();
+    for (const i of blockers) blockersByKey.set(keyOf(i), [...(blockersByKey.get(keyOf(i)) ?? []), i]);
+    const revise = new Map();
+    for (const [key, list] of blockersByKey) {
+      if (stuck.has(key)) continue;
+      const t = tally.get(key) ?? { rounds: 0, prev: Infinity };
+      t.rounds++;
+      tally.set(key, t);
+      if (t.rounds >= maxCheckIterations || list.length >= t.prev) {
+        const why = t.rounds >= maxCheckIterations ? `checker cap ${maxCheckIterations} reached with ${list.length} issues` : `stalled: ${list.length} issues, not below ${t.prev}`;
+        stuck.set(key, { why: `${key ?? "phase"}: ${why}`, issues: list });
+        log(`checker: ${key ?? "phase"} left the loop: ${why}`);
+      } else {
+        t.prev = list.length;
+        revise.set(key, list);
       }
-      return { stop: owner("Checker", why, { issues: blockers, options: ["force proceed (rerun with forceProceed {reason})", "give guidance and retry", "abandon"] }) };
     }
-    prev = blockers.length;
-    const perPlan = new Map();
-    const phaseLevel = [];
-    for (const i of blockers) (i.plan && scopeIds.includes(i.plan) ? perPlan.set(i.plan, [...(perPlan.get(i.plan) ?? []), i]) : phaseLevel.push(i));
-    const revised = await parallel([...perPlan].map(([id, list]) => () => plannerCall(gapScoped ? "planner:gaps" : `planner:${id}`, `revise-${id}-${iter}`, [planningContext("revision"), revisionContext([planPath(id)], list)].join("\n\n"), "freeze", freezeHash)));
+    if (!revise.size) break;
+    // Every plan is stuck, so no plan is left to revise and the open phase-level issues stop with them.
+    if (scopeIds.every((id) => stuck.has(id))) {
+      for (const [key, list] of revise) stuck.set(key, { why: `${key ?? "phase"}: no plan left to revise`, issues: list });
+      break;
+    }
+    const perPlan = [...revise].filter(([key]) => key !== null);
+    const phaseLevel = revise.get(null) ?? [];
+    const revised = await parallel(perPlan.map(([id, list]) => () => plannerCall(gapScoped ? "planner:gaps" : `planner:${id}`, `revise-${id}-${iter}`, [planningContext("revision"), revisionContext([planPath(id)], list)].join("\n\n"), "freeze", freezeHash)));
     for (const r of revised) if (ownerMarker(r?.result)) return { stop: ownerStop("Checker", r.result) };
     // A revision that returned nothing is not a finished revision: stop with its reason; the plan is never recorded as revised.
     const missed = revised.findIndex((r) => !r || r.result === null);
-    if (missed !== -1) return { stop: failedCall(`planner revision ${[...perPlan.keys()][missed]} (checker iteration ${iter})`, revised[missed]?.reason ?? null) };
+    if (missed !== -1) return { stop: failedCall(`planner revision ${perPlan[missed][0]} (checker iteration ${iter})`, revised[missed]?.reason ?? null) };
     if (phaseLevel.length) {
       const r = await plannerCall(gapScoped ? "planner:gaps" : "planner:outline", `revise-phase-${iter}`, [planningContext("revision"), revisionContext(scopeIds.map(planPath), phaseLevel)].join("\n\n"), "freeze", freezeHash);
       if (ownerMarker(r.result)) return { stop: ownerStop("Checker", r.result) };
       if (r.result === null) return { stop: failedCall(`phase-level planner revision (checker iteration ${iter})`, r.reason) };
     }
-    const touched = phaseLevel.length ? scopeIds : [...perPlan.keys()];
+    const touched = phaseLevel.length ? scopeIds : perPlan.map(([id]) => id);
     for (const id of touched) {
       const s = await structureFix(id, gapScoped ? "planner:gaps" : `planner:${id}`);
       if (s) return { stop: s };
       if (!gapScoped) await gsd(["revisions", "record", phaseDir, `plan:${id}`]);
     }
   }
+  for (const list of carriedBy.values()) warnings.push(...list);
+  if (!stuck.size) return { passed: true };
+  const why = [...stuck.values()].map((s) => s.why).join("; ");
+  const remaining = [...stuck.values()].flatMap((s) => s.issues);
+  if (a.forceProceed) {
+    const override = { reason: a.forceProceed.reason, why, remaining };
+    const saved = await gsd(["state", "override", "--phase", N], { reason: a.forceProceed.reason, issues: remaining.map((x) => `${x.plan ?? "phase"}: ${x.description}`) });
+    if (saved.code !== 0) return { stop: failedCall("state override failed", saved.json?.error ?? `exit ${saved.code}`) };
+    log(`override: ${why}; proceeding (${a.forceProceed.reason})`);
+    return { passed: true, override };
+  }
+  return { stop: owner("Checker", why, { issues: remaining, options: ["force proceed (rerun with forceProceed {reason})", "give guidance and retry", "abandon"] }) };
 }
 
 async function handoffStage(ids, docs, override, handoffArgs = [], gap = null) {
