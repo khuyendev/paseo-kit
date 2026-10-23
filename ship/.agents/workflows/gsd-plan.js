@@ -31,11 +31,11 @@ const phaseNumber = (dir) => /phases\/(\d+(?:\.\d+)?)-/.exec(dir)[1];
 const digestLine = (key, hash) => `Input digest (${key}): ${hash}`;
 const policyBlock = (path) => `<research_input_policy>\n${path ? `Approved research: ${path}. Read and use only this report.` : "Approved research: NONE. Do not read or use any RESEARCH.md on disk."}\n</research_input_policy>`;
 const NEVER_RETRY = /quota|credit|billing|auth|permission|usage limit|rate limit|\b429\b|too many requests|RESOURCE_EXHAUSTED/i;
-// agent option `detail: true` resolves {result, reason, agentId, worktree, durationS};
+// agent option `detail: true` resolves {result, reason, agentId, worktree, durationS, model, effort};
 // the global `runId` is the first run's id, kept by --resume (GSDC-30 attempt keys).
 async function call(prompt, opts) {
   const d = await agent(prompt, { ...opts, detail: true });
-  return { result: d?.result ?? null, reason: d?.reason ?? null };
+  return { result: d?.result ?? null, reason: d?.reason ?? null, model: d?.model ?? null, effort: d?.effort ?? null };
 }
 const fatal = (reason) => Boolean(reason && NEVER_RETRY.test(reason));
 const needsOwner = (stage, reason, extra = {}) => ({ status: "needs-owner", stage, reason, ...extra });
@@ -117,11 +117,9 @@ const lanes = lanesArg.map((l, i) => ({ id: `L${i + 1}`, lens: l.lens, model: l.
 const unknownLens = lanes.find((l) => !lensText(l.lens));
 if (unknownLens) return { status: "failed", reason: `skeleton lane lens '${unknownLens.lens}' is neither a kit lens (${KIT_LENSES.join(", ")}) nor in adapter.review_lenses` };
 
-// GSDF-18: role table recorded in the result; per-run overrides pass as model/effort.
-const roleTable = {};
+// GSDF-18: per-run overrides pass as model/effort; the engine records the roles the calls resolved to (result.json roles).
 const roleOpts = (role, extra = {}) => {
   const o = { ...(roleOverrides[role] ?? {}), ...extra };
-  roleTable[role] = { model: o.model ?? g.roles?.[role]?.model ?? "agent default", effort: o.effort ?? g.roles?.[role]?.effort ?? "agent default" };
   const out = { role };
   if (o.model) out.model = o.model;
   if (o.effort) out.effort = o.effort;
@@ -130,7 +128,7 @@ const roleOpts = (role, extra = {}) => {
 const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
 const warnings = [];
 const advisories = [];
-const result = (status, extra = {}) => ({ status, phaseDir, mode, roles: roleTable, warnings, advisories, ...extra });
+const result = (status, extra = {}) => ({ status, phaseDir, mode, warnings, advisories, ...extra });
 const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reason, ...extra });
 // G017: the effective settings each gated judgment reads, hashed into its revision key (`--settings`). A changed lane,
 // role or limit reruns the judgments it decides; each key takes only the settings its own judgments read. The inputs
@@ -373,6 +371,8 @@ async function skeletonGate() {
   const first = await parallel(lanes.map((l) => () => reviewLane(l)));
   // A failed lane keeps the findings of the lanes that answered; the stop lists the failed lanes.
   for (const [i, r] of first.entries()) {
+    // The lane table shows the model and effort this lane's reviewer resolved to, not the other lanes' (GSDF-18).
+    lanes[i].resolved = { model: r?.model ?? null, effort: r?.effort ?? null };
     if (!r || r.result === null) laneFailures.set(lanes[i].id, r?.reason ?? null);
     else for (const raw of r.result.issues ?? []) addIssue(lanes[i].id, raw);
   }
@@ -441,7 +441,7 @@ function renderReview(gate) {
   return [
     `# Phase ${nn} outline review`, "", `Status: ${gate.status}${gate.stop?.reason ? ` (${gate.stop.reason})` : ""}`, "",
     "## Lanes", "", "| lane | lens | model | effort | result |", "| --- | --- | --- | --- | --- |",
-    ...lanes.map((l) => `| ${l.id} | ${l.lens} | ${l.model ?? roleTable.skeleton_lane?.model ?? "agent default"} | ${l.effort ?? roleTable.skeleton_lane?.effort ?? "agent default"} | ${laneFailures.has(l.id) ? `failed: ${cut300(laneFailures.get(l.id) ?? "no reply")}` : "ok"} |`), "",
+    ...lanes.map((l) => `| ${l.id} | ${l.lens} | ${l.resolved?.model ?? "unresolved"} | ${l.resolved?.effort ?? "agent default"} | ${laneFailures.has(l.id) ? `failed: ${cut300(laneFailures.get(l.id) ?? "no reply")}` : "ok"} |`), "",
     "## Passes", "", ...passCounts.map((c, i) => `- pass ${i + 1}: ${c} open`), "",
     "## Open", "", "| id | lane | plan | severity | target | required_property | description | evidence |", "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ...rows(open, ["id", "lane", "plan", "severity", "target", "required_property", "description", "evidence"]), "",

@@ -28,11 +28,11 @@ const phaseNumber = (dir) => /phases\/(\d+(?:\.\d+)?)-/.exec(dir)[1];
 const digestLine = (key, hash) => `Input digest (${key}): ${hash}`;
 const policyBlock = (path) => `<research_input_policy>\n${path ? `Approved research: ${path}. Read and use only this report.` : "Approved research: NONE. Do not read or use any RESEARCH.md on disk."}\n</research_input_policy>`;
 const NEVER_RETRY = /quota|credit|billing|auth|permission|usage limit|rate limit|\b429\b|too many requests|RESOURCE_EXHAUSTED/i;
-// agent option `detail: true` resolves {result, reason, agentId, worktree, durationS};
+// agent option `detail: true` resolves {result, reason, agentId, worktree, durationS, model, effort};
 // the global `runId` is the first run's id, kept by --resume (GSDC-30 attempt keys).
 async function call(prompt, opts) {
   const d = await agent(prompt, { ...opts, detail: true });
-  return { result: d?.result ?? null, reason: d?.reason ?? null };
+  return { result: d?.result ?? null, reason: d?.reason ?? null, model: d?.model ?? null, effort: d?.effort ?? null };
 }
 const fatal = (reason) => Boolean(reason && NEVER_RETRY.test(reason));
 const needsOwner = (stage, reason, extra = {}) => ({ status: "needs-owner", stage, reason, ...extra });

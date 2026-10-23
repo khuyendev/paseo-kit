@@ -82,14 +82,14 @@ test("GSDF-17 planner prompts carry planning_context, the specless block and the
   for (const s of ["<revision_context>", "Existing plans: .planning/phases/01-core/01-01-PLAN.md", "Checker issues (JSON):", "REVISION_CONFLICT"]) assert.ok(revised.includes(s), s);
 });
 
-test("GSDF-18 outline and plan calls resolve their own roles and sessions; the result records the role table", async () => {
+test("GSDF-18 outline and plan calls resolve their own roles and sessions; the engine, not the script, records the role table", async () => {
   const w = makeWorld();
   const r = await plan(w, { roles: { outline: { model: "p/outline-model" }, planner: { model: "p/plan-model", effort: "high" } } });
   const outline = r.calls.find((c) => c.opts.label === "outline");
   const p1 = r.calls.find((c) => c.opts.label === "plan-01-01");
   assert.deepEqual([outline.opts.role, outline.opts.model, outline.opts.session], ["outline", "p/outline-model", "planner:outline"]);
   assert.deepEqual([p1.opts.role, p1.opts.model, p1.opts.effort, p1.opts.session], ["planner", "p/plan-model", "high", "planner:01-01"]);
-  assert.equal(r.result.roles.outline.model, "p/outline-model");
+  assert.equal(r.result.roles, undefined);
   const lane = r.calls.find((c) => c.opts.label === "skeleton-L1");
   assert.deepEqual([lane.opts.role, lane.opts.readOnly, lane.opts.agentType], ["skeleton_lane", true, "gsd-skeleton-reviewer"]);
 });

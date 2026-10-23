@@ -33,7 +33,9 @@ test("FLOW-13 a reply missing a required key gets one retry in the same agent na
   s.project.write("wf.js", `${meta()}return await agent("give", { schema: ${JSON.stringify(SCHEMA)} });`);
   const r = await s.ph(["workflow", "--script", "wf.js", "--run-id", "wf_s"]);
   assert.equal(r.code, 0, r.stderr);
-  assert.deepEqual(result(s, "wf_s"), { x: 1 });
+  const { roles, ...value } = result(s, "wf_s");
+  assert.deepEqual(value, { x: 1 });
+  assert.equal(roles.length, 1);
   assert.deepEqual(created(s.fake)[0].outputSchema, SCHEMA);
   const msgs = sent(s.fake);
   assert.equal(msgs.length, 1);

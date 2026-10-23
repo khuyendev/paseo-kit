@@ -22,6 +22,9 @@ const NO_CALLER = "PASEO_AGENT_ID is not set: run ph from an agent inside Paseo,
 // The detached child runs in the directory its parent claimed; this names it, nothing else may reuse a run dir.
 const CLAIMED_ENV = "PASEO_HARNESS_CLAIMED_RUN_DIR";
 
+// GSDF-18: an object result.json names the run's effective roles; a `roles` key the script returns itself wins.
+const withRoles = (result, roles) => (result !== null && typeof result === "object" && !Array.isArray(result) ? { roles, ...result } : (result ?? null));
+
 // A saved workflow lives only in .agents/workflows/ (FLOW-10); {scriptPath} is relative to the root.
 export function resolveScript(root, ref) {
   let file;
@@ -231,7 +234,7 @@ async function runForeground(ctx, p) {
     });
     await host.finish();
     const resultFile = path.join(p.runDir, RUN_FILES.result);
-    writeJsonAtomic(resultFile, r.result ?? null);
+    writeJsonAtomic(resultFile, withRoles(r.result, r.roles));
     info = { ...info, status: "done", endedAt: new Date(ctx.clock.now()).toISOString(), agents: r.stats };
     writeJsonAtomic(runFile, info);
     recordMetrics(ctx, p, info, journalPath, r.result, out);

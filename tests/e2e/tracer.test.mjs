@@ -70,7 +70,10 @@ test("INST-01 PHCL-04 tracer: install, ph doctor, spawn/watch/result round and a
   const wf = await w.ph(["workflow", "--script", "wf.js", "--run-id", "wf_tracer"]);
   assert.equal(wf.code, 0, wf.text);
   assert.ok(lineMatching(wf, /^workflow done wf_tracer: .*\(ok 2, null 0, cached 0/), wf.text);
-  assert.deepEqual(w.project.readJson("_workspace/_runs/wf_tracer/result.json"), { x: "ok", y: "ok", s: "sh", runId: "wf_tracer" });
+  // result.json adds the run's roles to an object return (GSDF-18); the script's own keys are unchanged.
+  const { roles, ...value } = w.project.readJson("_workspace/_runs/wf_tracer/result.json");
+  assert.deepEqual(value, { x: "ok", y: "ok", s: "sh", runId: "wf_tracer" });
+  assert.deepEqual(roles.map((r) => [r.role, r.calls]), [[null, 2]]);
   const stats = await w.ph(["run-stats", "wf_tracer"]);
   assert.equal(stats.code, 0, stats.text);
   const status = [];

@@ -66,7 +66,7 @@ const shellText = (cmd) => (Array.isArray(cmd) ? cmd.map(String).join(" ") : Str
 export async function runWorkflow(o) {
   const { limits, host, out } = o;
   const budgetTotal = limits.budgetTotal ?? null;
-  const state = { sem: new Semaphore(Math.max(1, limits.maxConcurrent)), seq: 0, shellSeq: 0, started: 0, spent: 0, ok: 0, nulls: 0, cached: 0, costUsd: null, keyCount: new Map(), sessions: new Map() };
+  const state = { sem: new Semaphore(Math.max(1, limits.maxConcurrent)), seq: 0, shellSeq: 0, started: 0, spent: 0, ok: 0, nulls: 0, cached: 0, costUsd: null, keyCount: new Map(), sessions: new Map(), roles: new Map() };
   const cache = o.cache ?? new Map();
   const journal = createJournal(o.journalPath);
   const pending = new Set();
@@ -100,6 +100,14 @@ export async function runWorkflow(o) {
     return run;
   }
 
+  // GSDF-18: the run's effective role table, one entry per role, agent type, model and effort with its call count.
+  function countRole(opts, identity) {
+    const entry = { role: opts.role ?? null, agentType: opts.agentType ?? null, model: identity.model ?? null, effort: identity.effort ?? null };
+    const key = JSON.stringify(Object.values(entry));
+    if (!state.roles.has(key)) state.roles.set(key, { ...entry, calls: 0 });
+    state.roles.get(key).calls++;
+  }
+
   function finish(base, r) {
     const ok = r.status === "ok";
     if (ok) state.ok++;
@@ -117,22 +125,24 @@ export async function runWorkflow(o) {
     const label = String(opts.label ?? phase ?? "agent");
     const identity = host.identify({ prompt, opts });
     if (opts.session !== undefined) checkSession(opts.session, opts, identity);
+    countRole(opts, identity);
     const key = cacheKey(prompt, opts, identity);
     const occ = state.keyCount.get(key) ?? 0;
     state.keyCount.set(key, occ + 1);
     const wrap = (value) => (opts.schema ? { kind: "json", value: JSON.stringify(value) } : { kind: "text", value: String(value) });
-    // detail: true resolves {result, reason, agentId, worktree, durationS} instead of the bare result (null included).
+    // detail: true resolves {result, reason, agentId, worktree, durationS, model, effort} instead of the bare result (null included);
+    // model and effort are the resolved ones, null when the call did not resolve.
     const reply = (r) => {
       if (opts.detail === true) {
         const ok = r.status === "ok" || r.status === "cached";
         const worktree = r.worktreePath ?? r.worktree?.path ?? null;
-        return { kind: "json", value: JSON.stringify({ result: ok ? r.result : null, reason: ok ? null : (r.reason ?? "unknown"), agentId: r.agentId ?? null, worktree, durationS: r.durationS ?? 0 }) };
+        return { kind: "json", value: JSON.stringify({ result: ok ? r.result : null, reason: ok ? null : (r.reason ?? "unknown"), agentId: r.agentId ?? null, worktree, durationS: r.durationS ?? 0, model: identity.model ?? null, effort: identity.effort ?? null }) };
       }
       return r.status === "ok" || r.status === "cached" ? wrap(r.result) : null;
     };
-    // agentType, role, roleHash and effort name the version of the agent for the metrics ledger (metrics.mjs).
+    // agentType, role, roleHash, effort and the resolved model name the version of the agent for the metrics ledger (metrics.mjs).
     const who = { agentType: opts.agentType ?? null, role: opts.role ?? null, roleHash: identity.roleHash || null, effort: identity.effort ?? null };
-    const base = () => ({ n: ++state.seq, key, occ, label, phase, ...who, ...(opts.session !== undefined ? { session: opts.session } : {}) });
+    const base = () => ({ n: ++state.seq, key, occ, label, phase, ...who, model: identity.model ?? null, ...(opts.session !== undefined ? { session: opts.session } : {}) });
     const spec = (n) => ({ n, runId: o.runId, workflowName: meta.name, label, phase, prompt, opts, identity });
     return inSession(opts.session, () => runCall({ key, occ, label, phase, opts, identity, reply, base, spec }));
   }
@@ -177,7 +187,8 @@ export async function runWorkflow(o) {
         checkCap();
         b = base();
         state.started++;
-        journal({ n: b.n, kind: "agent", key, occ, label, phase, status: "start", ...(b.session !== undefined ? { session: b.session } : {}) });
+        // The start line names the call's role and model too, so an interrupted run still shows them (run-stats).
+        journal({ ...b, kind: "agent", status: "start" });
         // Written before the call finishes: an agent the run is killed in the middle of stays known to the resume (G123).
         const journalAgent = (agentId) => journal({ n: b.n, kind: "agent", key, occ, label, phase, status: "created", agentId });
         try {
@@ -264,5 +275,5 @@ export async function runWorkflow(o) {
   } finally {
     await settleUnawaited();
   }
-  return { result: run.result, meta: run.meta, stats: { started: state.started, ok: state.ok, null: state.nulls, cached: state.cached, tokens: state.spent, costUsd: state.costUsd } };
+  return { result: run.result, meta: run.meta, roles: [...state.roles.values()], stats: { started: state.started, ok: state.ok, null: state.nulls, cached: state.cached, tokens: state.spent, costUsd: state.costUsd } };
 }

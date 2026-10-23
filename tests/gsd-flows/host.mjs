@@ -97,7 +97,8 @@ export async function runScript(name, opts) {
     call.result = isNull ? null : value;
     call.reason = isNull ? (value?.__null ?? "finished without a reply") : null;
     logs.push(`agent done #${call.n} ${o.label ?? "agent"} ${isNull ? `null (${call.reason})` : "ok"}`);
-    return o.detail ? { result: call.result, reason: call.reason, agentId: `agent-${call.n}`, worktree: call.worktree ?? null, durationS: 60 } : call.result;
+    // The engine's detail reply also names the model and effort the call ran with (the host's own default when unset).
+    return o.detail ? { result: call.result, reason: call.reason, agentId: `agent-${call.n}`, worktree: call.worktree ?? null, durationS: 60, model: o.model ?? "host/default", effort: o.effort ?? null } : call.result;
   }
   async function shell(cmd, o = {}) {
     const argv = Array.isArray(cmd) ? cmd : ["sh", "-c", cmd];

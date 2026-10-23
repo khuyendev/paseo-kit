@@ -13,14 +13,14 @@ const engine = (body, { host = fakeHost(), attemptRunId } = {}) => runWorkflow({
   limits: { maxConcurrent: 4, maxAgents: 100, budgetTotal: null, shellTimeoutS: 30 }, out: () => {}, resolveChild: () => { throw new Error("no child"); }, host,
 });
 
-test("FLOW-04 detail: true resolves {result, reason, agentId, worktree, durationS}, also for a null call", async () => {
+test("FLOW-04 detail: true resolves {result, reason, agentId, worktree, durationS, model, effort}, also for a null call", async () => {
   const host = fakeHost({ runner: (s) => (s.prompt === "bad"
     ? { status: "null", reason: "usage limit reached", agentId: "a2", tokens: 0, durationS: 3 }
     : { status: "ok", result: "r", agentId: "a1", worktreePath: "/w/1", tokens: 1, durationS: 7 }) });
   const r = await engine(`return [await agent("good", { detail: true }), await agent("bad", { detail: true }), await agent("good")];`, { host });
   assert.deepEqual(r.result, [
-    { result: "r", reason: null, agentId: "a1", worktree: "/w/1", durationS: 7 },
-    { result: null, reason: "usage limit reached", agentId: "a2", worktree: null, durationS: 3 },
+    { result: "r", reason: null, agentId: "a1", worktree: "/w/1", durationS: 7, model: "p/m", effort: null },
+    { result: null, reason: "usage limit reached", agentId: "a2", worktree: null, durationS: 3, model: "p/m", effort: null },
     "r",
   ]);
 });

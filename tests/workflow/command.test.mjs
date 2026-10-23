@@ -77,7 +77,10 @@ test("FLOW-18 a done run has all six files, run.json counts, atomic 2-space JSON
   assert.equal(info.pid, process.pid);
   assert.deepEqual({ ...info.agents, costUsd: undefined }, { started: 1, ok: 1, null: 0, cached: 0, tokens: 5, costUsd: undefined });
   assert.ok(fs.readFileSync(runFile(s.project, id, "run.json"), "utf8").endsWith("}\n"));
-  assert.deepEqual(JSON.parse(fs.readFileSync(runFile(s.project, id, "result.json"), "utf8")), { a: "ok" });
+  // result.json adds the run's roles to an object return (GSDF-18); the script's own keys are unchanged.
+  const { roles, ...value } = JSON.parse(fs.readFileSync(runFile(s.project, id, "result.json"), "utf8"));
+  assert.deepEqual(value, { a: "ok" });
+  assert.equal(roles.length, 1);
   assert.deepEqual(JSON.parse(fs.readFileSync(runFile(s.project, id, "args.json"), "utf8")), { k: 1 });
 });
 
@@ -145,7 +148,7 @@ test("FLOW-16 resume: a zero-agent run resumes; missing id exits 1; parent recor
   const r = await s.ph(["workflow", "--resume", "wf_a", "--run-id", "wf_b"]);
   assert.equal(r.code, 0, r.stderr);
   assert.equal(readRun(s.project, "wf_b").parent, "wf_a");
-  assert.deepEqual(JSON.parse(fs.readFileSync(runFile(s.project, "wf_b", "result.json"), "utf8")), { x: 2 });
+  assert.deepEqual(JSON.parse(fs.readFileSync(runFile(s.project, "wf_b", "result.json"), "utf8")), { roles: [], x: 2 });
   const missing = await s.ph(["workflow", "--resume", "wf_none"]);
   assert.equal(missing.code, 1);
   assert.match(missing.err.join("\n"), /cannot resume: .*journal\.jsonl not found/);
