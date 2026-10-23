@@ -311,7 +311,7 @@ function addIssue(laneId, raw) {
   const sev = sevClass(String(raw.severity ?? "").toLowerCase());
   if (sev === "info") { advisories.push({ lane: laneId, plan: raw.plan ?? null, description: raw.description }); return; }
   const id = `${laneId}-${++laneSeq}`;
-  issues.set(id, { id, lane: laneId, plan: raw.plan ?? null, dimension: raw.dimension ?? "", severity: sev, target: raw.target ?? "outline", description: raw.description ?? "", evidence: raw.evidence ?? "", fix_hint: raw.fix_hint ?? "", state: "open", resolution: "" });
+  issues.set(id, { id, lane: laneId, plan: raw.plan ?? null, dimension: raw.dimension ?? "", required_property: raw.required_property ?? "", severity: sev, target: raw.target ?? "outline", description: raw.description ?? "", evidence: raw.evidence ?? "", fix_hint: raw.fix_hint ?? "", state: "open", resolution: "" });
 }
 async function snapshotList() {
   const paths = [OUTLINE, MANIFEST, P("CONTEXT.md"), ".planning/REQUIREMENTS.md", ".planning/ROADMAP.md"];
@@ -339,7 +339,7 @@ async function resolutionCheck(lane, open) {
   const prompt = [
     lensText(lane.lens),
     `Resolution check, read-only, of your own open skeleton issues after a revision. Snapshot: ${files.join(", ")}.`,
-    `Open issues (JSON): ${JSON.stringify(open.map(({ id, plan, description, fix_hint }) => ({ id, plan, description, fix_hint })))}`,
+    `Open issues (JSON): ${JSON.stringify(open.map(({ id, plan, required_property, description, fix_hint }) => ({ id, plan, required_property, description, fix_hint })))}`,
     "Return JSON {resolved: [{id, evidence}]} listing only the ids now resolved, each with evidence. Do not raise new issues; an id you do not list stays open.",
     POLICY,
     digestLine("freeze", await skeletonDigest()),
@@ -387,7 +387,7 @@ async function skeletonGate() {
       }
     }
     if (wiringInUse && !wroteThisPass && (toWiring.length || toOutline.length)) {
-      const w = await runArchitect("architect", toWiring.length ? `Resolve these skeleton issues: ${JSON.stringify(toWiring.map(({ id, description, fix_hint }) => ({ id, description, fix_hint })))}` : "Realign WIRING.md with the revised outline.");
+      const w = await runArchitect("architect", toWiring.length ? `Resolve these skeleton issues: ${JSON.stringify(toWiring.map(({ id, required_property, description, fix_hint }) => ({ id, required_property, description, fix_hint })))}` : "Realign WIRING.md with the revised outline.");
       if (w.stop) return { status: w.stop.status, stop: w.stop };
       w.changes.forEach((c) => addIssue(integrationLane, c));
     }
@@ -420,8 +420,8 @@ function renderReview(gate) {
     "## Lanes", "", "| lane | lens | model | effort | result |", "| --- | --- | --- | --- | --- |",
     ...lanes.map((l) => `| ${l.id} | ${l.lens} | ${l.model ?? roleTable.skeleton_lane?.model ?? "agent default"} | ${l.effort ?? roleTable.skeleton_lane?.effort ?? "agent default"} | ${laneFailures.has(l.id) ? `failed: ${cut300(laneFailures.get(l.id) ?? "no reply")}` : "ok"} |`), "",
     "## Passes", "", ...passCounts.map((c, i) => `- pass ${i + 1}: ${c} open`), "",
-    "## Open", "", "| id | lane | plan | severity | target | description | evidence |", "| --- | --- | --- | --- | --- | --- | --- |",
-    ...rows(open, ["id", "lane", "plan", "severity", "target", "description", "evidence"]), "",
+    "## Open", "", "| id | lane | plan | severity | target | required_property | description | evidence |", "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ...rows(open, ["id", "lane", "plan", "severity", "target", "required_property", "description", "evidence"]), "",
     "## Resolved", "", "| id | lane | description | evidence |", "| --- | --- | --- | --- |",
     ...rows(resolved, ["id", "lane", "description", "resolution"]), "",
     "## Advisories", "", ...(advisories.length ? advisories.map((x) => `- ${x.lane}${x.plan ? ` ${x.plan}` : ""}: ${cut300(x.description)}`) : ["- none"]), "",
