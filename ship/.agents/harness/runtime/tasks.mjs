@@ -1,4 +1,5 @@
 // ph task: the ephemeral shared task list of a team in its workspace dir, never planning state (PHCL-35, D-18).
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { UsageError } from "../lib/cli.mjs";
@@ -9,22 +10,48 @@ const LOCK_WAIT_MS = 10000;
 const LOCK_STEP_MS = 100;
 const LOCK_STALE_MS = 30000;
 
+// Removes the lock only while it still holds `token`. It is renamed aside first, so the check and the removal act on the
+// same file; a lock a live owner put in its place meanwhile is linked back, as files/private.mjs recoverLock does.
+function removeLockIf(lock, token) {
+  const aside = `${lock}.${crypto.randomBytes(8).toString("hex")}.stale`;
+  try {
+    fs.renameSync(lock, aside);
+  } catch (e) {
+    if (e.code === "ENOENT") return;
+    throw e;
+  }
+  if (fs.readFileSync(aside, "utf8") === token) {
+    fs.rmSync(aside, { force: true });
+    return;
+  }
+  try {
+    fs.linkSync(aside, lock);
+  } catch (e) {
+    if (e.code !== "EEXIST") throw e;
+  }
+  fs.rmSync(aside, { force: true });
+}
+
 async function withLock(file, clock, fn) {
   const lock = `${file}.lock`;
+  const token = crypto.randomBytes(8).toString("hex");
   for (let waited = 0; ; waited += LOCK_STEP_MS) {
     try {
-      fs.closeSync(fs.openSync(lock, "wx"));
+      fs.writeFileSync(lock, token, { flag: "wx" });
       break;
     } catch (e) {
       if (e.code !== "EEXIST") throw e;
+      // an empty lock is one still being written or cut short: it is judged by its age alone
+      let owner;
       let age = 0;
       try {
+        owner = fs.readFileSync(lock, "utf8");
         age = Date.now() - fs.statSync(lock).mtimeMs;
       } catch {
         continue;
       }
       if (age > LOCK_STALE_MS) {
-        fs.rmSync(lock, { force: true });
+        removeLockIf(lock, owner);
         continue;
       }
       if (waited >= LOCK_WAIT_MS) throw new Error(`task list locked: ${lock}`);
@@ -34,7 +61,7 @@ async function withLock(file, clock, fn) {
   try {
     return await fn();
   } finally {
-    fs.rmSync(lock, { force: true });
+    removeLockIf(lock, token);
   }
 }
 

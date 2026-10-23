@@ -339,7 +339,8 @@ Without `--detach` the command runs in the foreground and prints the same lines.
 ## 7. Shared task list (mode B)
 
 `<workspace>/tasks.json` (normally `_workspace/tasks.json`) is changed only through `ph task` (a lock file keeps
-parallel updates safe), by the leader and by teammates:
+parallel updates safe; a stale lock is taken over, and released, only while it still holds the token of its owner), by the
+leader and by teammates:
 
 | Command | Prints |
 | --- | --- |
