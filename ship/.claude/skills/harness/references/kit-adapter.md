@@ -50,6 +50,9 @@ on a missing variable; `{{#flag}}...{{/flag}}` and `{{^flag}}...{{/flag}}` mark 
 `gsd-execute.js` takes its agent prompts from kit templates (`executor`, `fixer`, `code-review`, ...) and its decisions
 from the `exec-*` flow verbs; what it keeps is the step order, the stops and their answers, the policies and the retry
 counts, which is what a project evolves.
+gsd-plan renders its agent prompts with the flow verb `plan-prompt <kind>` (kit templates
+`prompts/plan-*.md`) and leaves its bookkeeping to pure flow verbs (`plan-args`, `plan-skeleton`, `plan-probes`, `plan-linked`,
+`plan-realloc-diff`, `plan-validation`); a project changes its planning through the script's steps and stops, not those texts.
 
 ## 2. When to run
 

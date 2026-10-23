@@ -16,6 +16,7 @@ import * as gate from "./flow-gate.mjs";
 import * as validation from "./flow-validation.mjs";
 import * as checks from "./flow-checks.mjs";
 import * as planState from "./flow-plan-state.mjs";
+import * as plan from "./flow-plan.mjs";
 import * as state from "./flow-state.mjs";
 import { renderPrompt } from "./flow-prompt.mjs";
 import * as exec from "./flow-exec.mjs";
@@ -93,6 +94,14 @@ const COMMANDS = {
   "plan-contracts": (root, [phaseDir], input) => planState.planContracts(root, phaseDir, JSON.parse(input)),
   "plan-realloc": (root, [phaseDir], input) => planState.planRealloc(root, phaseDir, JSON.parse(input)),
   "plan-recheck": (root, [phaseDir], input) => planState.planRecheck(root, phaseDir, JSON.parse(input)),
+  // Pure planning verbs of the gsd-plan composition (THIN.md stage 2): no record, one answer.
+  "plan-args": (root, _args, input) => plan.planArgs(root, JSON.parse(input)),
+  "plan-prompt": (root, [kind], input) => plan.planPrompt(root, kind, JSON.parse(input)),
+  "plan-skeleton": (root, [op], input) => plan.planSkeleton(root, op, JSON.parse(input)),
+  "plan-probes": (root, _args, input) => plan.planProbes(root, JSON.parse(input)),
+  "plan-linked": (root, _args, input) => plan.planLinked(root, JSON.parse(input)),
+  "plan-realloc-diff": (root, _args, input) => plan.planReallocDiff(root, JSON.parse(input)),
+  "plan-validation": (root, _args, input) => plan.planValidation(root, JSON.parse(input)),
   "state-read": (root, [phaseDir]) => state.stateRead(root, phaseDir),
   "state-plan": (root, [phaseDir], input) => state.statePlan(root, phaseDir, JSON.parse(input)),
   "state-shared": (root, [phaseDir], input) => state.stateShared(root, phaseDir, JSON.parse(input)),
@@ -126,7 +135,7 @@ export const COMMAND_NAMES = Object.keys(COMMANDS);
 
 // Verbs whose handler reads JSON or text from stdin; every other verb never touches stdin, so a person running
 // `gsd-flow.mjs remove <path>` from a shell whose stdin is an open pipe is not left waiting (G088).
-const STDIN = new Set(["write", "append", "json-push", "summary-heal", "resume-gate", "transfer", "discard-worktree", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "evidence-check", "check-weakening", "review-scope", "review-record", "prereview-record", "changed-lines", "forensics-path", "plan-run", "plan-mark", "plan-end", "plan-outline", "plan-checker", "plan-contracts", "plan-realloc", "plan-recheck", "state-plan", "state-shared", "state-request", "state-integration", "state-answer", "state-smoke", "prompt", "exec-args", "exec-setup", "exec-defect", "exec-handoff", "exec-records", "exec-select", "exec-route", "exec-verdict", "exec-fixers", "exec-round-end", "exec-verdicts", "exec-review", "exec-findings", "exec-pause", "exec-groups"]);
+const STDIN = new Set(["write", "append", "json-push", "summary-heal", "resume-gate", "transfer", "discard-worktree", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "evidence-check", "check-weakening", "review-scope", "review-record", "prereview-record", "changed-lines", "forensics-path", "plan-run", "plan-mark", "plan-end", "plan-outline", "plan-checker", "plan-contracts", "plan-realloc", "plan-recheck", "state-plan", "state-shared", "state-request", "state-integration", "state-answer", "state-smoke", "prompt", "exec-args", "exec-setup", "exec-defect", "exec-handoff", "exec-records", "exec-select", "exec-route", "exec-verdict", "exec-fixers", "exec-round-end", "exec-verdicts", "exec-review", "exec-findings", "exec-pause", "exec-groups", "plan-args", "plan-prompt", "plan-skeleton", "plan-probes", "plan-linked", "plan-realloc-diff", "plan-validation"]);
 export const readsStdin = (cmd) => STDIN.has(cmd);
 
 export async function main(argv, { root = configRoot(), input = "", out = (l) => process.stdout.write(`${l}\n`), env = process.env } = {}) {

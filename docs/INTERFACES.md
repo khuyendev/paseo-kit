@@ -542,7 +542,26 @@ string or a non-zero number, `{{^name}}...{{/name}}` when it is not (the section
 dropped section names is not); a tag alone on its line takes its line break with it; sections do not nest. Kit templates:
 `debug-turn` (gsd-debug); `executor`, `executor-fix`, `fixer`, `integration-fix`, `shared-changes`, `code-review`,
 `finding-verifier`, `resolution-check`, `request-resolver` (gsd-execute, THIN.md stage 2: the agent prompts of a phase
-execution, byte-identical to the inline prompts they replace, so the journal keys of a resumed run do not change).
+execution, byte-identical to the inline prompts they replace, so the journal keys of a resumed run do not change). Planning templates: `plan-*` (gsd-plan, below).
+
+Planning verbs (THIN.md stage 2, `workflows/lib/flow-plan.mjs`): gsd-plan keeps the step order, the agent calls, the stops and
+their answers, the retry counts and the role of each call (its agent definitions are in the script); what is deterministic
+is in pure flow verbs (no record): `plan-args` checks and normalises the run's arguments and the composition policies the
+script resolved from them and from its gsd.* policy keys (section 4.3: no kit module reads those) in the GSDF-15 order (the first
+problem is the answer; `skipResearch` without a reason is `needs-owner`), and returns the settings each revision key hashes
+(the script hashes them with `sha`, so the digests are the ones of 04e008f), the skeleton lanes with their lens text and role
+options, SKELETON-LANES.json, the agent schemas and the planner markers; `plan-prompt <kind>` renders the prompt of one agent call
+from the kit templates `prompts/plan-*.md` and structured data (`ctx`: the phase, its research, requirements, adapter
+instructions, limits and Dimension 8 note; per kind the plans, issues, contract shows, digests). A plan template follows the
+`prompt` rules plus one: a paragraph whose variables are all empty strings is left out (never the whole template), else a line
+whose variables are all empty strings is left out, so an optional part costs no blank line. Kinds: `outline`, `outline-fix`,
+`revise`, `write`, `fix`, `realloc`, `gaps`, `architect`, `skeleton-lane`, `skeleton-resolve`, `checker`, `depcheck`,
+`join-resolve`. `plan-skeleton <op>` keeps the skeleton gate's issue book (the script passes it in and gets it back): `first`
+(the lanes' replies and the architect's outline changes), `route` (open issues to the outline writer or the architect),
+`add`, `pending` (each lane's open issues), `resolve` (the resolution checks), `end`, `report` (OUTLINE-REVIEW.md and the
+review-metrics findings). `plan-probes` turns the three `ph gsd check` probes into issues (and the Files/plan lines with
+`gsd.checker_reallocate`); `plan-linked` names the plans a plan edit can affect (incremental recheck); `plan-realloc-diff` what
+an outline reallocation changed; `plan-validation` what the validation strategy step means for the run.
 
 Rule: a verb is renamed or changes the shape of its input, output or record only with a CHANGELOG line that names the
 old and the new form and a compatibility alias for one release (the old name or shape is still accepted). A new verb
@@ -618,6 +637,13 @@ error, `{status: "error", error}`); `ph gsd` verbs exit 0, 1, 66 (nothing matche
 | `plan-mark` | `<phaseDir>`, `{run, plans, stage: planned\|recorded}` | `{status}` | `plan-progress.json` |
 | `plan-outline` | `<phaseDir>`, `{run, inputs, sha}` | `{status}` | `plan-progress.json` |
 | `plan-checker`, `plan-contracts`, `plan-realloc`, `plan-recheck` | `<phaseDir>`, `{run, part, step, ops}` | `{status, log}` | `plan-progress.json` (op log per part) |
+| `plan-args` | `{args, policy, gsd, adapter, kitLenses}` | `{status: ok, mode, ..., lanes, roles, settings, laneInputs, skeleton, schemas, ownerMarkers, knownMarkers}`, or exit 1 `{status: failed\|needs-owner, reason}` | none |
+| `plan-prompt` | `<kind>`, `{ctx, ...data}` | `{kind, text}`; exit 1 on an unknown kind, a missing template or variable | none (reads `prompts/plan-*.md`) |
+| `plan-skeleton` | `<op>`, `{sk, ...}` | `{sk, advisories, ...}` (op `first`, `route`, `add`, `pending`, `resolve`, `end`, `report`) | none |
+| `plan-probes` | `{runs: {<probe>: {code, json}}, filesPerPlan, tracerExtraFiles}` | `{found}` | none |
+| `plan-linked` | `{ids, scope, index, manifest, plans}` | `{linked}` | none |
+| `plan-realloc-diff` | `{before, after, named, planIds, sent}` | `{idsAfter, changed, removed, unchanged, accept}` | none |
+| `plan-validation` | `{off, approvedResearch, strategy}` | `{validation, report, warnings, log, commit}` | none |
 | `prompt` | `<name>` (`<kit name>` or `project/<name>`), `{<var>: string\|number\|boolean}` | `{name, path, text, unused}`; exit 1 on a bad name, a missing template, a missing variable or a bad value | none (reads the template) |
 | `exec-args` | `{args}` (the gsd-execute arguments) | `{status: ok, phaseDir, plans, wave, stopAfterWave, gapsOnly, files?}`; exit 1 `{status: failed, reason}` (GSDF-93) | none |
 | `exec-setup` | `{cfg, args, pending}` | `{N, nn, prefix, mode, worktreeMode, metricsOn, stackSkill, generated, schemas: {exec, fixer, findings, verdict, resolution, shared}}`: the settings of an execute run and the agent reply schemas | none |
