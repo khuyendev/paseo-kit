@@ -58,18 +58,26 @@ const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
 const ctx = "Project files: .planning/PROJECT.md (what and why), .planning/REQUIREMENTS.md when present, .planning/codebase/ when present.";
 
 if (stage === "research") {
-  phase("Research");
-  const jobs = Object.entries(DIMENSIONS);
-  const res = await parallel(jobs.map(([dim, file]) => () => call([`Research the ${dim} dimension for this project and write .planning/research/${file}.md.`, ctx, "Keep provenance on every claim. Do not commit. Return JSON {written: [paths]}."].join("\n\n"), { label: `researcher-${dim}`, agentType: agentFor("project_researcher", "gsd-project-researcher"), role: "project_researcher", schema: DONE_SCHEMA })));
-  const bad = res.findIndex((r) => r && !r.result && fatal(r.reason));
-  if (bad >= 0) return { status: "failed", reason: `project researcher ${jobs[bad][0]} failed: ${res[bad].reason}` };
-  phase("Synthesize");
-  const syn = await call([`Synthesize .planning/research/{${Object.values(DIMENSIONS).join(",")}}.md into .planning/research/SUMMARY.md.`, ctx, "Do not commit. Reply with the full SUMMARY document as written."].join("\n\n"), { label: "synthesizer", agentType: agentFor("synthesizer", "gsd-research-synthesizer"), role: "synthesizer" });
-  // GSDF-09: a summary the worker could not write is written by the orchestrator from the reply.
-  const heal = await flow(["summary-heal"], syn.result ?? "");
-  if (heal.code !== 0) return { status: "failed", reason: heal.json?.error ?? "no research SUMMARY" };
-  if (heal.json.healed) log("self-heal: wrote .planning/research/SUMMARY.md from the synthesizer reply");
-  return { status: "researched", summary: heal.json.path, healed: heal.json.healed };
+  // G120: the researchers and the synthesizer write fixed report paths, so one research run per project at a time.
+  // The research lock is its own: research does not wait on plan, execute or debug (GSDF-64 names those writers).
+  const lock = await flow(["lock", "research", runId, "gsd-new-project"]);
+  if (lock.code !== 0) return { status: "refused", reason: `another research run holds the research lock (${lock.json?.holder ?? "unknown run"}); research after it ends` };
+  try {
+    phase("Research");
+    const jobs = Object.entries(DIMENSIONS);
+    const res = await parallel(jobs.map(([dim, file]) => () => call([`Research the ${dim} dimension for this project and write .planning/research/${file}.md.`, ctx, "Keep provenance on every claim. Do not commit. Return JSON {written: [paths]}."].join("\n\n"), { label: `researcher-${dim}`, agentType: agentFor("project_researcher", "gsd-project-researcher"), role: "project_researcher", schema: DONE_SCHEMA })));
+    const bad = res.findIndex((r) => r && !r.result && fatal(r.reason));
+    if (bad >= 0) return { status: "failed", reason: `project researcher ${jobs[bad][0]} failed: ${res[bad].reason}` };
+    phase("Synthesize");
+    const syn = await call([`Synthesize .planning/research/{${Object.values(DIMENSIONS).join(",")}}.md into .planning/research/SUMMARY.md.`, ctx, "Do not commit. Reply with the full SUMMARY document as written."].join("\n\n"), { label: "synthesizer", agentType: agentFor("synthesizer", "gsd-research-synthesizer"), role: "synthesizer" });
+    // GSDF-09: a summary the worker could not write is written by the orchestrator from the reply.
+    const heal = await flow(["summary-heal"], syn.result ?? "");
+    if (heal.code !== 0) return { status: "failed", reason: heal.json?.error ?? "no research SUMMARY" };
+    if (heal.json.healed) log("self-heal: wrote .planning/research/SUMMARY.md from the synthesizer reply");
+    return { status: "researched", summary: heal.json.path, healed: heal.json.healed };
+  } finally {
+    await flow(["unlock", "research", lock.json.token]);
+  }
 }
 
 if (stage === "roadmap") {
