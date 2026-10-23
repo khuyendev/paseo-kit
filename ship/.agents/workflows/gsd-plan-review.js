@@ -101,7 +101,8 @@ for (let cycle = 1; cycle <= MAX_CYCLES; cycle++) {
   const pairs = plans.flatMap((p) => lenses.map((l) => ({ p, l })));
   const found = await parallel(pairs.map(({ p, l }) => () => ask([`Review ${planPath(p)} read-only through one lens.`, `Lens ${l.name}: ${l.text}`, "Return JSON {issues: [{plan, severity (high|medium|low), actionable, description, evidence}]}.", policy, digestLine("checked", digest)].join("\n\n"), { label: `find-${p}-${l.name}`, agentType: agentFor("plan_finder"), readOnly: true, schema: FIND_SCHEMA, ...ro("plan_finder") }, `plan finder ${p} (${l.name})`)));
   for (const [i, r] of found.entries()) if (!r || r.fail) return r?.fail ?? { status: "failed", reason: `plan finder ${pairs[i].p} (${pairs[i].l.name}) failed to run` };
-  const issues = found.flatMap((r, i) => (r.result.issues ?? []).map((x, k) => ({ ...x, plan: x.plan ?? pairs[i].p, id: `C${cycle}-${i + 1}-${k + 1}` })));
+  // The finder reviewed one plan; its issues belong to that plan's verifier whatever plan id the finder wrote.
+  const issues = found.flatMap((r, i) => (r.result.issues ?? []).map((x, k) => ({ ...x, plan: pairs[i].p, id: `C${cycle}-${i + 1}-${k + 1}` })));
   phase("Judge");
   const verdicts = await parallel(plans.map((p) => async () => {
     const mine = issues.filter((x) => x.plan === p);
