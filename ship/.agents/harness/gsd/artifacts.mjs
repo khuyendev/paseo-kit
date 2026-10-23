@@ -8,6 +8,7 @@ import { textDigest } from "../lib/hash.mjs";
 import { isInside, samePath } from "../lib/paths.mjs";
 import { asArray, done, fail, isDir, isFile, none, readIf, rel, unavailable } from "./common.mjs";
 import { ARTIFACT_KINDS, artifactKind, findPhase, phaseFile, phasesDir, planIds, planPath, summaryIds, summaryPath } from "./planning.mjs";
+import { physicalPath } from "./adapter-hooks.mjs";
 import { keyHash } from "./revisions.mjs";
 import { loadRoadmap, roadmapPhase } from "./roadmap.mjs";
 import { REQUIRED_PLAN_FIELDS } from "./plan-checks.mjs";
@@ -16,9 +17,12 @@ import { frontmatter } from "./yaml.mjs";
 
 // --- verify artifacts / key-links ---
 
+// Inside the root by name and through every junction or link on the way (G097); the root itself has no link to check.
 const inRoot = (root, p) => {
   const abs = path.resolve(root, String(p ?? ""));
-  return isInside(abs, root) ? abs : null;
+  if (!isInside(abs, root)) return null;
+  const f = rel(root, abs);
+  return !f || physicalPath(root, f) !== null ? abs : null;
 };
 
 // Lines of text: an empty file has none, and the newline that ends the last line does not start another.
@@ -132,8 +136,9 @@ export function summaryExtract(g, globs, fields) {
   const walk = (dir) => {
     for (const e of fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }) : []) {
       const abs = path.join(dir, e.name);
+      const f = rel(g.codeRoot, abs);
       if (e.isDirectory()) walk(abs);
-      else files.push(rel(g.codeRoot, abs));
+      else if (physicalPath(g.codeRoot, f) !== null) files.push(f);
     }
   };
   walk(path.join(g.codeRoot, ".planning"));
