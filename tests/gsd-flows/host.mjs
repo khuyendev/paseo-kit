@@ -18,6 +18,8 @@ const AGENT_OPTS = new Set(AGENT_OPTIONS);
 const GROUPS = new Set(["research", "revisions", "attempt", "outline", "check", "verify", "verification", "state", "roadmap", "phase", "debug", "requirements", "init", "contracts"]);
 
 export const NULL = (reason) => ({ __null: reason });
+// A killed run (kit feedback 83 resume tests): this error ends the whole run, parallel() and pipeline() included.
+export class Killed extends Error {}
 
 // Scripted `ph gsd`: handlers keyed by "group verb" (e.g. "research status") or the verb; each returns
 // {code, json} (json printed as the last line) or a plain object (code 0). Unhandled verbs fail the test loudly.
@@ -120,14 +122,14 @@ export async function runScript(name, opts) {
   async function parallel(thunks) {
     if (!Array.isArray(thunks)) throw new TypeError("parallel() needs an array");
     return Promise.all(thunks.map(async (t, i) => {
-      try { return await t(); } catch (e) { logs.push(`log warning: parallel item ${i} -> null: ${e.message}`); return null; }
+      try { return await t(); } catch (e) { if (e instanceof Killed) throw e; logs.push(`log warning: parallel item ${i} -> null: ${e.message}`); return null; }
     }));
   }
   async function pipeline(items, ...stages) {
     return Promise.all(items.map(async (item, i) => {
       let prev = item;
       for (const s of stages) {
-        try { prev = await s(prev, item, i); } catch (e) { logs.push(`log warning: pipeline item ${i} -> null: ${e.message}`); return null; }
+        try { prev = await s(prev, item, i); } catch (e) { if (e instanceof Killed) throw e; logs.push(`log warning: pipeline item ${i} -> null: ${e.message}`); return null; }
       }
       return prev;
     }));
