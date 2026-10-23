@@ -311,8 +311,8 @@ model, effort: calls, ok, `null` split into agent, infra and other causes, media
 of its runs) and one line per workflow (results such as `passed`/`gaps_found`, gaps, wall time, cost per run, and a
 suggested `ph workflow --budget` of 4 x the median output tokens of a run: a cap that stops a runaway run, not a
 normal one; tighten it once there are real numbers), with the stopped runs counted by their `ph archive --run
---reason`; stops without a reason are counted too and teach nothing. A review lens or review rule change is measured
-with `ph review-stats`: the share of gated findings the verifier confirms and of deferred findings later judged real,
+--reason` and the failed runs by their error; stops without a reason are counted too and teach nothing. A review lens
+or review rule change is measured with `ph review-stats`: the share of gated findings the verifier confirms and of deferred findings later judged real,
 per likelihood; record the fate of a deferred finding when it is settled, or the deferred side measures nothing.
 - Sort every failure by cause before editing anything; a lesson is a cause shared by several failures, not one
   failure. Infra `null`s (daemon, provider, caps, permissions) and a grader or check that contradicts its own task are

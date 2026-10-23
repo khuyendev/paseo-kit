@@ -38,6 +38,8 @@ export function agentOf(e) {
 }
 
 const num = (x) => (typeof x === "number" && Number.isFinite(x) ? x : 0);
+// A failed run's error text, capped as a stop reason is (cmd-agents.mjs).
+const ERROR_MAX_CHARS = 300;
 
 // One ledger record from a run's run.json, journal and result. Only calls that ran count (ok and null); cached calls
 // of a resumed run were counted in the run that made them.
@@ -69,17 +71,29 @@ export function runRecord(runId, info, journal, result) {
   return {
     v: RECORD_VERSION, runId, workflow: info?.name ?? null, status: info?.status ?? null, startedAt: info?.startedAt ?? null, endedAt: info?.endedAt ?? null,
     ...(info?.status === "stopped" ? { stopReason: typeof info.stopReason === "string" ? info.stopReason : null } : {}),
+    ...(info?.status === "failed" && typeof info.error === "string" ? { error: info.error.slice(0, ERROR_MAX_CHARS) } : {}),
     wallS: Number.isFinite(start) && Number.isFinite(stop) ? Math.round((stop - start) / 1000) : null, outcome,
     groups: [...groups.values()].map(({ costKnown, costUsd, ...g }) => ({ ...g, costUsd: costKnown ? Math.round(costUsd * 10000) / 10000 : null })),
   };
 }
 
-// Appends records in one write, so concurrent runs never interleave inside a line.
+// Appends records in one write, so concurrent runs never interleave inside a line. A run is recorded once: a record
+// whose runId the ledger already holds is skipped. The ledger is read here, at append time, so a completion that
+// landed after an import read the ledger is not recorded twice. Returns the records written.
 export function appendRecords(root, records) {
-  if (!records.length) return;
+  if (!records.length) return [];
+  const seen = new Set(readLedger(root).records.map((r) => r.runId));
+  const fresh = [];
+  for (const r of records) {
+    if (seen.has(r.runId)) continue;
+    seen.add(r.runId);
+    fresh.push(r);
+  }
+  if (!fresh.length) return fresh;
   const file = path.join(root, METRICS_REL);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.appendFileSync(file, records.map((r) => `${JSON.stringify(r)}\n`).join(""), "utf8");
+  fs.appendFileSync(file, fresh.map((r) => `${JSON.stringify(r)}\n`).join(""), "utf8");
+  return fresh;
 }
 
 // Skill calls per skill name since an ISO date, and every project skill folder, so a never-called skill shows as 0.
@@ -111,6 +125,9 @@ export function skillUsage(root, since) {
   return calls;
 }
 
+// A record the stats can read: its version and run id, and groups that are objects (a null group aborts the stats).
+const isRecord = (r) => r?.v === RECORD_VERSION && typeof r.runId === "string" && Array.isArray(r.groups) && r.groups.every((g) => g !== null && typeof g === "object");
+
 // {records, bad}: unparsable or foreign lines are counted, not fatal.
 export function readLedger(root) {
   const file = path.join(root, METRICS_REL);
@@ -121,7 +138,7 @@ export function readLedger(root) {
     if (!line.trim()) continue;
     try {
       const r = JSON.parse(line);
-      if (r?.v === RECORD_VERSION && typeof r.runId === "string" && Array.isArray(r.groups)) records.push(r);
+      if (isRecord(r)) records.push(r);
       else bad++;
     } catch {
       bad++;

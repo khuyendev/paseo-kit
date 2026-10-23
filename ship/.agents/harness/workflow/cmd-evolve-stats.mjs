@@ -14,8 +14,11 @@ export const FEW_RUNS = 5;
 // The suggested `ph workflow --budget` of a workflow: this many times its median output tokens per run (owner decision
 // 2026-10-22, after "Building effective agent automations": a cap of three to five normal runs, tightened later).
 export const BUDGET_FACTOR = 4;
-// Characters of one stop reason shown on a workflow line.
-const STOP_SHOWN_CHARS = 60;
+// YYYY-MM-DD of a day that exists: 2026-02-31 is not read as 2026-03-03.
+const isIsoDay = (text) => {
+  const t = Date.parse(`${text}T00:00:00Z`);
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) && Number.isFinite(t) && new Date(t).toISOString().startsWith(text);
+};
 
 // A --budget value rounded up to whole thousands: 118400 -> "119k".
 export const budgetText = (tokens) => `${Math.max(1, Math.ceil(tokens / 1000))}k`;
@@ -30,6 +33,9 @@ function median(values) {
 const round1 = (x) => Math.round(x * 10) / 10;
 const usd = (x) => `$${Math.round(x * 10000) / 10000}`;
 const counts = (obj) => Object.entries(obj).map(([k, v]) => `${k} ${v}`).join(", ");
+// Runs per stop or failure reason, each reason in full (two reasons that differ later are two reasons); no reason is null.
+const tally = (reasons, why) => reasons.set(why, (reasons.get(why) ?? 0) + 1);
+const reasonCounts = (reasons) => [...reasons].map(([why, n]) => `${why === null ? "no reason" : JSON.stringify(why)} ${n}`).join(", ");
 
 function importRuns(ctx, ledger) {
   const known = new Set(ledger.records.map((r) => r.runId));
@@ -49,9 +55,9 @@ function importRuns(ctx, ledger) {
       code = 2;
     }
   }
-  appendRecords(ctx.root, added);
-  ctx.out(`imported ${added.length} runs (${skipped} skipped: already recorded, running or without run.json)`);
-  return { added, code };
+  const written = appendRecords(ctx.root, added);
+  ctx.out(`imported ${written.length} runs (${skipped} skipped: already recorded, running or without run.json)`);
+  return { added: written, code };
 }
 
 // Agent versions in order of first use: one line each.
@@ -95,14 +101,12 @@ function workflowLines(records) {
   const flows = new Map();
   for (const r of records) {
     const name = r.workflow ?? "-";
-    if (!flows.has(name)) flows.set(name, { runs: 0, status: {}, outcomes: {}, gaps: 0, walls: [], outputs: [], stops: {}, cost: 0, costKnown: true });
+    if (!flows.has(name)) flows.set(name, { runs: 0, status: {}, outcomes: {}, gaps: 0, walls: [], outputs: [], failed: new Map(), stops: new Map(), cost: 0, costKnown: true });
     const f = flows.get(name);
     f.runs++;
     f.status[r.status ?? "unknown"] = (f.status[r.status ?? "unknown"] ?? 0) + 1;
-    if (r.status === "stopped") {
-      const why = r.stopReason ? JSON.stringify(r.stopReason.slice(0, STOP_SHOWN_CHARS)) : "no reason";
-      f.stops[why] = (f.stops[why] ?? 0) + 1;
-    }
+    if (r.status === "stopped") tally(f.stops, r.stopReason || null);
+    if (r.status === "failed") tally(f.failed, r.error || null);
     if (r.outcome) {
       f.outcomes[r.outcome.status] = (f.outcomes[r.outcome.status] ?? 0) + 1;
       f.gaps += r.outcome.gaps ?? 0;
@@ -119,15 +123,16 @@ function workflowLines(records) {
     // --budget counts output tokens, so the suggestion scales the median output of a run.
     const out = median(f.outputs);
     const budget = out > 0 ? `; suggested --budget ${budgetText(out * BUDGET_FACTOR)} (${BUDGET_FACTOR} x median output ${Math.round(out)})${f.runs < FEW_RUNS ? `, few runs` : ""}` : "";
-    const stops = Object.keys(f.stops).length ? `; stopped: ${counts(f.stops)}` : "";
-    return `workflow ${name}: runs ${f.runs} (${counts(f.status)})${outcomes}${stops}; median wall ${round1(median(f.walls))} s; cost ${f.costKnown ? `${usd(f.cost / f.runs)}/run` : "?"}${budget}`;
+    const failed = f.failed.size ? `; failed: ${reasonCounts(f.failed)}` : "";
+    const stops = f.stops.size ? `; stopped: ${reasonCounts(f.stops)}` : "";
+    return `workflow ${name}: runs ${f.runs} (${counts(f.status)})${outcomes}${failed}${stops}; median wall ${round1(median(f.walls))} s; cost ${f.costKnown ? `${usd(f.cost / f.runs)}/run` : "?"}${budget}`;
   });
 }
 
 export async function evolveStatsCommand(ctx) {
   if (ctx.args.length) throw new UsageError(`no positional arguments; usage: ${EVOLVE_STATS_USAGE}`);
   const { since, workflow, agent } = ctx.opts;
-  if (since !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(since)) throw new UsageError(`--since takes an ISO date (YYYY-MM-DD), got '${since}'`);
+  if (since !== undefined && !isIsoDay(since)) throw new UsageError(`--since takes an ISO date (YYYY-MM-DD), got '${since}'`);
   if (ctx.opts["runs-dir"] !== undefined && !ctx.opts.import) throw new UsageError("--runs-dir goes with --import");
   let ledger = readLedger(ctx.root);
   let code = 0;
