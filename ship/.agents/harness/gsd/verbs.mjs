@@ -7,6 +7,7 @@ import { done, fail, idList, none, unavailable } from "./common.mjs";
 import { frontmatterGet, frontmatterValidate, historyDigest, initPayload, initProject, listArtifacts, researchPrompt, summaryExtract, supersede, verifyArtifacts, verifyKeyLinks, writeArtifact } from "./artifacts.mjs";
 import { contractsChange, contractsShow, verifyContractsVerb } from "./contracts.mjs";
 import { debugBudget, debugCheckpoint, debugClose, debugCreate, debugExtend, debugList, debugStatus } from "./debug.mjs";
+import { commitAdopt } from "./commit-adopt.mjs";
 import { commitVerb, evaluationScope, selectRevertCommits } from "./gitverbs.mjs";
 import { allowVerb } from "./allow.mjs";
 import { grantPath } from "./grants.mjs";
@@ -270,6 +271,7 @@ export const verbHandlers = {
       return commitVerb(g, m.pos.join(" "), m.files, m["files-removed"]);
     },
   },
+  "commit.adopt": { usage: "ph gsd commit.adopt <phase> <sha> --reason <text>", options: { reason: "string" }, run: (g, a, o) => commitAdopt(g, phaseOf(g, a), a[1], o.reason) },
   "select-revert-commits": { usage: "ph gsd select-revert-commits (--phase <N> | --plan <NN-MM>) --range <revs>", options: { phase: "string", plan: "string", range: "string" }, run: (g, a, o) => selectRevertCommits(g, o) },
   "run-with-timeout": {
     usage: "ph gsd run-with-timeout <seconds> -- <command...>",

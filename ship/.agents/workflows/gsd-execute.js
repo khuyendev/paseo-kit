@@ -41,20 +41,12 @@ const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
 // The run's record, all of it in the result: the tracked waves; shared changes and cross-plan requests (views of the state
 // the last state-* verb answered with, G074, G089); skipped plans; events; executor worktrees (kit feedback 75: discarded
 // after their plan's commit, kept with the reason); tasks accepted as pending-request and kit notes (79); requests closed
-// without a reply and the owner's answers taken (85, 83); hand edits (68); paths reported, never committed (77, 80).
-const waveResults = [];
+// without a reply and the owner's answers taken (85, 83); hand edits (68); paths reported, never committed (77, 80); refused
+// state writes (91 F3).
+const [waveResults, warnings, skipped, events, pendingTasks, kitNotes, discarded, requestsClosed, ownerAnswers] = [[], [], [], [], [], [], [], [], []];
+const [worktrees, keptTrees, seeds] = [{}, {}, {}];
 let sharedChanges = [];
 let pendingRequests = {};
-const skipped = [];
-const events = [];
-const worktrees = {};
-const pendingTasks = [];
-const kitNotes = [];
-const discarded = [];
-const keptTrees = {};
-const seeds = {};
-const requestsClosed = [];
-const ownerAnswers = [];
 let handEdits = null;
 const reported = { outsideRoots: new Set(), eolOnly: new Set() };
 const ev = (e) => { events.push(e); log(`event ${e}`); };
@@ -62,7 +54,7 @@ const treeReport = () => {
   const left = Object.entries(worktrees).filter(([plan]) => !discarded.includes(plan)).map(([plan, path]) => ({ plan, path, ...(keptTrees[plan] ? { why: keptTrees[plan] } : {}) }));
   return discarded.length || left.length ? { discarded, kept: left } : null;
 };
-const result = (status, extra = {}) => ({ status, phaseDir, mode: execMode, isolation: g.isolation, waves: waveResults, sharedChanges, ...(Object.keys(pendingRequests).length ? { requests: pendingRequests } : {}), ...(skipped.length ? { skipped } : {}), ...(treeReport() ? { worktrees: treeReport() } : {}), ...(handEdits ? { handEdits } : {}), ...(reported.outsideRoots.size ? { outsideRoots: [...reported.outsideRoots] } : {}), ...(reported.eolOnly.size ? { eolOnly: [...reported.eolOnly] } : {}), ...(pendingTasks.length ? { pendingRequestTasks: pendingTasks } : {}), ...(kitNotes.length ? { kitNotes } : {}), ...(ownerAnswers.length ? { ownerAnswers } : {}), ...(requestsClosed.length ? { requestsClosed } : {}), events, ...extra });
+const result = (status, extra = {}) => ({ status, phaseDir, mode: execMode, isolation: g.isolation, waves: waveResults, sharedChanges, ...(Object.keys(pendingRequests).length ? { requests: pendingRequests } : {}), ...(skipped.length ? { skipped } : {}), ...(treeReport() ? { worktrees: treeReport() } : {}), ...(handEdits ? { handEdits } : {}), ...(reported.outsideRoots.size ? { outsideRoots: [...reported.outsideRoots] } : {}), ...(reported.eolOnly.size ? { eolOnly: [...reported.eolOnly] } : {}), ...(pendingTasks.length ? { pendingRequestTasks: pendingTasks } : {}), ...(kitNotes.length ? { kitNotes } : {}), ...(ownerAnswers.length ? { ownerAnswers } : {}), ...(requestsClosed.length ? { requestsClosed } : {}), ...(warnings.length ? { warnings } : {}), events, ...extra });
 // Kit feedback 87 C1: a red gate whose failures hold the gate's check-weakening step stops at stage Checks with its answers (ph gsd allow).
 const owner = (stage, reason, extra = {}) => {
   const ck = stage === "Gate" ? (extra.failures ?? []).find((f) => f.needsOwner?.stage === "Checks") : null;
@@ -71,7 +63,8 @@ const owner = (stage, reason, extra = {}) => {
 // Kit feedback 83 F3, 87 (B3): every needs-owner stop names what answers it, `answer: {verb, command}`, and a rerun with the same
 // args follows the answer. halt.clear, shared.clear, request.clear and grant record the owner's answer (owner-answers.json, grants);
 // fix-and-rerun is a stop the rerun decides again from the tree; rerun is a call that could not run (quota, transport) or a record
-// the rerun repairs; workflow names the workflow that answers it.
+// the rerun repairs; workflow names the workflow that answers it; gate is the answer the resume-gate verb names (94 F3: commit.adopt
+// for an owner commit, ph gsd commit adopt, or fix-and-rerun with the action).
 const ANSWER = {
   halt: (plan = "<id>") => ({ verb: "halt.clear", command: `ph gsd halt clear ${N} --plan ${plan} --reason <answer>` }),
   shared: (wave = "<wave>") => ({ verb: "shared.clear", command: `ph gsd shared clear ${N} ${wave} [--path <file>] --reason <what you did or accept>` }),
@@ -80,6 +73,7 @@ const ANSWER = {
   tree: (what) => ({ verb: "fix-and-rerun", command: what }),
   rerun: (what = "rerun with the same args") => ({ verb: "rerun", command: what }),
   workflow: (what) => ({ verb: "workflow", command: what }),
+  gate: (answer) => answer ?? ANSWER.tree("close out, re-execute or set aside what the gate names, then rerun with the same args"),
 };
 const GATE_RED = ANSWER.tree("fix the failing files by hand (or give a fixer a file with ph gsd grant), then rerun with the same args");
 const digestOf = async (input) => (await flow(["digest"], input)).json?.hash ?? "none";
@@ -161,8 +155,9 @@ const stateRead = await flow(["state-read", phaseDir]);
 if (stateRead.code !== 0 || !stateRead.json?.state) return result("failed", { reason: `${PROGRESS} is unreadable: ${stateRead.json?.error ?? `exit ${stateRead.code}`}` });
 adopt(stateRead.json.state);
 if (stateRead.json.migrated) log(`${PROGRESS} was written by an older kit; it is migrated on the next write`);
-// One state verb. A refusal (the contract does not hold) is returned as {refused}; a verb that could not write is kept in
-// stateError and stops the run at the next check (unsaved), as a failed write did before.
+// One state verb. A refusal (the contract does not hold) is returned as {refused} and, but for a request route or close (an
+// attempt the caller handles), listed in the result's warnings (kit feedback 91 F3); a verb that could not write is kept in
+// stateError and stops the run at the next check (unsaved).
 let stateError = null;
 async function state(verb, input) {
   const r = await flow([`state-${verb}`, phaseDir], input);
@@ -170,6 +165,7 @@ async function state(verb, input) {
   if (r.json?.status === "ok") return r.json;
   if (r.json?.status === "refused") {
     log(`state-${verb} refused: ${r.json.reason}`);
+    if (verb !== "request") warnings.push(`state-${verb} refused: ${r.json.reason}`);
     return { refused: r.json.reason, generated: r.json.generated === true };
   }
   stateError ??= `state-${verb}: ${r.json?.error ?? `exit ${r.code}`}`;
@@ -227,7 +223,7 @@ async function resumeGateNow() {
   idx = await index();
   const rg = await flow(["resume-gate", phaseDir], { plans: gatePlans() });
   if (rg.json?.status === "error") return result("failed", { reason: `safe-resume gate could not look: ${rg.json.error}` });
-  if (rg.code !== 0) return owner("Execute", `safe-resume gate: ${rg.json.problems.map((p) => `${p.kind}${p.path ? ` ${p.path}` : ""}${p.plan ? ` (plan ${p.plan})` : ""}${p.detail ? ` ${p.detail}` : ""}`).join("; ")}`, { answer: ANSWER.tree("close out, re-execute or set aside what the gate names, then rerun with the same args"), recovery: { problems: rg.json.problems, head: rg.json.head }, options: ["close out manually", "re-execute from scratch", "mark and skip"] });
+  if (rg.code !== 0) return owner("Execute", `safe-resume gate: ${rg.json.reason}`, { answer: ANSWER.gate(rg.json.answer), recovery: { problems: rg.json.problems, head: rg.json.head }, options: rg.json.options });
   for (const x of rg.json?.accepted ?? []) log(`resume gate: commit ${x.sha.slice(0, 7)} touches no plan-owned file (${x.files.slice(0, 5).join(", ")}); accepted`);
   // G054: a commit of this run whose commits.json record failed is reconciled; its plans are tracked, not re-run.
   for (const c of rg.json?.reconciled ?? []) {
@@ -243,7 +239,7 @@ async function resumeGateNow() {
   for (const t of wanted.filter((x) => !tracked(x.plan) && !planInfo(x.plan).has_summary)) {
     const sc = await gsd(["check", "evaluation-scope", "--plan", t.plan, "--commits-only"]);
     if (!["resolved", "degraded"].includes(sc.json?.status)) return result("failed", { reason: `evaluation scope of ${t.plan} is ${sc.json?.status ?? `exit ${sc.code}`}: no executor started (fail-closed)` });
-    if ((sc.json.commits ?? []).length) return owner("Execute", `plan ${t.plan} has commits (${sc.json.commits.slice(0, 3).map((c) => c.sha ?? c).join(", ")}) but no SUMMARY`, { answer: ANSWER.tree("close out the plan by hand or revert its commits, then rerun with the same args"), options: ["close out manually", "re-execute from scratch", "mark and skip"] });
+    if ((sc.json.commits ?? []).length) return owner("Execute", `plan ${t.plan} has commits (${sc.json.commits.slice(0, 3).map((c) => c.sha ?? c).join(", ")}) but no SUMMARY`, { answer: ANSWER.tree("close out the plan by hand or revert its commits, then rerun with the same args"), options: [`close out by hand: write ${t.summary} from those commits, then rerun with the same args`, `re-execute: git revert the commits that ph gsd select-revert-commits --plan ${t.plan} --range ${base.json?.baseline?.head ?? "<baseline>"}..HEAD lists, then rerun with the same args`] });
   }
   return null;
 }
