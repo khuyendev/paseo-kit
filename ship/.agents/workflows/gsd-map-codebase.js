@@ -49,14 +49,15 @@ async function fileSha(path) { const r = await flow(["read", path]); return r.js
 // ---- end shared helpers ----
 
 const FOCUS = { tech: ["STACK", "INTEGRATIONS"], arch: ["ARCHITECTURE", "STRUCTURE"], quality: ["CONVENTIONS", "TESTING"], concerns: ["CONCERNS"] };
-const SAFE_PATH = /^(?!\/)(?![A-Za-z]:)[A-Za-z0-9_][A-Za-z0-9_./-]*$/;
+const SAFE_PATH = /^(?!\/)(?![A-Za-z]:)[A-Za-z0-9_][A-Za-z0-9_ ./-]*$/;
 const CONFIRM_SCHEMA = { type: "object", properties: { focus: { type: "string" }, written: { type: "array", items: { type: "string" } } }, required: ["written"] };
 
 const a = args ?? {};
 const paths = a.paths === undefined ? [] : String(a.paths).split(",").map((p) => p.trim()).filter(Boolean);
-// GSDF-05: --paths reaches mapper prompts and git; refuse `..`, absolute paths and shell metacharacters.
-const bad = paths.filter((p) => !SAFE_PATH.test(p) || p.split("/").includes(".."));
-if (bad.length) return { status: "failed", reason: `--paths rejected: ${bad.map((p) => JSON.stringify(p)).join(", ")} (relative paths only; no .., leading / or shell metacharacters)` };
+// GSDF-05: --paths reaches mapper prompts and git; refuse `..`, absolute paths and shell metacharacters. A segment of only dots and
+// spaces (`..`, ` ..`, `. .`) is refused too, since the `..` check compares whole segments.
+const bad = paths.filter((p) => !SAFE_PATH.test(p) || p.split("/").some((s) => /^[. ]+$/.test(s)));
+if (bad.length) return { status: "failed", reason: `--paths rejected: ${bad.map((p) => JSON.stringify(p)).join(", ")} (relative paths only; letters, digits, spaces and _ . / -; no .. or dots-only segment, no leading /)` };
 const docs = a.docs ? String(a.docs).split(",").map((d) => d.trim().toUpperCase()) : Object.values(FOCUS).flat();
 const unknown = docs.filter((d) => !Object.values(FOCUS).flat().includes(d));
 if (unknown.length) return { status: "failed", reason: `unknown map docs ${unknown.join(", ")}` };
