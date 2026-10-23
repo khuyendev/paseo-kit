@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { UsageError, errText } from "../lib/cli.mjs";
-import { readJsonIf } from "../lib/io.mjs";
+import { readJsonIf, writeJsonAtomic } from "../lib/io.mjs";
 import { isInside, safeName } from "../lib/paths.mjs";
 import { pidAlive } from "../lib/proc.mjs";
 import { seedWorktree } from "./worktree-seed.mjs";
@@ -40,14 +40,33 @@ export function worktreeBase(top, cfg) {
   return path.join(top, cfg.worktree_dir);
 }
 
-export async function createWorktree(root, cfg, name, { git = runGit, seed } = {}) {
+// A lease holds a new tree from its creation until its agent is registered (`lease: true`, spawn and fanout). The file
+// records the pid of the spawning process; a dead pid is a crashed spawn and holds nothing.
+const leasePath = (base, name) => path.join(base, `${name}.lease`);
+
+function leaseHeld(file) {
+  if (!file) return false;
+  return pidAlive(readJsonIf(file)?.pid);
+}
+
+export function releaseLease(wt) {
+  if (wt?.lease) fs.rmSync(wt.lease, { force: true });
+}
+
+export async function createWorktree(root, cfg, name, { git = runGit, seed, lease = false } = {}) {
   const top = repoTop(root, { git });
   if (!top) throw new UsageError("isolation 'worktree' needs a git repository");
   const safe = safeName(name);
   const dir = path.join(worktreeBase(top, cfg), safe);
   const branch = `harness/${safe}`;
-  must(git, top, ["worktree", "add", dir, "-b", branch]);
-  const wt = { top, path: dir, branch, name: safe };
+  const wt = { top, path: dir, branch, name: safe, lease: lease ? leasePath(worktreeBase(top, cfg), safe) : null };
+  if (wt.lease) writeJsonAtomic(wt.lease, { pid: process.pid });
+  try {
+    must(git, top, ["worktree", "add", dir, "-b", branch]);
+  } catch (e) {
+    releaseLease(wt);
+    throw e;
+  }
   try {
     seedWorktree(root, wt, seed, git);
     await applyWorktreeSetup(root, wt, cfg.adapter.worktree_setup, git);
@@ -58,11 +77,12 @@ export async function createWorktree(root, cfg, name, { git = runGit, seed } = {
   }
 }
 
-// Undo a worktree whose agent could not be created: the directory and the new branch go, nothing else.
+// Undo a worktree whose agent could not be created: the directory, the new branch and the lease go, nothing else.
 export function discardWorktree(wt, { git = runGit } = {}) {
   removeSetupLinks(wt.path, git);
   git(wt.top, ["worktree", "remove", "--force", wt.path]);
   git(wt.top, ["branch", "-D", wt.branch]);
+  releaseLease(wt);
 }
 
 const WORKFLOW_NAME = /^(wf_\d{8}-\d{6}_[0-9a-f]{4})-\d+$/;
@@ -87,7 +107,8 @@ export function listHarnessWorktrees(top, cfg, { git = runGit } = {}) {
     const abs = path.resolve(wt);
     if (abs === path.resolve(base) || !isInside(abs, base)) continue;
     const missing = lines.some((l) => l === "prunable" || l.startsWith("prunable ")) || !fs.existsSync(abs);
-    list.push({ path: abs, name: path.basename(abs), branch, missing });
+    const name = path.basename(abs);
+    list.push({ path: abs, name, branch, missing, lease: leasePath(base, name) });
   }
   return list;
 }
@@ -106,6 +127,8 @@ export function classify(top, wt, { runsDir, agentLive = new Map(), git = runGit
     ownerText = `agent ${owner.name}`;
     inUse = agentLive.get(owner.name) ?? null;
   }
+  // A spawn that has not registered its agent yet is still using the tree, whatever the daemon says.
+  if (leaseHeld(wt.lease)) return { ...wt, owner: ownerText, state: "in use", removable: false };
   // The directory is gone: only git's record and the branch remain, no file can be lost.
   if (wt.missing) return { ...wt, owner: ownerText, state: "directory missing", removable: true };
   let state;
@@ -128,6 +151,7 @@ export function removeWorktree(top, wt, { git = runGit } = {}) {
     if (wt.missing) return { ok: true, removed: false, line: `kept ${wt.name}: registration of a missing directory cannot be removed without touching others` };
     return { ok: false, removed: false, line: `failed remove ${wt.name}: ${errText(removed.stderr || removed.stdout || "git worktree remove failed")}` };
   }
+  releaseLease(wt);
   const branch = git(top, ["branch", "-d", wt.branch]);
   if (branch.code === 0) return { ok: true, removed: true, line: `removed ${wt.name} and branch ${wt.branch}` };
   return { ok: true, removed: true, line: `removed ${wt.name}; branch ${wt.branch} kept (${errText(branch.stderr || branch.stdout)})` };

@@ -5,7 +5,7 @@ import { UsageError, quoteName } from "../lib/cli.mjs";
 import { readText } from "../lib/io.mjs";
 import { id8, isInside } from "../lib/paths.mjs";
 import { composePrompt } from "./prompts.mjs";
-import { createWorktree, discardWorktree, stamp } from "./worktrees.mjs";
+import { createWorktree, discardWorktree, releaseLease, stamp } from "./worktrees.mjs";
 
 export const NAME_MAX = 60;
 
@@ -61,10 +61,11 @@ export async function prepareCreate(ctx) {
 
 /**
  * Starts one named agent (spawn, fanout). spec: {name, swarm, task, def, sel, kind, readOnly, workdir, ws, worktree}.
- * A worktree is created for the agent and removed again when the agent cannot be created.
+ * A worktree is created for the agent and removed again when the agent cannot be created. Its lease keeps `ph worktrees
+ * --prune` away until the agent is registered (or the tree is gone).
  */
 export async function startAgent(ctx, session, spec) {
-  const wt = spec.worktree ? await createWorktree(ctx.root, ctx.cfg, `${spec.name}-${stamp(ctx.clock.now())}`) : null;
+  const wt = spec.worktree ? await createWorktree(ctx.root, ctx.cfg, `${spec.name}-${stamp(ctx.clock.now())}`, { lease: true }) : null;
   try {
     const readOnly = Boolean(spec.readOnly || spec.def?.readOnly);
     const prompt = composePrompt({
@@ -78,5 +79,7 @@ export async function startAgent(ctx, session, spec) {
     // An unconfirmed archive leaves a live worker using this tree (CR-FND-02).
     if (wt && (!e.agentId || e.archived === true)) discardWorktree(wt);
     throw e;
+  } finally {
+    releaseLease(wt);
   }
 }
