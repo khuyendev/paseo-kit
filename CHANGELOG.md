@@ -6,6 +6,38 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Kit feedback 67-76 from the Flutter port, phase 3 planning and wave 1 (owner 2026-10-23: "verify bug rồi sửa lại kit
+  cho phù hợp", "giao cho con sonnet 5.5 fix"; every item verified against 0709747 first, kit-bughunt/fb5/VERIFY.md;
+  one Sonnet 5.5 agent per area, design notes in kit-bughunt/fb5/design/). Contracts (67, 76 F1; `gsd.contract_check`,
+  default true): manifest `produces` may be structured `{symbol, kind, file, signature}` (free text still parses, with a
+  warning); `ph gsd verify contracts <phase>` checks that producers write the manifest signature, consumers quote it,
+  superseded signatures are gone, consumes edges resolve and every `key_links` `requires` (ancestor widget, provider
+  override, registration) is provided by a plan of the same or an earlier wave; gsd-plan runs it after each planner
+  wave, after the checker and plan review and at handoff, outside the checker cap; revisers see their manifest entry
+  and the consumers of each produced symbol and answer a signature change with CONTRACT_CHANGE, which updates the
+  manifest and revises the consumers; each execute gate checks produced symbols exist at their declared file. Hand
+  edits (68): `ph gsd hand-edit scan|record|list`; gsd-plan and gsd-execute list plans, artifacts and owned files
+  changed outside the flow in `handEdits`; `ph review-stats` counts hand fixes per cause and names a cause seen twice
+  as a kit defect candidate. File count (69): `gsd.files_per_plan` (default null: today's 10/15 rule); `outline check`
+  applies it to manifest owns before skeleton review; `gsd.checker_reallocate` (default 0) sends plans the checker
+  finds too large back to the outline stage. VALIDATION.md (70; `gsd.validation_strategy`, default true): gsd-plan
+  renders `<NN>-VALIDATION.md` from the upstream template and the research's Validation Architecture section (upstream
+  plan-phase step 5.5, dropped in the port) and tells the checker when Dimension 8 is skipped. forceProceed (71) takes
+  `issues: [{plan, dimension}]`; other issues are still revised and accepted ones go to STATE one per line; the old
+  `{reason}` form keeps its meaning with a warning. Plan review (72; `gsd.plan_review_check`, default `resolve`, `fresh`
+  is the old cycle): after an edit a resolution check of the open issues plus a finder bounded to the changed text; the
+  stop counts fixed, still-open and new issues separately. `revisions record` without `--settings` (73) reuses the
+  key's earlier settings digest. Owns (74): one grammar for checker, transfer, gate and resume gate; globs are matched
+  (a literal path beats a glob, a glob beats a directory); globs in files_modified and unbalanced globs are blockers.
+  Worktrees (75): transfer records carry the worktree hash; a worktree whose changes all landed is `transferred` and
+  removed after its plan's commit and by `ph worktrees --prune`; a halted plan's worktree stays until it is
+  re-dispatched; every removal unlinks all links and junctions inside the tree without following them and refuses
+  when one cannot be unlinked; execute and `ph doctor` report leftovers. Re-check (76 F2; `gsd.checker_recheck`,
+  default `full`): `incremental` runs the checker agent only on changed and linked plans and none after an
+  owns/files-only edit. Prompt text: gsd-planner overlay, gsd-plan planner/outline/reviser prompts, plan-review
+  prompts, skills gsd-plan, gsd-execute, ph, harness references kit-adapter.md and paseo-runtime.md. Measured check:
+  tests/fb5/ (each test fails before its change), full offline suite on the merge; not run on a live phase.
+
 - Kit feedback 64-67 from the Flutter port: independent and parallel flows, each behind a `gsd` switch whose default
   keeps today's behaviour (owner 2026-10-23; one Opus agent per area, design notes in kit-bughunt/fb4/design/).
   `gsd.plan_flow: streams` (65, 67; default `staged`): each plan gets its own review stream (per-plan lenses, judge,
