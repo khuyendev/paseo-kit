@@ -26,6 +26,8 @@ const fingerprint = (f) => sha256(JSON.stringify([f.id, f.file ?? null, f.line ?
 const fateKey = (key, fp) => `${key} ${fp}`;
 const pct = (a, b) => (b ? ` (${Math.round((100 * a) / b)}%)` : "");
 const countBy = (list, key, names) => names.map((n) => `${n} ${list.filter((x) => x[key] === n).length}`).join(", ");
+// Every entry is an object with a string id, as the kit's writer always sets it; a null or string entry is damage.
+const entries = (list) => Array.isArray(list) && list.every((e) => typeof e?.id === "string");
 
 /** {reviews: [{phase, file, rec}], bad}: every review record, optionally of one phase ("7" matches 07-*). */
 export function readReviews(root, phase) {
@@ -45,7 +47,7 @@ export function readReviews(root, phase) {
       } catch {
         rec = null;
       }
-      if (typeof rec?.plan === "string" && Array.isArray(rec.findings)) reviews.push({ phase: nn, file, full: path.join(rdir, file), rec });
+      if (typeof rec?.plan === "string" && entries(rec.findings) && entries(rec.resolution ?? [])) reviews.push({ phase: nn, file, full: path.join(rdir, file), rec });
       else bad++;
     }
   }
