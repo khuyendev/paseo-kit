@@ -39,6 +39,13 @@ export function parseOutline(text) {
   return { complete, rows };
 }
 
+// G030: each manifest entry is a plan record with a string id; a null or id-less entry would throw or read as "undefined".
+const entryError = (p, i) => {
+  if (!p || typeof p !== "object" || Array.isArray(p)) return `manifest plans[${i}] is not an object`;
+  if (typeof p.id !== "string") return `manifest plans[${i}] has no string id`;
+  return null;
+};
+
 export function readOutline(phase) {
   const file = phaseFile(phase, "PLAN-OUTLINE.md");
   const manifestFile = phaseFile(phase, "PLAN-OUTLINE.manifest.json");
@@ -53,6 +60,7 @@ export function readOutline(phase) {
     try {
       manifest = JSON.parse(mtext);
       if (!manifest || !Array.isArray(manifest.plans)) manifestError = "manifest has no plans array";
+      else manifestError = manifest.plans.map(entryError).find(Boolean) ?? null;
     } catch (e) {
       manifestError = `manifest is not valid JSON (${e.message})`;
     }
@@ -214,7 +222,9 @@ export async function handoff(g, phase, { subset, prefix, noTracerSplit = false 
   if (prefix !== undefined && !/^[a-z0-9-]+$/.test(prefix)) throw fail("--prefix takes lower-case letters, digits and dashes");
   const w = waveCheck(g, phase, subset);
   const { problems } = await ownershipProblems(g, w.plans);
-  const manifest = readOutline(phase).manifest;
+  const outline = readOutline(phase);
+  // G030: a manifest with a manifestError is not read; the refusal below names the error.
+  const manifest = outline.manifestError ? null : outline.manifest;
   const mOf = (id) => manifest?.plans?.find((p) => String(p.id) === id) ?? null;
   const tracerErrors = [];
   for (const p of w.plans) {
@@ -222,7 +232,7 @@ export async function handoff(g, phase, { subset, prefix, noTracerSplit = false 
     if (p.dependsOn.length) tracerErrors.push(`${p.id}: tracer plan depends on ${p.dependsOn.join(", ")}`);
     if ((mOf(p.id)?.consumes ?? []).length) tracerErrors.push(`${p.id}: tracer plan consumes another plan`);
   }
-  const refused = [...w.errors, ...problems.map((x) => x.message), ...tracerErrors];
+  const refused = [...w.errors, ...problems.map((x) => x.message), ...tracerErrors, ...(outline.manifestError ? [outline.manifestError] : [])];
   if (refused.length) return done({ status: "refused", errors: refused, waves: [] }, 1);
   const mode = g.cfg.gsd.execution_mode;
   const segments = [];
