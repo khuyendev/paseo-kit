@@ -6,7 +6,8 @@ import { makeWorld, PHASE_DIR, plannerResponder } from "../gsd-flows/world.mjs";
 
 const plan = (w, args = {}, overrides = {}, rows) => runScript("gsd-plan", { root: w.root, args: { phaseDir: PHASE_DIR, ...args }, gsd: w.gsd, agent: plannerResponder(w, { overrides, ...(rows ? { rows } : {}) }) });
 const labels = (r) => r.calls.map((c) => c.opts.label);
-const lanes = [{ lens: "fidelity" }, { lens: "correctness" }];
+// Skeleton lanes take only skeleton-stage lenses (G029): fidelity and integration are the built-in ones.
+const lanes = [{ lens: "fidelity" }, { lens: "integration" }];
 const blocker = { plan: "01-01", severity: "blocker", description: "sibling blocker", target: "outline" };
 
 test("G016 a failed lane keeps the findings of the answering lane, whichever lane fails", async () => {
@@ -18,7 +19,7 @@ test("G016 a failed lane keeps the findings of the answering lane, whichever lan
     assert.equal(labels(r).filter((l) => l === `skeleton-${failing}`).length, 2);
     const review = w.read(`${PHASE_DIR}/01-OUTLINE-REVIEW.md`);
     assert.match(review, new RegExp(`Status: failed \\(skeleton lane ${failing} \\(`));
-    assert.match(review, new RegExp(`\\| ${answering}-1 \\| ${answering} \\| 01-01 \\| blocker \\| outline \\| sibling blocker`));
+    assert.match(review, new RegExp(`\\| ${answering}-1 \\| ${answering} \\| 01-01 \\| blocker \\| outline \\| [^|]* \\| sibling blocker`));
     assert.match(review, new RegExp(`\\| ${failing} \\|[^\\n]*failed`));
   }
 });

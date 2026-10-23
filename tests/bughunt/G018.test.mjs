@@ -28,11 +28,12 @@ test("G018 skeleton lanes share the issue contract: a lane issue without require
 });
 
 test("G018 quick checker: the same contract, its prompt asks for required_property", async () => {
-  const w = makeWorld({ files: { ".planning/ROADMAP.md": "# R\n" } });
+  // --full plans on the owner's decisions, so it needs an existing CONTEXT file (G104).
+  const w = makeWorld({ files: { ".planning/ROADMAP.md": "# R\n", ".planning/quick-context.md": "<decisions>\n- **D-01:** keep it small\n</decisions>\n" } });
   const r = await runScript("gsd-quick", {
     root: w.root,
     gsd: w.gsd,
-    args: { description: "fix a | b", full: true },
+    args: { description: "fix a | b", full: true, contextPath: ".planning/quick-context.md" },
     agent: (p, o) => {
       const planPath = /Write ONE plan (\S+)/.exec(p)?.[1];
       if (planPath) { w.write(planPath, planText("q")); return { marker: "PLANNING COMPLETE" }; }

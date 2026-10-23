@@ -41,5 +41,5 @@ test("G008 a resolution check that answers with nothing resolved still stalls th
   const three = { issues: [1, 2, 3].map((i) => ({ plan: "01-01", severity: "blocker", description: `issue ${i}`, target: "outline" })) };
   const r = await plan(makeWorld(), {}, { "skeleton-L1": () => three, "resolve-L1": () => ({ resolved: [] }) });
   assert.equal(r.result.status, "needs-owner");
-  assert.match(r.result.reason, /stalled: 3 open issues at pass 2 \(was 3\)/);
+  assert.match(r.result.reason, /stalled: 3 open blockers at pass 2 \(was 3\)/);
 });
