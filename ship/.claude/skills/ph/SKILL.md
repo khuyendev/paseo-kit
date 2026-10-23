@@ -28,7 +28,8 @@ A bare `--` ends the options, so a value such as `-h` can still be passed as dat
 - Archive agents when their work is closed (`ph archive <names>` or `ph archive --idle`); an archived agent's reply
   can no longer be read, so read results first.
 - Keep at most `max_subagents` agents running (config, shipped 20; about 350 MB of RAM each) and at most
-  `max_live_subagents` live (running + idle). `ph` refuses beyond either cap; a workflow queues instead.
+  `max_live_subagents` live (running + idle). `ph` refuses beyond either cap; a workflow queues past `max_subagents`,
+  and past `max_live_subagents` it waits only up to `wait_timeout_s` per call.
 
 ## Commands
 
@@ -202,6 +203,9 @@ Time counts model time since the last prompt, tool time excluded. Teammates get 
 
 Run `ph doctor`. `PASEO_AGENT_ID is not set`: run `ph` from a Paseo agent. `tier <name> has no model`: the project
 has not mapped its tiers yet (run the harness adapter generator, or set `tiers.<name>.provider` in
-`.agents/harness.config.json`). A cap refusal: wait, `ph archive --idle`, or use a workflow (it queues). An agent
-stopped for a permission it was not granted, or failing with an error, shows in `ph watch` as `failed <name> <id8>: ...`;
-read it with `ph result <name>`.
+`.agents/harness.config.json`). A cap refusal names its cap. `max_subagents` (agents running at once): wait,
+`ph archive --idle`, or use a workflow (it queues until a running slot frees). `max_live_subagents` (running or idle
+agents): archive idle agents first with `ph archive --idle`, since only archiving frees a live slot. A workflow call
+does not wait it out: it waits at most `wait_timeout_s` per call, and calls run one after another. Both caps count this
+caller's agents only. An agent stopped for a permission it was not granted, or failing with an error, shows in
+`ph watch` as `failed <name> <id8>: ...`; read it with `ph result <name>`.
