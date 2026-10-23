@@ -10,19 +10,22 @@ import { makeWorld } from "../gsd-flows/world.mjs";
 
 const { lock, unlock, lockCheck } = await import(pathToFileURL(path.join(SHIP_DIR, ".agents/workflows/lib/flow-files.mjs")).href);
 const doc = "# Project Research Summary\n## Executive Summary\na\n## Key Findings\nb\n## Implications for Roadmap\nc\n";
+// Each researcher writes and names its report (the G121 check needs both); the synthesizer replies with the summary.
+// A rerun writes different text (G121 rejects a byte-identical report as not written by this run).
+const report = (w, o, run = "first") => { const file = `.planning/research/${o.label.replace("researcher-", "").toUpperCase()}.md`; w.write(file, `${file} ${run}\n`); return { written: [file] }; };
 
 test("G120 a research run is refused while another research run holds the research lock, and holds it while it runs", async () => {
   const w = makeWorld({ files: { ".planning/PROJECT.md": "# P\n" } });
   const held = lock(w.root, "research", "wf_other", process.pid, "gsd-new-project");
   assert.equal(held.locked, true);
-  const refused = await runScript("gsd-new-project", { root: w.root, gsd: w.gsd, args: { stage: "research" }, agent: (p, o) => (o.label === "synthesizer" ? doc : { written: [] }) });
+  const refused = await runScript("gsd-new-project", { root: w.root, gsd: w.gsd, args: { stage: "research" }, agent: (p, o) => (o.label === "synthesizer" ? doc : report(w, o)) });
   assert.deepEqual([refused.result.status, refused.calls.length], ["refused", 0]);
   assert.match(refused.result.reason, /another research run holds the research lock \(wf_other\)/);
   unlock(w.root, "research", held.token);
   let heldWhileRunning = null;
   const r = await runScript("gsd-new-project", { root: w.root, gsd: w.gsd, args: { stage: "research" }, agent: (p, o) => {
     heldWhileRunning = lockCheck(w.root, "research").held;
-    return o.label === "synthesizer" ? doc : { written: [] };
+    return o.label === "synthesizer" ? doc : report(w, o);
   } });
   assert.equal(r.result.status, "researched");
   assert.equal(heldWhileRunning, true);
@@ -31,9 +34,9 @@ test("G120 a research run is refused while another research run holds the resear
 
 test("G120 the research lock is released when the run fails, so the next run can start", async () => {
   const w = makeWorld({ files: { ".planning/PROJECT.md": "# P\n" } });
-  const bare = await runScript("gsd-new-project", { root: w.root, gsd: w.gsd, args: { stage: "research" }, agent: (p, o) => (o.label === "synthesizer" ? "done" : { written: [] }) });
+  const bare = await runScript("gsd-new-project", { root: w.root, gsd: w.gsd, args: { stage: "research" }, agent: (p, o) => (o.label === "synthesizer" ? "done" : report(w, o)) });
   assert.equal(bare.result.status, "failed");
   assert.equal(lockCheck(w.root, "research").held, false);
-  const next = await runScript("gsd-new-project", { root: w.root, gsd: w.gsd, args: { stage: "research" }, agent: (p, o) => (o.label === "synthesizer" ? doc : { written: [] }) });
+  const next = await runScript("gsd-new-project", { root: w.root, gsd: w.gsd, args: { stage: "research" }, agent: (p, o) => (o.label === "synthesizer" ? doc : report(w, o, "second")) });
   assert.equal(next.result.status, "researched");
 });

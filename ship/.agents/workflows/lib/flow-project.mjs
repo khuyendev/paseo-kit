@@ -35,16 +35,18 @@ export function draftCheck(root) {
 const summaryUsable = (text) => text !== null && text.trim() !== "" && !text.includes(WRITE_CONTINUE);
 
 // The synthesizer may fail to write the file but return the document inline; then the orchestrator writes it.
-export function summaryHeal(root, reply) {
+// `stale`: the file on disk is from an earlier run (the caller saw it unchanged), so only the reply can supply the summary.
+export function summaryHeal(root, reply, { stale = false } = {}) {
   const abs = path.join(root, SUMMARY);
-  if (summaryUsable(readIf(abs))) return { ok: true, healed: false, path: SUMMARY };
+  if (!stale && summaryUsable(readIf(abs))) return { ok: true, healed: false, path: SUMMARY };
   const doc = String(reply ?? "");
   if (SUMMARY_MARKERS.every((m) => doc.includes(m)) && !doc.includes(WRITE_CONTINUE)) {
     const start = doc.search(/^# /m);
     writeTextAtomic(abs, `${(start >= 0 ? doc.slice(start) : doc).trim()}\n`);
     return { ok: true, healed: true, path: SUMMARY };
   }
-  return { ok: false, healed: false, path: SUMMARY, error: `${SUMMARY} missing, empty or unfinished and the reply holds no full summary`, code: 1 };
+  const why = stale ? `${SUMMARY} was not written by this run and the reply holds no full summary` : `${SUMMARY} missing, empty or unfinished and the reply holds no full summary`;
+  return { ok: false, healed: false, path: SUMMARY, error: why, code: 1 };
 }
 
 // Quick reports use the same status/fingerprint contract as phase verification (GSDF-61).

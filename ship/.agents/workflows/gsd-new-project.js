@@ -50,6 +50,11 @@ async function fileSha(path) { const r = await flow(["read", path]); return r.js
 
 const DIMENSIONS = { stack: "STACK", features: "FEATURES", architecture: "ARCHITECTURE", pitfalls: "PITFALLS" };
 const DONE_SCHEMA = { type: "object", properties: { written: { type: "array", items: { type: "string" } } }, required: ["written"] };
+const SUMMARY_FILE = ".planning/research/SUMMARY.md";
+const DRAFT_ROADMAP = ".planning/drafts/ROADMAP.md";
+const DRAFT_TRACE = ".planning/drafts/traceability.json";
+// G121: a file is this run's output only when its content changed since the run began (a missing file counts as changed once it exists).
+const changed = async (path, before) => { const now = await fileSha(path); return now !== null && now !== before; };
 const a = args ?? {};
 const stage = a.stage;
 if (!["research", "roadmap", "install"].includes(stage)) return { status: "failed", reason: "stage must be research, roadmap or install" };
@@ -65,13 +70,23 @@ if (stage === "research") {
   try {
     phase("Research");
     const jobs = Object.entries(DIMENSIONS);
+    // G121: a report counts only when this run wrote it; the file on disk may be an earlier run's.
+    const before = {};
+    for (const path of [...Object.values(DIMENSIONS).map((file) => `.planning/research/${file}.md`), SUMMARY_FILE]) before[path] = await fileSha(path);
     const res = await parallel(jobs.map(([dim, file]) => () => call([`Research the ${dim} dimension for this project and write .planning/research/${file}.md.`, ctx, "Keep provenance on every claim. Do not commit. Return JSON {written: [paths]}."].join("\n\n"), { label: `researcher-${dim}`, agentType: agentFor("project_researcher", "gsd-project-researcher"), role: "project_researcher", schema: DONE_SCHEMA })));
-    const bad = res.findIndex((r) => r && !r.result && fatal(r.reason));
-    if (bad >= 0) return { status: "failed", reason: `project researcher ${jobs[bad][0]} failed: ${res[bad].reason}` };
+    // G121: every researcher must finish and name its report, and the report must be new.
+    for (const [i, [dim, file]] of jobs.entries()) {
+      const path = `.planning/research/${file}.md`;
+      if (!res[i]?.result) return { status: "failed", reason: `project researcher ${dim} failed: ${res[i]?.reason ?? "no reply"}` };
+      if (!res[i].result.written?.includes(path) || !(await changed(path, before[path]))) return { status: "failed", reason: `project researcher ${dim} did not write ${path} in this run` };
+    }
     phase("Synthesize");
     const syn = await call([`Synthesize .planning/research/{${Object.values(DIMENSIONS).join(",")}}.md into .planning/research/SUMMARY.md.`, ctx, "Do not commit. Reply with the full SUMMARY document as written."].join("\n\n"), { label: "synthesizer", agentType: agentFor("synthesizer", "gsd-research-synthesizer"), role: "synthesizer" });
-    // GSDF-09: a summary the worker could not write is written by the orchestrator from the reply.
-    const heal = await flow(["summary-heal"], syn.result ?? "");
+    if (!syn.result) return { status: "failed", reason: `synthesizer failed: ${syn.reason ?? "no reply"}` };
+    // GSDF-09: a summary the worker could not write is written by the orchestrator from the reply. G121: an unchanged summary
+    // is an earlier run's, so only the reply can supply it.
+    const stale = (await fileSha(SUMMARY_FILE)) === before[SUMMARY_FILE];
+    const heal = await flow(stale ? ["summary-heal", "--stale"] : ["summary-heal"], syn.result);
     if (heal.code !== 0) return { status: "failed", reason: heal.json?.error ?? "no research SUMMARY" };
     if (heal.json.healed) log("self-heal: wrote .planning/research/SUMMARY.md from the synthesizer reply");
     return { status: "researched", summary: heal.json.path, healed: heal.json.healed };
@@ -88,6 +103,7 @@ if (stage === "roadmap") {
   const PROTECTED = [".planning/ROADMAP.md", ".planning/STATE.md", ".planning/REQUIREMENTS.md"];
   const before = [];
   for (const p of PROTECTED) before.push(await fileSha(p));
+  const draftBefore = await fileSha(DRAFT_ROADMAP);
   const r = await call([
     "Create the roadmap draft for this project.",
     ctx,
@@ -96,11 +112,15 @@ if (stage === "roadmap") {
     feedback,
     "Return JSON {written: [paths]}.",
   ].filter(Boolean).join("\n\n"), { label: "roadmapper", agentType: agentFor("roadmapper", "gsd-roadmapper"), role: "roadmapper", schema: DONE_SCHEMA });
-  if (!r.result && fatal(r.reason)) return { status: "failed", reason: `roadmapper failed: ${r.reason}` };
   // G122: the prompt forbids these writes, the check does not look for them; a changed file stops the run for the owner.
   const touched = [];
   for (const [i, p] of PROTECTED.entries()) if ((await fileSha(p)) !== before[i]) touched.push(p);
   if (touched.length) return needsOwner("Roadmap", `roadmapper changed ${touched.join(", ")}; only the draft may be written`, { touched });
+  // G121: a roadmapper that did not finish, or left the ROADMAP draft as it was, produced no draft; the earlier draft stays on disk.
+  // traceability.json is checked by name only: a rerun can write the same mapping, and draft-check compares it with the new ROADMAP.
+  if (!r.result) return { status: "failed", reason: `roadmapper failed: ${r.reason ?? "no reply"}` };
+  if (!r.result.written?.includes(DRAFT_ROADMAP) || !(await changed(DRAFT_ROADMAP, draftBefore))) return { status: "failed", reason: `roadmapper did not write ${DRAFT_ROADMAP} in this run` };
+  if (!r.result.written?.includes(DRAFT_TRACE)) return { status: "failed", reason: `roadmapper did not write ${DRAFT_TRACE} in this run` };
   const check = await flow(["draft-check"]);
   if (check.code !== 0) return { status: "draft-invalid", reason: (check.json?.problems ?? [check.json?.error]).join("; "), unmapped: check.json?.unmapped ?? [] };
   return { status: "draft-ready", phases: check.json.phases, v1: check.json.v1, draft: ".planning/drafts/ROADMAP.md" };

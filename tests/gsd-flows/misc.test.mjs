@@ -35,7 +35,7 @@ const draft = (reqs) => `## Phase 1: Core\n**Goal**: g\n**Requirements**: ${reqs
 
 test("GSDF-07 new-project: an unmapped v1 ID blocks the install and names it; approval installs through the single writer", async () => {
   const w = makeWorld({ files: { ".planning/PROJECT.md": "# P\n", ".planning/REQUIREMENTS.md": REQS } });
-  const roadmapper = (reqs) => () => { w.write(".planning/drafts/ROADMAP.md", draft(reqs)); w.write(".planning/drafts/traceability.json", JSON.stringify(Object.fromEntries(reqs.split(", ").map((id) => [id, "1"])))); return { written: [] }; };
+  const roadmapper = (reqs) => () => { w.write(".planning/drafts/ROADMAP.md", draft(reqs)); w.write(".planning/drafts/traceability.json", JSON.stringify(Object.fromEntries(reqs.split(", ").map((id) => [id, "1"])))); return { written: [".planning/drafts/ROADMAP.md", ".planning/drafts/traceability.json"] }; };
   const r = await runScript("gsd-new-project", { root: w.root, gsd: w.gsd, args: { stage: "roadmap" }, agent: roadmapper("CORE-01") });
   assert.deepEqual([r.result.status, r.result.unmapped], ["draft-invalid", ["CORE-02"]]);
   assert.match(r.calls[0].prompt, /Never write \.planning\/ROADMAP\.md, \.planning\/STATE\.md or \.planning\/REQUIREMENTS\.md/);
@@ -53,12 +53,13 @@ test("GSDF-07 new-project: an unmapped v1 ID blocks the install and names it; ap
 test("GSDF-09 new-project research: the synthesizer's inline document is self-healed; a bare reply fails before the roadmap", async () => {
   const w = makeWorld({ files: { ".planning/PROJECT.md": "# P\n" } });
   const doc = "# Project Research Summary\n## Executive Summary\na\n## Key Findings\nb\n## Implications for Roadmap\nc\n";
-  const r = await runScript("gsd-new-project", { root: w.root, gsd: w.gsd, args: { stage: "research" }, agent: (p, o) => (o.label === "synthesizer" ? doc : { written: [] }) });
+  const researcher = (wx) => (p, o) => { const f = `.planning/research/${o.label.replace("researcher-", "").toUpperCase()}.md`; wx.write(f, "report\n"); return { written: [f] }; };
+  const r = await runScript("gsd-new-project", { root: w.root, gsd: w.gsd, args: { stage: "research" }, agent: (p, o) => (o.label === "synthesizer" ? doc : researcher(w)(p, o)) });
   assert.deepEqual([r.result.status, r.result.healed], ["researched", true]);
   assert.ok(r.logs.includes("log self-heal: wrote .planning/research/SUMMARY.md from the synthesizer reply"));
   assert.equal(r.calls.filter((c) => c.opts.agentType === "gsd-project-researcher").length, 4);
   const w2 = makeWorld({ files: { ".planning/PROJECT.md": "# P\n" } });
-  const bare = await runScript("gsd-new-project", { root: w2.root, gsd: w2.gsd, args: { stage: "research" }, agent: (p, o) => (o.label === "synthesizer" ? "done" : { written: [] }) });
+  const bare = await runScript("gsd-new-project", { root: w2.root, gsd: w2.gsd, args: { stage: "research" }, agent: (p, o) => (o.label === "synthesizer" ? "done" : researcher(w2)(p, o)) });
   assert.equal(bare.result.status, "failed");
   assert.equal(bare.calls.some((c) => c.opts.label === "roadmapper"), false);
 });
