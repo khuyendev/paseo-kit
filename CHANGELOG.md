@@ -6,6 +6,30 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Kit feedback 89-101 from the first live runs on the reworked kit (owner 2026-10-24: "Có feedback, làm đi"; one Opus
+  agent per area, notes in kit-bughunt/fb7/design/). Execute: `state-plan` stores an absolute worktree path inside the
+  project root-relative, so `halt clear --resume` works (91), and a halt of an older kit finds its worktree from the
+  journal or the worktree list (90); a refused state write is a result warning; `ph gsd commit adopt <N> <sha>
+  --reason` records an owner commit so the resume gate accepts it, and the head-moved problem names the files no
+  trailer plan owns (94); a wave's shared changes are made before its executors start, already-satisfied ones are
+  marked applied without a fixer (95); checker issues accepted by forceProceed are records (`ph gsd accepted
+  list|confirm|resolve`) that stop the affected plans before dispatch and reach their executors' briefs (89); log and
+  result fixes (96 b, c). Checks: skip markers count only against a file's base content, `adapter.checks.skip_guards`
+  names environment guards, the stop names file and line (92). Hand edits: the first scan after an update takes the
+  tree as the baseline and files the flow wrote are not hand edits (93). Evidence: each verify command of a task has
+  its own step name and a changed command makes only that obligation stale (97); `ph harness lint` warns on empty
+  `smoke_builds` when the stack names a build target and `kit.mjs update` lists keys left at their default (96 a).
+  Planning: a contract issue goes only to the side that must change, the contract check reruns before a
+  REVISION_CONFLICT is acted on, a passing re-check answers `rerun` (100); an outline revision must keep the manifest
+  contract in step, and a conflict carrying contract_changes answers `contracts change` (98); an owner answer is a
+  decision record (`ph gsd decide <N> --text ... --plans|--outline|--question`) that re-plans only what it names
+  instead of a CONTEXT edit that invalidates research and every planner, research Open Questions about scope are asked
+  before the outline (stage Discuss), a contract change marks the plans that use it for re-planning, a conflict about
+  one plan re-plans only it (`replanPlans`) (99, 101 F3); `outline check` lists test files a verify command runs that
+  no plan owns (101). Prompt text: executor, shared-change, planner and checker templates, gsd-plan and gsd-execute
+  skills, kit-adapter.md. Measured check: tests/fb7/, full offline suite 2426 (2 V5A assertions updated to the merged
+  `decide` answer); not run on a live phase.
+
 - Thinner default composition (follow-up of the 87 rework; owner 2026-10-24: the goal "workflow mặc định mỏng, logic
   nằm trong verb" was only partly met; design kit-bughunt/thin/THIN.md, one Opus agent per stage). The workflow engine
   provides the helpers every gsd script used to copy (`flow`, `gsd`, `run`, `loadCfg`, `call`, `sha`, ..., plus `pool`,
