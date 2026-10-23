@@ -6,6 +6,33 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Kit rework after feedback 87, plus 86 (owner 2026-10-23/24: "Ok mày làm luôn abc đi, cần subagent thì dùng
+  opus"; design kit-bughunt/r87/DESIGN.md; one Opus agent per part, notes in kit-bughunt/r87/design/). The kit owns the
+  runtime, the verbs and the invariants; each project owns its workflow composition. Composition (A): kit.json lists
+  the nine `.agents/workflows/gsd-*.js` scripts as `composition`; update takes the new kit default only for a copy the
+  project has not edited and keeps an edited one even with `--force` (status shows it, with the diff command; pull
+  still offers it back); `kit.mjs update`, `ph doctor` and `ph harness lint` check that every flow and gsd verb a
+  composition calls exists; INTERFACES.md lists the kit verbs as the stable API; `update --force` without
+  `--enable-plugin` says the file mod stays unselected. The gsd-* skills are a kit block plus a project section that
+  follows the script; `gsd.*` settings are classified as kit settings or composition policies (INTERFACES 4.3) and
+  `ph doctor` notes a policy the project's own script no longer reads. Execute state (B, 83 F1/F3, 86):
+  `execute-progress.json` has one writer, the `state-*` flow verbs (plan stages, shared changes, requests, integration
+  files, answers, smoke), each checking its contract; raw writes are refused; gsd-execute calls them; every needs-owner
+  stop carries `answer: {verb, command}`; a request or shared change against a file in `adapter.ownership.regenerated`
+  must name its generator (`via`) and every output. Planning state (B for gsd-plan): `plan-progress.json` and the
+  `plan-*` verbs hold the checker, contract, reallocation and recheck bookkeeping; every gsd-plan stop names its
+  answer; resume per stage. Invariants (C): `check-weakening` runs inside every gate: a deleted test file, fewer test
+  declarations, fewer assertions, an added skip or a changed gate command since the base stops the run at stage
+  `Checks` unless the plan declares it in `<check_changes>` or the owner answers `ph gsd allow <phase> --path <p>
+  --reason <r>` (`adapter.checks`, on by default, stack defaults for Dart, TS/JS, Python, Go, Rust, Java). Self-repair
+  boundary (`self_repair`, on by default): agents a workflow run started cannot write `.agents/`, `.claude/`,
+  `AGENTS.md`, `CLAUDE.md`, and nobody edits a composition script or the overlay while a run of the project is live;
+  harness-evolve has the composition-evolution procedure (evidence, review, lint, history row `composition`, kit pull
+  candidate). Item map (D): docs/ITEM-MAP.md maps items 1-87 to the kit test or composition choice that covers them,
+  pinned by a test. Prompt text: gsd-* skills, gsd-planner/executor/code-reviewer overlays (check_changes, loosened
+  assertion = high finding), harness and harness-evolve skills, kit-adapter.md, ph skill. Measured check: tests/r87/,
+  full offline suite on the merge; not run on a live phase.
+
 - Kit feedback 77-85 from the Flutter port, phase 3 execute waves 1-2 (owner 2026-10-23: "coi feedback xong fix
   tiếp"; every item verified against 41b7117 first, kit-bughunt/fb6/VERIFY.md; one Sonnet 5.5 agent per area, design
   notes in kit-bughunt/fb6/design/). Resume (78, 83 F2): gsd-execute seeds its integration files from
