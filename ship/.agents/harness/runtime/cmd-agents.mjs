@@ -1,10 +1,11 @@
 // Commands on existing agents: send, watch, result, team, context, stop, archive (PHCL-11..13, PHCL-15, PHCL-16,
 // PHCL-19, PHCL-20).
+import fs from "node:fs";
 import path from "node:path";
 import { assertPromptSize } from "../paseo-client/index.mjs";
 import { UsageError, errText, failedLine } from "../lib/cli.mjs";
 import { readJsonIf, writeJsonAtomic } from "../lib/io.mjs";
-import { id8, resolveInside } from "../lib/paths.mjs";
+import { id8, isInside, resolveInside } from "../lib/paths.mjs";
 import { pidAlive } from "../lib/proc.mjs";
 import { resultJson } from "./result.mjs";
 import { readJournal } from "../workflow/journal.mjs";
@@ -154,12 +155,21 @@ async function stop(ctx) {
   return failed ? 2 : 0;
 }
 
+// A run directory that is a symlink or a junction must still resolve inside the real runs tree: a link out of it would send
+// the runner kill and the run.json rewrite to another run (G137). The lexical check in resolveInside stays the early reject.
+function refuseLinkedRunDir(runsDir, runId, runDir) {
+  if (!fs.existsSync(runDir)) return;
+  if (!isInside(fs.realpathSync.native(runDir), fs.realpathSync.native(runsDir))) throw new UsageError(`run ${runId} resolves outside ${runsDir}`);
+}
+
 // --run: end a workflow run for good, so watchers and resumes see a terminal state.
 async function runAgents(ctx, session, own) {
   const runId = ctx.opts.run;
   if (!/^[A-Za-z0-9._-]+$/.test(runId) || runId.includes("..")) throw new UsageError(`invalid run id '${runId}'`);
   const runsDir = path.resolve(ctx.root, ctx.opts["runs-dir"] ?? RUNS_DIR);
-  const file = path.join(resolveInside(runsDir, runId), "run.json");
+  const runDir = resolveInside(runsDir, runId);
+  refuseLinkedRunDir(runsDir, runId, runDir);
+  const file = path.join(runDir, "run.json");
   const info = readJsonIf(file);
   if (!info) throw new Error(`no run ${runId} (${file})`);
   if (info.status === "running" && pidAlive(info.pid)) {
