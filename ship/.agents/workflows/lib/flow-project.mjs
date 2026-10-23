@@ -62,14 +62,33 @@ export const slugify = (text, max = 40) =>
 
 const pad2 = (n) => String(n).padStart(2, "0");
 
+// The base-36 number of a quick name of this day (a task directory or a reservation), 0 for any other name.
+const quickNumber = (name, day) => {
+  const m = new RegExp(`^${day}-([0-9a-z]{3})(?:-|$)`).exec(name);
+  return m ? parseInt(m[1], 36) : 0;
+};
+
+// G105: an id is reserved by an exclusive create in .planning/quick/.ids, and the reservation outlives its directory, so a
+// removed task never frees its number. Of two concurrent runs only one creates a given reservation; the other moves on.
 export function quickDir(root, description, now = new Date()) {
   const day = `${String(now.getFullYear()).slice(2)}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}`;
   const base = path.join(root, ".planning/quick");
-  const taken = fs.existsSync(base) ? fs.readdirSync(base).filter((d) => d.startsWith(`${day}-`)).length : 0;
-  const id = `${day}-${(taken + 1).toString(36).padStart(3, "0")}`;
-  const rel = `.planning/quick/${id}-${slugify(description)}`;
-  fs.mkdirSync(path.join(root, rel), { recursive: true });
-  return { id, dir: rel };
+  const ids = path.join(base, ".ids");
+  fs.mkdirSync(ids, { recursive: true });
+  const issued = [...fs.readdirSync(base), ...fs.readdirSync(ids)].reduce((max, name) => Math.max(max, quickNumber(name, day)), 0);
+  const slug = slugify(description);
+  for (let n = issued + 1; ; n++) {
+    const id = `${day}-${n.toString(36).padStart(3, "0")}`;
+    const rel = `.planning/quick/${id}-${slug}`;
+    try {
+      fs.writeFileSync(path.join(ids, id), `${rel}\n`, { flag: "wx" });
+      fs.mkdirSync(path.join(root, rel));
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+      continue;
+    }
+    return { id, dir: rel };
+  }
 }
 
 export function forensicsPath(root, description, now = new Date()) {
