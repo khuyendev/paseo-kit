@@ -15,4 +15,5 @@ Method text: follow `.agents/gsd/generated/workflows/quick.md` (generated upstre
 - Args file `_workspace/args/gsd-quick.json`: `{"description": "<task text>", "full": false}` (`"contextPath"` and `"dir"` from the discussion when `--full`). Run `node .agents/harness/ph.mjs workflow --name gsd-quick --args-file _workspace/args/gsd-quick.json --detach` and wait as `next:` says. The description reaches agents only as data.
 - The run creates `.planning/quick/<YYMMDD-xxx>-<slug>/` (slug at most 40 characters), plans ONE plan of 1-3 tasks with repo-root-relative paths, executes it through the executor contract and, with `--full`, adds research, a checker loop of at most 2 iterations and a verifier.
 - One `docs(quick-<id>)` commit per `gsd.commit_policy.docs`; no STATE table row (quick tasks are listed from the directory).
-- `needs-owner`: show the reason (a Rule-4 decision, a blocked task, checker issues after 2 iterations).
+- Checker warnings never send the plan back or stop the run; they come back as `warnings` in the result.
+- `needs-owner`: show the reason (a Rule-4 decision, a blocked task, checker blockers after 2 iterations).

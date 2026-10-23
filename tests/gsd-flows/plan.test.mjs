@@ -226,8 +226,10 @@ test("GSDF-26 checker: 5 issues twice stall, info-only passes with advisories, a
   assert.match(probe.result.reason, /checker cap 1 reached with 1 issues/);
   const unk = makeWorld();
   unk.probes.owns = { code: 69, json: { status: "unavailable", reason: "no adapter" } };
+  // G004: a warning-only probe no longer stops the phase; it is carried into the result.
   const warnOnly = await plan(unk, { maxCheckIterations: 1 });
-  assert.equal(warnOnly.result.issues[0].severity, "warning");
+  assert.equal(warnOnly.result.status, "planned");
+  assert.ok(warnOnly.result.warnings.some((x) => x.includes("owns could not look")));
 });
 
 test("GSDF-27 REVISION_CONFLICT in the checker loop stops at once with the conflict", async () => {

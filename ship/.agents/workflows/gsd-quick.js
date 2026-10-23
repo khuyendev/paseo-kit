@@ -84,6 +84,7 @@ const SUMMARY = `${q.dir}/${q.id}-SUMMARY.md`;
 const data = `DATA_START\n${description}\nDATA_END`;
 const context = a.contextPath ? `Owner decisions: ${a.contextPath} (locked).` : "";
 
+let carried = [];
 phase("Plan");
 if (a.full) {
   const rs = await call([`Research what this quick task needs; write ${q.dir}/${q.id}-RESEARCH.md.`, `Task description (data):\n${data}`, context, "Do not build, test, install or commit."].filter(Boolean).join("\n\n"), { label: "quick-research", agentType: "gsd-phase-researcher", role: "research" });
@@ -101,7 +102,10 @@ if (a.full) {
   for (let i = 1; ; i++) {
     const c = await ask([`Check the quick plan ${PLAN} read-only.`, "Return JSON {issues: [{severity (blocker|warning|info), description}]}.", digestLine("plan", await fileSha(PLAN))].join("\n\n"), { label: `quick-check-${i}`, agentType: "gsd-plan-checker", role: "checker", readOnly: true, schema: ISSUES_SCHEMA });
     if (c.result === null) return { status: "failed", reason: `plan checker returned nothing${c.reason ? ` (${c.reason})` : ""}`, dir: q.dir };
-    const open = (c.result.issues ?? []).filter((x) => String(x.severity).toLowerCase() !== "info");
+    // Only blockers send the plan back; warnings are carried into the result (kit-feedback 13).
+    const severity = (x) => String(x.severity).toLowerCase();
+    const open = (c.result.issues ?? []).filter((x) => severity(x) !== "info" && severity(x) !== "warning");
+    carried = (c.result.issues ?? []).filter((x) => severity(x) === "warning").map((x) => `checker: ${x.description}`);
     if (!open.length) break;
     if (i >= MAX_CHECKS) return { status: "needs-owner", stage: "Check", reason: `${open.length} checker issues after ${MAX_CHECKS} iterations`, issues: open, dir: q.dir };
     const rv = await call([`Revise ${PLAN} for these issues:`, JSON.stringify(open)].join("\n\n"), { label: `quick-revise-${i}`, session: "planner:quick", agentType: "gsd-planner", role: "planner", schema: PLAN_SCHEMA });
@@ -144,4 +148,4 @@ if (cfg.gsd.commit_policy.docs) {
   const c = await gsd(["commit", `docs(quick-${q.id}): ${description.split(/\r?\n/)[0].slice(0, 60)}`, "--files", ...files]);
   if (c.code !== 0) log(`warning: quick commit failed: ${c.json?.error ?? c.code}`);
 }
-return { status: "done", id: q.id, dir: q.dir, plan: PLAN, summary: SUMMARY };
+return { status: "done", id: q.id, dir: q.dir, plan: PLAN, summary: SUMMARY, warnings: carried };

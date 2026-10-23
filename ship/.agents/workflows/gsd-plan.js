@@ -544,7 +544,7 @@ async function checkerLoop(scopeIds, gapScoped) {
       `Check the plans of phase ${N} read-only: ${scopeIds.map(planPath).join(", ")}.`,
       planningContext(gapScoped ? "gap_closure" : "standard"),
       `Deterministic probe results are in ${probeFile}: they are already counted; do not re-derive them, do not repeat them as issues.`,
-      warnings.length ? `Carried skeleton warnings:\n${warnings.map((w) => `- ${w}`).join("\n")}` : "",
+      warnings.length ? `Carried warnings:\n${warnings.map((w) => `- ${w}`).join("\n")}` : "",
       "Return JSON {issues: [{plan (null for phase-level), dimension, severity (blocker|warning|info), description, fix_hint}]}.",
       POLICY,
       digestLine("freeze", freezeHash),
@@ -560,24 +560,32 @@ async function checkerLoop(scopeIds, gapScoped) {
       if (String(i.severity).toLowerCase() === "info") advisories.push({ lane: "checker", plan: i.plan ?? null, description: i.description });
       else checkerIssues.push({ ...i, severity: String(i.severity).toLowerCase() === "warning" ? "warning" : "blocker" });
     }
+    // Only blockers drive the stall test, the cap and the revisions; warnings are carried into the result (kit-feedback 13, 20).
     const all = [...checkerIssues, ...probeIssues];
-    log(`checker iteration ${iter}: ${checkerIssues.length} checker + ${probeIssues.length} probe issues`);
-    if (all.length === 0) return { passed: true };
-    if (iter >= maxCheckIterations || all.length >= prev) {
-      const why = iter >= maxCheckIterations ? `checker cap ${maxCheckIterations} reached with ${all.length} issues` : `stalled: ${all.length} issues, not below ${prev}`;
+    const blockers = all.filter((i) => i.severity === "blocker");
+    const carried = all.filter((i) => i.severity === "warning");
+    const carry = () => warnings.push(...carried.map((w) => `checker${w.plan ? ` (${w.plan})` : ""}: ${w.description}`));
+    log(`checker iteration ${iter}: ${checkerIssues.length} checker + ${probeIssues.length} probe issues, ${blockers.length} blockers`);
+    if (blockers.length === 0) {
+      carry();
+      return { passed: true };
+    }
+    if (iter >= maxCheckIterations || blockers.length >= prev) {
+      const why = iter >= maxCheckIterations ? `checker cap ${maxCheckIterations} reached with ${blockers.length} issues` : `stalled: ${blockers.length} issues, not below ${prev}`;
       if (a.forceProceed) {
-        const override = { reason: a.forceProceed.reason, why, remaining: all };
-        const saved = await gsd(["state", "override", "--phase", N], { reason: a.forceProceed.reason, issues: all.map((x) => `${x.plan ?? "phase"}: ${x.description}`) });
+        const override = { reason: a.forceProceed.reason, why, remaining: blockers };
+        const saved = await gsd(["state", "override", "--phase", N], { reason: a.forceProceed.reason, issues: blockers.map((x) => `${x.plan ?? "phase"}: ${x.description}`) });
         if (saved.code !== 0) return { stop: failedCall("state override failed", saved.json?.error ?? `exit ${saved.code}`) };
         log(`override: ${why}; proceeding (${a.forceProceed.reason})`);
+        carry();
         return { passed: true, override };
       }
-      return { stop: owner("Checker", why, { issues: all, options: ["force proceed (rerun with forceProceed {reason})", "give guidance and retry", "abandon"] }) };
+      return { stop: owner("Checker", why, { issues: blockers, options: ["force proceed (rerun with forceProceed {reason})", "give guidance and retry", "abandon"] }) };
     }
-    prev = all.length;
+    prev = blockers.length;
     const perPlan = new Map();
     const phaseLevel = [];
-    for (const i of all) (i.plan && scopeIds.includes(i.plan) ? perPlan.set(i.plan, [...(perPlan.get(i.plan) ?? []), i]) : phaseLevel.push(i));
+    for (const i of blockers) (i.plan && scopeIds.includes(i.plan) ? perPlan.set(i.plan, [...(perPlan.get(i.plan) ?? []), i]) : phaseLevel.push(i));
     const revised = await parallel([...perPlan].map(([id, list]) => () => plannerCall(gapScoped ? "planner:gaps" : `planner:${id}`, `revise-${id}-${iter}`, [planningContext("revision"), revisionContext([planPath(id)], list)].join("\n\n"), "freeze", freezeHash)));
     for (const r of revised) if (ownerMarker(r?.result)) return { stop: ownerStop("Checker", r.result) };
     if (phaseLevel.length) {
