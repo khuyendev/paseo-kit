@@ -17,13 +17,16 @@ export function parseRequirements(text) {
   const lines = lf(text ?? "").split("\n");
   const map = new Map();
   const trace = new Map();
+  // Every row that names an id, in file order: map and trace keep the last row for readers, copies keeps all of them.
+  const copies = new Map();
+  const copy = (id, entry) => copies.set(id, [...(copies.get(id) ?? []), entry]);
   let header = null;
   lines.forEach((line, i) => {
     const bullet = /^\s*-\s*(?:\[([ xX])\]\s*)?\*\*([^*]+?)\*\*\s*:?\s*(.*)$/.exec(line);
     if (bullet && !line.trim().startsWith("|")) {
       const id = bullet[2].trim();
       const specM = /\s*\(spec:\s*([^)]+)\)\s*$/.exec(bullet[3]);
-      map.set(id, {
+      const entry = {
         id,
         text: (specM ? bullet[3].slice(0, specM.index) : bullet[3]).trim(),
         spec: specM ? specM[1].trim() : null,
@@ -31,7 +34,9 @@ export function parseRequirements(text) {
         form: "bullet",
         line: i,
         checkable: bullet[1] !== undefined,
-      });
+      };
+      map.set(id, entry);
+      copy(id, entry);
       return;
     }
     if (!line.trim().startsWith("|")) {
@@ -48,7 +53,7 @@ export function parseRequirements(text) {
     if (header[0] === "id") {
       const id = row[0];
       if (!id) return;
-      map.set(id, {
+      const entry = {
         id,
         text: row[col("rule")] ?? row[col("description")] ?? "",
         spec: row[col("spec")] || null,
@@ -56,16 +61,21 @@ export function parseRequirements(text) {
         form: "table",
         line: i,
         phase: row[col("phase")] || null,
-      });
+        statusIndex: col("status"),
+      };
+      map.set(id, entry);
+      copy(id, entry);
     } else if (header[0] === "requirement") {
-      trace.set(row[0], { phase: row[col("phase")] ?? null, status: row[col("status")] ?? null, line: i });
+      const entry = { id: row[0], phase: row[col("phase")] ?? null, status: row[col("status")] ?? null, form: "trace", line: i, statusIndex: col("status") };
+      trace.set(row[0], entry);
+      copy(row[0], entry);
     }
   });
   for (const [id, t] of trace) {
     const r = map.get(id);
     if (r && !r.phase) r.phase = t.phase;
   }
-  return { lines, map, trace };
+  return { lines, map, trace, copies };
 }
 
 export function loadRequirements(root) {
@@ -75,6 +85,10 @@ export function loadRequirements(root) {
 
 // The comparable view of a requirement (both forms give the same object).
 export const requirementView = (r) => ({ id: r.id, text: r.text, spec: r.spec, phase: r.phase ?? null, complete: r.complete });
+
+// Ids with more than one defining row (bullet or table) or more than one traceability row.
+export const duplicateIds = (parsed) =>
+  [...parsed.copies].filter(([, rows]) => rows.filter((r) => r.form === "trace").length > 1 || rows.filter((r) => r.form !== "trace").length > 1).map(([id]) => id);
 
 function setRowStatus(line, statusIndex, value) {
   const parts = line.split("|");
@@ -88,21 +102,15 @@ function setRowStatus(line, statusIndex, value) {
   return parts.join("|");
 }
 
-// Set the completion of requirement ids (bullet checkbox, table status cell, traceability row); returns new text.
+// Set the completion of requirement ids on every row that names them (bullet checkbox, table status cell, traceability row); returns new text.
 export function setComplete(parsed, ids, complete) {
   const lines = [...parsed.lines];
-  let header = null;
-  lines.forEach((line, i) => {
-    if (!line.trim().startsWith("|")) header = null;
-    else if (!isDivider(line) && !header) header = cells(line).map((c) => c.toLowerCase());
-    for (const id of ids) {
-      const r = parsed.map.get(id);
-      if (r?.line === i && r.form === "bullet" && r.checkable) lines[i] = line.replace(/\[[ xX]\]/, complete ? "[x]" : "[ ]");
-      if (header && (r?.line === i || parsed.trace.get(id)?.line === i)) {
-        const status = header.findIndex((h) => h.startsWith("status"));
-        if (status >= 0) lines[i] = setRowStatus(lines[i], status, complete ? "Complete" : "Pending");
-      }
+  for (const id of ids) {
+    for (const row of parsed.copies.get(id) ?? []) {
+      if (row.form === "bullet") {
+        if (row.checkable) lines[row.line] = lines[row.line].replace(/\[[ xX]\]/, complete ? "[x]" : "[ ]");
+      } else if (row.statusIndex >= 0) lines[row.line] = setRowStatus(lines[row.line], row.statusIndex, complete ? "Complete" : "Pending");
     }
-  });
+  }
   return lines.join("\n");
 }

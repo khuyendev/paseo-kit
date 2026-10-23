@@ -7,7 +7,7 @@ import { samePath } from "../lib/paths.mjs";
 import { textDigest } from "../lib/hash.mjs";
 import { done, fail, idList, isFile, lf, nowIso, readIf, rel, today } from "./common.mjs";
 import { comparePhase, findPhase, haltIds, listFiles, padPhase, phasesDir, planIds, readPlans, sharedFile, summaryIds, summaryPath } from "./planning.mjs";
-import { loadRequirements, requirementView, setComplete } from "./requirements.mjs";
+import { duplicateIds, loadRequirements, requirementView, setComplete } from "./requirements.mjs";
 import { annotateSection, insertPhase, loadRoadmap, parseRoadmap, phaseJson, removePhaseText, renumberText, roadmapPhase, setChecklist, setProgressRow, slugify } from "./roadmap.mjs";
 import { advanceState, initStateLocked, parseState, writeShared } from "./state.mjs";
 import { completionFile, phaseStatus, readVerification } from "./status.mjs";
@@ -316,7 +316,7 @@ export function requirementsVerb(g, sub, args) {
   const reqs = loadRequirements(g.codeRoot);
   if (sub === "list" || sub === "parse") {
     const re = new RegExp(g.cfg.gsd.requirement_id_regex);
-    return done({ exists: reqs.exists, requirements: [...reqs.map.values()].map((r) => ({ ...requirementView(r), valid_id: re.test(r.id) })) });
+    return done({ exists: reqs.exists, requirements: [...reqs.map.values()].map((r) => ({ ...requirementView(r), valid_id: re.test(r.id) })), duplicates: duplicateIds(reqs) });
   }
   if (!reqs.exists) throw fail("REQUIREMENTS.md does not exist");
   let ids;
