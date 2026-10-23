@@ -343,22 +343,57 @@ export function requirementsVerb(g, sub, args) {
 
 // --- uat-passed (GSDC-16) ---
 
+// The body of the exact `## <title>` section, up to the next level-one or level-two heading (G095).
+const uatSection = (body, title) => new RegExp(`^##\\s+${title}\\s*$([\\s\\S]*?)(?=^#{1,2}\\s|(?![\\s\\S]))`, "m").exec(body);
+
 // The `### N. Name` tests plus every other `###` heading under the exact `## Tests` section (malformed: never silently
 // dropped). A heading outside that section, or under a differently named `## Tests (3)`, is no test (G095).
 export function parseUat(text) {
   const tests = [];
   const re = /^###\s+(\d+)\.\s*(.+?)\s*$/gm;
   const body = String(text ?? "").replace(/\r\n?/g, "\n");
-  const found = /^##\s+Tests\s*$([\s\S]*?)(?=^#{1,2}\s|(?![\s\S]))/m.exec(body);
+  const found = uatSection(body, "Tests");
   const section = found?.[1] ?? "";
   const heads = [...section.matchAll(re)];
   heads.forEach((m, i) => {
     const chunk = section.slice(m.index, heads[i + 1]?.index ?? section.length);
     const result = /^result:\s*\[?([a-z_]+)\]?/m.exec(chunk)?.[1] ?? "pending";
-    tests.push({ number: Number(m[1]), name: m[2], result, blocked_by: /^blocked_by:\s*(.+)$/m.exec(chunk)?.[1]?.trim() ?? null });
+    tests.push({ number: Number(m[1]), name: m[2], result, blocked_by: /^blocked_by:\s*(.+)$/m.exec(chunk)?.[1]?.trim() ?? null, reason: /^reason:[ \t]*(.*?)\s*$/m.exec(chunk)?.[1] || null });
   });
   const malformed = section.split("\n").filter((l) => /^###/.test(l) && !/^###\s+\d+\.\s*\S/.test(l)).map((l) => l.trim());
   return { tests, malformed, found: found !== null };
+}
+
+// The `## Gaps` YAML entries (`- truth:` with indented keys). `test` is the test number, `status` is lower-cased and
+// `resolved_by` is the plan basename, quotes and trailing comments dropped; a key that is absent or empty is null.
+export function parseUatGaps(text) {
+  const section = uatSection(lf(text ?? ""), "Gaps")?.[1] ?? "";
+  return section
+    .split(/^(?=- )/m)
+    .filter((entry) => entry.startsWith("- "))
+    .map((entry) => {
+      const field = (key) => new RegExp(`^(?:- )?\\s*${key}:[ \\t]*(.*?)\\s*$`, "m").exec(entry)?.[1].replace(/\s+#.*$/, "").replace(/^(["'])(.*)\1$/, "$2") || null;
+      return { test: Number.parseInt(field("test"), 10), status: field("status")?.toLowerCase() ?? null, resolved_by: field("resolved_by") };
+    });
+}
+
+// G099: a gap is resolved only when an executed gap-closure plan in the phase directory names it: `resolved_by` is the
+// basename of a *-PLAN.md there and its *-SUMMARY.md sibling exists (elaboration.md § 4). A hand-written status is not enough.
+function gapResolved(phase, gap) {
+  if (gap.status !== "resolved" || !gap.resolved_by) return false;
+  return listFiles(phase, "plan").includes(gap.resolved_by) && listFiles(phase, "summary").includes(gap.resolved_by.replace(/-PLAN\.md$/, "-SUMMARY.md"));
+}
+
+// The upstream rule (elaboration.md § 4): pending and blocked rows always block, a skipped row blocks without a reason,
+// and an issue blocks unless every `## Gaps` entry for its test is a verified resolution. Severity never exempts a row.
+function blocksPassed(phase, t, gaps) {
+  if (t.result === "pass") return false;
+  if (t.result === "skipped") return !t.reason;
+  if (t.result === "issue") {
+    const own = gaps.filter((gap) => gap.test === t.number);
+    return !(own.length > 0 && own.every((gap) => gapResolved(phase, gap)));
+  }
+  return true;
 }
 
 // G095: the passed UAT is the human verification. Its report becomes passed: the status is set, the human items are
@@ -396,14 +431,17 @@ export function uatPassed(g, phase, { requireVerification, uatOnly }) {
   const blockers = [];
   const checks = [];
   for (const name of uatFiles) {
-    const { tests, malformed, found } = parseUat(readIf(path.join(phase.dir, name)));
+    const text = readIf(path.join(phase.dir, name));
+    const { tests, malformed, found } = parseUat(text);
+    const gaps = parseUatGaps(text);
     // GSDC-16: an empty, draft or malformed UAT is no passed human verification.
     if (!found) blockers.push({ file: name, reason: "no ## Tests section" });
     else if (!tests.length) blockers.push({ file: name, reason: "no recognized test (### N. Name)" });
+    else if (!tests.some((t) => t.result === "pass")) blockers.push({ file: name, reason: "no passed test" });
     for (const h of malformed) blockers.push({ file: name, reason: `unrecognized test heading: ${h}` });
     for (const t of tests) {
       checks.push({ file: name, ...t });
-      if (t.result !== "pass") blockers.push({ file: name, test: t.number, name: t.name, result: t.result, blocked_by: t.blocked_by });
+      if (blocksPassed(phase, t, gaps)) blockers.push({ file: name, test: t.number, name: t.name, result: t.result, blocked_by: t.blocked_by });
     }
   }
   if (!uatFiles.length) blockers.push({ reason: "no UAT file" });

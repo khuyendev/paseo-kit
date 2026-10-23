@@ -112,7 +112,7 @@ test("GSDF-35 the plan script runs no git branch command and keeps researcher, p
 
 test("GSDF-57 UAT conversation rules", () => {
   const t = skill("gsd-verify");
-  for (const s of ["pass (empty, yes, y, ok, next)", "infer `blocked_by`", "infer severity; never ask", "Deferred follow-ups never become gaps", "after each issue, every 5 passes and at completion", "phase uat-passed <N> --require-verification", "adapter.startup_globs", "`commits.json` entry and a current gate evidence file", "`gap_ids`", "Blocked or skipped tests never count as passed"]) assert.ok(t.includes(s), s);
+  for (const s of ["pass (empty, yes, y, ok, next)", "infer `blocked_by`", "infer severity; never ask", "Deferred follow-ups never become gaps", "after each issue, every 5 passes and at completion", "phase uat-passed <N> --require-verification", "adapter.startup_globs", "`commits.json` entry and a current gate evidence file", "`gap_ids`", "no issue unless every `## Gaps` entry for it is a verified resolution"]) assert.ok(t.includes(s), s);
 });
 
 test("GSDF-58 transition evolves PROJECT.md and never closes milestones", () => {

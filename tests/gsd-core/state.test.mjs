@@ -130,7 +130,7 @@ test("GSDC-16 uat-passed names blocked tests", async () => {
   const p = executed({ [`${P1}/01-UAT.md`]: uat });
   const r = await gsd(p, ["phase", "uat-passed", "1"]);
   assert.equal(r.code, 1);
-  assert.deepEqual(r.json.blockers.map((b) => b.name), ["A", "B", "C"]);
+  assert.deepEqual(r.json.blockers.filter((b) => b.name).map((b) => b.name), ["A", "B", "C"]);
   p.write(`${P1}/01-UAT.md`, uat.replace(/result: blocked/g, "result: pass"));
   assert.equal((await gsd(p, ["phase", "uat-passed", "1"])).code, 0);
   assert.equal((await gsd(p, ["phase", "uat-passed", "1", "--require-verification"])).code, 1);
