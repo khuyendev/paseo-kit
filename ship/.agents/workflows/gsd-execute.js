@@ -473,9 +473,11 @@ async function applyShared(waveId, label) {
   ev(`shared ${waveId} ${files.length}`);
   return null;
 }
-// CR-GSF-16: every fix result is inspected before the gate reruns. An owner decision, a quota or a call that could
-// not run stops the round at once; a fixer that answers unresolved, or a fix call that returned nothing, is judged on a
-// fresh gate (G066, G088, kit-feedback 28/30): the round stops red only while that fixer's own failures remain.
+// CR-GSF-16: every fix result is inspected before the gate reruns. A quota or a call that could not run stops the round
+// at once; a fixer that answers unresolved, or a fix call that returned nothing, is judged on a fresh gate (G066, G088,
+// kit-feedback 28/30): the round stops red only while that fixer's own failures remain. An owner decision of a fixer
+// (kit-feedback 51) waits for the transfer of every fixer's owned changes and the rerun, and stops the round only while
+// its plan still fails.
 async function fixRounds(waveId, tasks, first, label, tail) {
   let cur = first;
   let prev = first.failureCount;
@@ -505,6 +507,7 @@ async function fixRounds(waveId, tasks, first, label, tail) {
     if (!fixes.length && !sharedChanges.some((s) => !s.applied)) return red(fileless.length ? `${fileless.length} gate failure(s) name no file of any plan, so no fixer can own them` : "no fixer owns the failing files");
     const results = await parallel(fixes);
     const soft = [];
+    const decisions = [];
     for (const r of results) {
       if (!r) return red("a fix call failed to run");
       if (r.skipped) continue;
@@ -518,7 +521,7 @@ async function fixRounds(waveId, tasks, first, label, tail) {
       if (!(await saveProgress())) return red("could not persist pending change requests");
       if (r.kind === "executor") {
         const decision = ownerDecision(r.result);
-        if (decision) return { stop: owner("Gate", `owner decision needed in the fix of ${r.id}: ${decision.note ?? decision.evidence ?? decision.status}`, { decision, evidence: cur.evidence }) };
+        if (decision) decisions.push({ id: r.id, decision });
       } else if (r.result.status !== "fixed") soft.push({ id: r.id, why: `${who} unresolved (${r.result.remaining_failures ?? "?"} failures remain)${r.result.evidence ? `: ${r.result.evidence}` : ""}` });
       if (r.id) clearResolved(r.id, r.result);
     }
@@ -534,6 +537,11 @@ async function fixRounds(waveId, tasks, first, label, tail) {
     if (sh) return { stop: sh };
     ev(`fix ${waveId} round ${round}`);
     cur = await runGate(waveId, tasks);
+    // kit-feedback 51: a fixer's decision stops the round only while its plan still fails after the transfers and the rerun;
+    // otherwise its failures were another fixer's to fix, and the answer is logged.
+    const stuck = decisions.filter((d) => (cur.byPlan?.[d.id] ?? []).length > 0);
+    for (const d of decisions.filter((x) => !stuck.includes(x))) log(`fix of ${d.id} reported "${d.decision.note ?? d.decision.evidence ?? d.decision.status}", but its failures are gone after the transfer and the rerun; not an owner decision`);
+    if (stuck.length) return { stop: owner("Gate", stuck.map((d) => `owner decision needed in the fix of ${d.id}: ${d.decision.note ?? d.decision.evidence ?? d.decision.status}`).join("; "), { decision: stuck[0].decision, evidence: cur.evidence }) };
     const still = soft.filter((s) => (s.id ? (cur.byPlan?.[s.id] ?? []).length > 0 : (cur.unplaced ?? []).some((f) => (f.files ?? []).length)));
     if (!cur.green && still.length) return red(still.map((s) => s.why).join("; "));
     noDrop = cur.failureCount >= prev ? noDrop + 1 : 0;

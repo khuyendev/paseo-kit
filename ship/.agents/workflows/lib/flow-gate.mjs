@@ -51,8 +51,11 @@ const pathKey = (rel) => (process.platform === "win32" ? rel.toLowerCase() : rel
 function visibleFiles(root) {
   return new Set(gitLines(root, ["ls-files", "-co", "--exclude-standard", "-z"]).flatMap((l) => l.split("\0")).filter(Boolean).map((rel) => pathKey(toSlash(rel))));
 }
+// A file the output reports at a position (`path:line`) is the one that failed; a run's other files (every passing test's
+// progress line, a helper in a stack) are only mentioned. Without any position, every mentioned file counts (kit-feedback 51).
 function mentionedFiles(root, text, visible) {
   const found = new Set();
+  const located = new Set();
   for (const line of String(text).split(/\r?\n/)) {
     for (const ext of line.matchAll(/\.[A-Za-z0-9]+(?![A-Za-z0-9])/g)) {
       const end = ext.index + ext[0].length;
@@ -64,11 +67,12 @@ function mentionedFiles(root, text, visible) {
         const rel = toSlash(path.relative(root, abs));
         if (!isInside(abs, root) || !visible.has(pathKey(rel)) || !fs.statSync(abs, { throwIfNoEntry: false })?.isFile()) continue;
         found.add(rel);
+        if (/^["'`]?:\d/.test(line.slice(end))) located.add(rel);
         break;
       }
     }
   }
-  return [...found];
+  return [...(located.size ? located : found)];
 }
 
 // Input scopes of a gate: the owned paths of its plans and the adapter instructions (ADPT-17).

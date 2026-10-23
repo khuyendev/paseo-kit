@@ -49,7 +49,7 @@ test("GSDF-64 CR-GSF-18 debug excludes execution and quick writers (planning hol
   }
 });
 
-for (const outcome of ["quota", "partial"]) test(`GSDF-52 CR-GSF-16 ${outcome} fix preserves pending requests without another gate`, async () => {
+for (const outcome of ["quota", "partial"]) test(`GSDF-52 CR-GSF-16 ${outcome} fix preserves pending requests; a partial fix is decided on the rerun gate`, async () => {
   const w = makeExecWorld({ overlay: { adapter: { commands: { ...commands, test: [process.execPath, "-e", "console.log('error src/01-02/impl.js');process.exit(1)"] } } } });
   const normal = executor(w);
   const responder = executor(w, {
@@ -60,5 +60,6 @@ for (const outcome of ["quota", "partial"]) test(`GSDF-52 CR-GSF-16 ${outcome} f
   assert.notEqual(r.result.status, "executed");
   assert.equal(JSON.parse(w.read(`${PD}/execute-progress.json`)).requests["01-02"].length, 1);
   assert.equal(r.calls.filter((c) => c.opts.label.startsWith("fix-01-02")).length, 1);
-  assert.equal(r.result.events.filter((e) => e.startsWith("gate ")).length, 1);
+  // kit-feedback 51: a partial fix is an owner decision only after the transfers and the rerun; a quota stops before them.
+  assert.equal(r.result.events.filter((e) => e.startsWith("gate ")).length, outcome === "quota" ? 1 : 2);
 });
