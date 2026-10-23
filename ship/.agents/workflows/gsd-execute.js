@@ -171,6 +171,8 @@ const committedOnly = (id) => progress.plans[id]?.commit !== undefined && !track
 const saveProgress = async () => (await flow(["write", PROGRESS], JSON.stringify(progress, null, 2))).code === 0;
 pendingRequests = progress.requests ??= {};
 sharedChanges = progress.shared ??= [];
+// kit-feedback 53: a granted file is integration output from the start of the run (the resume gate and the wave commit).
+await grantedFiles();
 // G075: the handoff must still describe the plans on disk. A failed or killed handoff rerun can leave a cut-short wave
 // set (the manifest, written last, names the wave count), and a plan edited, added or deleted after the handoff would
 // run with stale owns, verify commands and plan set.
@@ -732,11 +734,37 @@ async function reviewAll(tasks, waveId, codeOnly) {
   const out = done.out;
   return { reviews: out, confirmed: out.flatMap((r) => r.confirmed), unverified: out.flatMap((r) => r.unverified) };
 }
+// kit-feedback 53: the owner's grants (ph gsd grant) are files the phase's fixers may change. A granted file is integration
+// output of the phase: it joins the wave commit it changes in, and commits.json records it.
+async function grantedFiles() {
+  const r = await flow(["read", `${phaseDir}/grants.json`]);
+  let list = [];
+  try { list = r.json?.exists ? JSON.parse(r.json.text).map((x) => x.path) : []; } catch { list = []; }
+  if (list.length) {
+    for (const f of list) integrationFiles.add(f);
+    progress.integration = [...integrationFiles];
+  }
+  return list;
+}
+// The plans of the phase owning the files a fixer asked for (plan null: no plan owns the file).
+async function askedOwners(requests) {
+  const list = (requests ?? []).filter((rq) => rq && typeof rq.path === "string" && rq.path.trim()).map((rq) => ({ ...rq, path: slashPath(rq.path) }));
+  if (!list.length) return [];
+  const plans = allTasks.map((x) => ({ id: x.plan, owns: x.owns ?? [], summary: x.summary }));
+  const owners = (await flow(["owners"], { paths: list.map((rq) => rq.path), plans })).json?.owners ?? {};
+  return list.map((rq) => ({ ...rq, plan: (owners[rq.path] ?? [])[0] ?? null }));
+}
+const grantOption = (rq) => `ph gsd grant ${N} --path ${rq.path}${rq.plan ? ` --plan ${rq.plan}` : ""}, then rerun with the same args`;
 async function fixer(label, findings, failures, owns) {
-  const prompt = [fixerText(owns, findings, failures), digestLine(`fix:${label}`, await digestOf({ owns, files: findingFiles(findings) }))].join("\n\n");
+  const fixOwns = [...owns, ...(await grantedFiles())];
+  const prompt = [fixerText(fixOwns, findings, failures), digestLine(`fix:${label}`, await digestOf({ owns: fixOwns, files: findingFiles(findings) }))].join("\n\n");
   const r = await call(prompt, fixerOpts(label, { timeoutS: (g.fixer.minutes + 5) * 60 }));
   ev(`fixer ${label}`);
-  if (!r.result || r.result.status !== "fixed") return { stop: owner("Fix", r.result ? `fixer unresolved: ${r.result.remaining_failures ?? "?"} failures remain` : `fixer stopped or timed out${r.reason ? `: ${r.reason}` : ""}`, { evidence: r.result?.evidence ?? null }) };
+  if (!r.result || r.result.status !== "fixed") {
+    // The files the fixer asked for and could not change are offered as grants: the owner grants them and reruns.
+    const grantRequests = await askedOwners(r.result?.requests);
+    return { stop: owner("Fix", r.result ? `fixer unresolved: ${r.result.remaining_failures ?? "?"} failures remain` : `fixer stopped or timed out${r.reason ? `: ${r.reason}` : ""}`, { evidence: r.result?.evidence ?? null, ...(grantRequests.length ? { grantRequests, options: [...grantRequests.map(grantOption), "stop"] } : {}) }) };
+  }
   await routeRequests({ plan: "fixer" }, r.result);
   return { ok: true };
 }
