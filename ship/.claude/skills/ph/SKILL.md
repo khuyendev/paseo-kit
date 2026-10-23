@@ -126,7 +126,8 @@ until dry, budget-aware loop, custom type + schema + effort, tier choice).
   resume a run with `ph workflow --script F --args-file A --resume <runId>` or `ph workflow --resume <runId>`. A resume
   first archives the agents the killed run left running (journaled, never finished), so each call starts again with
   one live agent.
-  `--detach` returns at once; follow it with `ph watch-run <runId>` under Monitor.
+  `--detach` returns at once; follow it with `ph watch-run <runId> --quiet` under Monitor (one line when the run ends;
+  without `--quiet` the watch also prints the log, phase and `agent done ... null` lines; `--all` prints every line).
 - Run directory `_workspace/_runs/<runId>/`: `script.js`, `args.json` (only when the run got args), `run.json`, `journal.jsonl`, `log.txt`,
   `result.json`. `ph run-stats <runId>` sums time, tokens and cost; `ph runs [--prune]` lists and prunes runs;
   `ph archive --run <runId> [--reason "<why>"]` stops a run for good; the reason goes into `run.json` and the metrics
@@ -165,7 +166,8 @@ Trusted code, no sandbox:
 - Budget is checked before each new call, so agents already running can overshoot it.
 
 Log lines (`log.txt`, the lines `ph watch-run` follows). `ph watch-run RUNID` prints only the `log`, `phase` and
-`workflow` lines and the `agent done ... null` lines; `ph watch-run RUNID --all` prints every line below. With several
+`workflow` lines and the `agent done ... null` lines; `ph watch-run RUNID --all` prints every line below. `--quiet` prints
+only the line that ends the watch. With several
 run ids each line starts with `[<last 4 characters of the run id>] `. Filter with `--line-buffered` so the pipe does
 not hold lines back, and match both forms: `ph watch-run RUNID --all | grep --line-buffered -E '(^|\] )(phase |agent (start|done) )'`.
 

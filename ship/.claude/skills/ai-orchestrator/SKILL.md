@@ -25,4 +25,4 @@ An agent's "done" is a claim, not a result. Ask each agent for evidence you can 
 
 ## Waiting for agents
 
-Never wait with your own sleep/grep polling loop. Run `ph fanout --file F --collect DIR` in the foreground: it returns once every reply is collected. For agents started without `--collect` (`ph spawn`, `ph send`, `ph fanout`) and for `ph workflow --detach`, follow the `next:` line those commands print: run `ph watch <names>` or `ph watch-run <runId>` under Monitor. When you stop a run before it ends, say why: `ph archive --run <runId> --reason "<why>"`.
+Never wait with your own sleep/grep polling loop. Run `ph fanout --file F --collect DIR` in the foreground: it returns once every reply is collected. For agents started without `--collect` (`ph spawn`, `ph send`, `ph fanout`) and for `ph workflow --detach`, follow the `next:` line those commands print: run `ph watch <names>` or `ph watch-run <runId> --quiet` under Monitor. When you stop a run before it ends, say why: `ph archive --run <runId> --reason "<why>"`.

@@ -7,7 +7,8 @@ import { resolveInside } from "../lib/paths.mjs";
 import { pidAlive } from "../lib/proc.mjs";
 import { RUN_FILES, checkRunId, runsDirOf, runsDirSuffix } from "./journal.mjs";
 
-export const WATCH_OPTIONS = Object.freeze({ all: "bool", "from-start": "bool", "runs-dir": "string" });
+export const WATCH_USAGE = "ph watch-run RUNID... [--all | --quiet] [--from-start] [--runs-dir D]";
+export const WATCH_OPTIONS = Object.freeze({ all: "bool", quiet: "bool", "from-start": "bool", "runs-dir": "string" });
 const POLL_MS = 1000;
 const ABSENT_MS = 60_000;
 const DEAD_CHECKS = 3;
@@ -43,7 +44,8 @@ function readAppended(st) {
 
 export async function watchRunCommand(ctx) {
   const ids = ctx.args;
-  if (!ids.length) throw new UsageError("name at least one run id: ph watch-run RUNID... [--all] [--from-start] [--runs-dir D]");
+  if (!ids.length) throw new UsageError(`name at least one run id: ${WATCH_USAGE}`);
+  if (ctx.opts.all && ctx.opts.quiet) throw new UsageError("give --all or --quiet, not both");
   // Every id is checked before any run starts streaming, so one bad id stops the whole command.
   for (const id of ids) checkRunId(id, "run id");
   const runsDir = runsDirOf(ctx.root, ctx.opts["runs-dir"]);
@@ -61,18 +63,20 @@ export async function watchRunCommand(ctx) {
     if (line) say(st, line);
     st.ended = true;
   };
+  // --quiet: the wait is woken once, by the line that ends the watch (the end lines below are always printed).
+  const shown = (line) => (ctx.opts.quiet ? TERMINAL.test(line) : ctx.opts.all || SHOWN.test(line));
 
   function poll(st) {
     const lines = readAppended(st);
     if (st.first && lines.length && !ctx.opts["from-start"]) {
       // A re-armed watcher summarises instead of replaying the whole log (owner 2026-10-14).
       const phase = lines.filter((l) => l.startsWith("phase ")).pop()?.slice(6) ?? "none";
-      say(st, `resuming ${st.id}: skipped ${lines.length} earlier lines; current phase ${phase} (--from-start replays them)`);
+      if (!ctx.opts.quiet) say(st, `resuming ${st.id}: skipped ${lines.length} earlier lines; current phase ${phase} (--from-start replays them)`);
       const terminal = lines.find((l) => TERMINAL.test(l));
       if (terminal) return end(st, terminal);
     } else {
       for (const line of lines) {
-        if (ctx.opts.all || SHOWN.test(line)) say(st, line);
+        if (shown(line)) say(st, line);
         if (TERMINAL.test(line)) return end(st);
       }
     }

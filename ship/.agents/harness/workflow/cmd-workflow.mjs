@@ -175,7 +175,7 @@ async function detach(ctx, p, deps) {
   const info = readJsonIf(runFile);
   if (info?.status === "running" && child.pid) writeJsonAtomic(runFile, { ...info, pid: child.pid });
   ctx.out(`workflow started ${p.runId}: ${logFile}`);
-  ctx.out(`next: wait with Monitor running \`${ctx.ph} watch-run ${p.runId}${runsDirSuffix(ctx.root, p.runsDir)}\`; do not poll with sleep/grep loops`);
+  ctx.out(`next: wait with Monitor running \`${ctx.ph} watch-run ${p.runId} --quiet${runsDirSuffix(ctx.root, p.runsDir)}\`; do not poll with sleep/grep loops`);
   return 0;
 }
 

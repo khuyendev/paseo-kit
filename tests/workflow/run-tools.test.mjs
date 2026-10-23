@@ -165,7 +165,7 @@ test("FLOW-21 detached start: returns at once, run.json with the child pid, log.
   assert.ok(!childArgs.includes("--detach") && childArgs.includes("wf_det"));
   assert.equal(childEnv.PASEO_HARNESS_LOG_IS_STDOUT, "1");
   assert.equal(r.out[0], `workflow started wf_det: ${path.join(runsDir, "wf_det", "log.txt")}`);
-  assert.match(r.out[1], new RegExp(`^next: wait with Monitor running \`node ".+ph\\.mjs" watch-run wf_det --runs-dir ".+/runs"\`; do not poll with sleep/grep loops$`));
+  assert.match(r.out[1], new RegExp(`^next: wait with Monitor running \`node ".+ph\\.mjs" watch-run wf_det --quiet --runs-dir ".+/runs"\`; do not poll with sleep/grep loops$`));
   await new Promise((res) => child.on("close", res));
   assert.equal(fs.readFileSync(path.join(runsDir, "wf_det", "log.txt"), "utf8").trim(), "workflow start x");
   // The hint's --runs-dir is honoured by watch-run and run-stats.
