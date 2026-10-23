@@ -7,23 +7,23 @@ import { makeWorld, PHASE_DIR, plannerResponder } from "../gsd-flows/world.mjs";
 
 const plan = (w, args = {}) => runScript("gsd-plan", { root: w.root, args: { phaseDir: PHASE_DIR, ...args }, gsd: w.gsd, agent: plannerResponder(w, { overrides: {} }) });
 const skeletonLabels = (r) => r.calls.map((c) => c.opts.label).filter((l) => l.startsWith("skeleton-")).sort();
-const FOUR = [{ lens: "fidelity" }, { lens: "integration" }, { lens: "correctness" }, { lens: "source-grounding" }];
+const THREE = [{ lens: "fidelity" }, { lens: "integration" }, { lens: "perf" }];
 
 test("G009 a lane added after a passed skeleton is reviewed; an unchanged rerun still spawns no reviewer", async () => {
-  const w = makeWorld();
+  const w = makeWorld({ overlay: { adapter: { review_lenses: [{ name: "perf", stage: "skeleton", text: "Check the outline for latency budgets." }] } } });
   assert.equal((await plan(w)).result.status, "planned");
   assert.deepEqual(skeletonLabels(await plan(w)), []);
-  const grown = await plan(w, { skeletonLanes: FOUR });
+  const grown = await plan(w, { skeletonLanes: THREE });
   assert.equal(grown.result.status, "planned");
-  assert.deepEqual(skeletonLabels(grown), ["skeleton-L1", "skeleton-L2", "skeleton-L3", "skeleton-L4"]);
-  assert.match(w.read(`${PHASE_DIR}/01-OUTLINE-REVIEW.md`), /\| L3 \| correctness \|/);
+  assert.deepEqual(skeletonLabels(grown), ["skeleton-L1", "skeleton-L2", "skeleton-L3"]);
+  assert.match(w.read(`${PHASE_DIR}/01-OUTLINE-REVIEW.md`), /\| L3 \| perf \|/);
 });
 
 test("G009 a changed custom lens text reruns the skeleton review", async () => {
-  const w = makeWorld({ overlay: { adapter: { review_lenses: [{ name: "perf", text: "Check the outline for latency budgets." }] } } });
+  const w = makeWorld({ overlay: { adapter: { review_lenses: [{ name: "perf", stage: "skeleton", text: "Check the outline for latency budgets." }] } } });
   const lanes = [{ lens: "fidelity" }, { lens: "perf" }];
   assert.equal((await plan(w, { skeletonLanes: lanes })).result.status, "planned");
-  w.project.writeJson(".agents/harness.config.json", { adapter: { review_lenses: [{ name: "perf", text: "Check the outline for memory budgets." }] } });
+  w.project.writeJson(".agents/harness.config.json", { adapter: { review_lenses: [{ name: "perf", stage: "skeleton", text: "Check the outline for memory budgets." }] } });
   assert.deepEqual(skeletonLabels(await plan(w, { skeletonLanes: lanes })), ["skeleton-L1", "skeleton-L2"]);
 });
 

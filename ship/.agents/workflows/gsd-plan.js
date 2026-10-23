@@ -63,7 +63,8 @@ call = async (prompt, { judges = {}, ...opts } = {}) => {
 
 const OWNER_MARKERS = ["REVISION_CONFLICT", "PHASE SPLIT RECOMMENDED", "SOURCE AUDIT", "CHECKPOINT REACHED", "PLANNING INCONCLUSIVE"];
 const KNOWN_MARKERS = [...OWNER_MARKERS, "OUTLINE COMPLETE", "PLANNING COMPLETE", "REVISION COMPLETE", "WIRING COMPLETE"];
-const KIT_LENSES = ["fidelity", "integration", "correctness", "source-grounding"];
+// Skeleton kit lenses; correctness (code) and source-grounding (plan_review) are other stages' lenses (G029).
+const KIT_LENSES = ["fidelity", "integration"];
 const markerOf = (r) => String(typeof r === "string" ? r : r?.marker ?? "");
 const ownerMarker = (r) => OWNER_MARKERS.find((m) => markerOf(r).includes(m)) ?? null;
 const knownMarker = (r) => KNOWN_MARKERS.some((m) => markerOf(r).includes(m));
@@ -110,16 +111,19 @@ const MANIFEST = P("PLAN-OUTLINE.manifest.json");
 const WIRING = P("WIRING.md");
 const lensText = (lens) => {
   if (KIT_LENSES.includes(lens)) return `Lens: ${lens}. Follow the lens text in .agents/workflows/lenses/${lens}.md.`;
-  const custom = (cfg.adapter.review_lenses ?? []).find((l) => l.name === lens);
+  // G029: a skeleton lane takes only skeleton-stage lenses; an adapter lens without a stage is a code lens.
+  const custom = (cfg.adapter.review_lenses ?? []).find((l) => l.name === lens && (l.stage ?? "code") === "skeleton");
   return custom ? `Lens: ${lens}.\n${custom.text}` : null;
 };
 const lanes = lanesArg.map((l, i) => ({ id: `L${i + 1}`, lens: l.lens, model: l.model, effort: l.effort }));
 const unknownLens = lanes.find((l) => !lensText(l.lens));
-if (unknownLens) return { status: "failed", reason: `skeleton lane lens '${unknownLens.lens}' is neither a kit lens (${KIT_LENSES.join(", ")}) nor in adapter.review_lenses` };
+if (unknownLens) return { status: "failed", reason: `skeleton lane lens '${unknownLens.lens}' is neither a skeleton kit lens (${KIT_LENSES.join(", ")}) nor an adapter.review_lenses entry of stage skeleton` };
 
 // GSDF-18: per-run overrides pass as model/effort; the engine records the roles the calls resolved to (result.json roles).
 const roleOpts = (role, extra = {}) => {
-  const o = { ...(roleOverrides[role] ?? {}), ...extra };
+  // G029: an unset lane field (undefined) leaves the per-run override in place instead of erasing it.
+  const set = Object.fromEntries(Object.entries(extra).filter(([, v]) => v !== undefined));
+  const o = { ...(roleOverrides[role] ?? {}), ...set };
   const out = { role };
   if (o.model) out.model = o.model;
   if (o.effort) out.effort = o.effort;

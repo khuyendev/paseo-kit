@@ -194,7 +194,7 @@ Paths in the adapter are repo-relative script paths (validated at load: no drive
 | `requirement_id_regex` | string, valid RegExp source | `^[A-Z][A-Z0-9]*-\d+$` |
 | `research` | bool | true |
 | `plan_review` | bool (true: gsd-plan runs the plan-review stage; the built-in `source-grounding` lens always runs in plan review, see `review_lenses`) | false |
-| `skeleton_lanes` | non-empty `[{lens, model?, effort?}]` | `[{lens: "fidelity"}, {lens: "integration"}]` |
+| `skeleton_lanes` | non-empty `[{lens, model?, effort?}]`; lens is `fidelity`, `integration` or an `adapter.review_lenses` entry of stage `skeleton` | `[{lens: "fidelity"}, {lens: "integration"}]` |
 | `max_skeleton_passes` | int 1..3 | 3 |
 | `max_check_iterations` | int 1..3 | 3 |
 | `drift_threshold` | int >= 0 | 3 |
