@@ -232,7 +232,9 @@ export async function handoff(g, phase, { subset, prefix, noTracerSplit = false 
     if (p.dependsOn.length) tracerErrors.push(`${p.id}: tracer plan depends on ${p.dependsOn.join(", ")}`);
     if ((mOf(p.id)?.consumes ?? []).length) tracerErrors.push(`${p.id}: tracer plan consumes another plan`);
   }
-  const refused = [...w.errors, ...problems.map((x) => x.message), ...tracerErrors, ...(outline.manifestError ? [outline.manifestError] : [])];
+  const limit = g.cfg.gsd.plan_limits.tasks_per_plan;
+  const overLimit = w.plans.filter((p) => p.tasks.length > limit).map((p) => `${p.id}: ${p.tasks.length} tasks > gsd.plan_limits.tasks_per_plan ${limit} (split the plan)`);
+  const refused = [...w.errors, ...problems.map((x) => x.message), ...tracerErrors, ...overLimit, ...(outline.manifestError ? [outline.manifestError] : [])];
   if (refused.length) return done({ status: "refused", errors: refused, waves: [] }, 1);
   const mode = g.cfg.gsd.execution_mode;
   const segments = [];

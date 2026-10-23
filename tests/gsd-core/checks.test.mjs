@@ -52,7 +52,7 @@ test("GSDC-18 plan-structure: one fixture per error and warning class", async ()
   assert.ok((await warns(plan({ tasks: okTask.replace('type="auto"', 'type="tdd"') }))).some((w) => w.includes("unknown task type tdd")));
   assert.ok((await warns(plan({ wave: 2, tasks: okTask }))).includes("wave 2 with empty depends_on"));
   assert.ok((await warns(plan({ tasks: okTask.replace("<files>", '<reversibility rating="one-way">x</reversibility><files>') }))).some((w) => w.includes("one-way reversibility")));
-  assert.ok((await warns(plan({ tasks: [okTask, okTask, okTask, okTask].join("\n") }))).some((w) => w.includes("4 tasks > gsd.plan_limits.tasks_per_plan 3")));
+  assert.ok((await errs(plan({ tasks: [okTask, okTask, okTask, okTask].join("\n") }))).some((e) => e.includes("4 tasks > gsd.plan_limits.tasks_per_plan 3")));
   assert.ok((await warns(plan({ tasks: okTask.replace("cmd: node src/a.js", "test: x") }))).some((w) => w.includes("outside the verify vocabulary")));
   assert.ok((await errs(plan({ tasks: okTask, files: "[src/z.js]" }))).some((e) => e.includes("files_modified outside owns: src/z.js")));
 });

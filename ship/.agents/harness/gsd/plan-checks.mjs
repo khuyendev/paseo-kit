@@ -71,7 +71,7 @@ export async function planStructure(g, phase, plan) {
   }
   if (Number(plan.wave) > 1 && !plan.dependsOn.length) warnings.push(`wave ${plan.wave} with empty depends_on`);
   const limit = g.cfg.gsd.plan_limits.tasks_per_plan;
-  if (tasks.length > limit) warnings.push(`${tasks.length} tasks > gsd.plan_limits.tasks_per_plan ${limit} (split the plan)`);
+  if (tasks.length > limit) errors.push(`${tasks.length} tasks > gsd.plan_limits.tasks_per_plan ${limit} (split the plan)`);
   let unresolvable = null;
   try {
     const own = await ownershipProblems(g, [plan]);

@@ -930,8 +930,8 @@ The adapter is project data: written by the harness (HARN-03), evolved by `harne
 - Scope: v1
 
 ### ADPT-12 `gsd.granularity` and `gsd.plan_limits`
-- Requirement: `gsd.granularity` `coarse|standard|fine` (default `standard`) is passed to planners; `gsd.plan_limits` = `{tasks_per_plan: 3, plans_per_phase: 12, waves_per_phase: 4}` (conservative defaults) is enforced by `outline check` (plan and wave ceilings) and `plan-structure` (task count, warning); a phase may override limits through the plan args recorded from its CONTEXT; the kit text gives split reasons (overlapping owns in one wave, an ordering coupling, a gating spike, a plan too big for one coder context), not "prefer more, smaller plans".
-- Acceptance: fixture plan with 4 tasks warns; an outline of 13 plans fails under defaults and passes with a per-phase override of 15.
+- Requirement: `gsd.granularity` `coarse|standard|fine` (default `standard`) is passed to planners; `gsd.plan_limits` = `{tasks_per_plan: 3, plans_per_phase: 12, waves_per_phase: 4}` (conservative defaults) is enforced by `outline check` (plan and wave ceilings) and `plan-structure` (task count, error; `handoff` refuses a plan over it); a phase may override limits through the plan args recorded from its CONTEXT; the kit text gives split reasons (overlapping owns in one wave, an ordering coupling, a gating spike, a plan too big for one coder context), not "prefer more, smaller plans".
+- Acceptance: fixture plan with 4 tasks fails `plan-structure` and `handoff` refuses it; an outline of 13 plans fails under defaults and passes with a per-phase override of 15.
 - Source: GSP-60, GSP-84, D-70, INGEST-CONFLICTS I-02.
 - Scope: v1
 
