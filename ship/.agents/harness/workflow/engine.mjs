@@ -47,6 +47,7 @@ function checkAgentOptions(opts) {
   }
   if (opts.worktreeSeed !== undefined && (opts.isolation !== "worktree" || !opts.worktreeSeed || !Array.isArray(opts.worktreeSeed.files) || typeof opts.worktreeSeed.head !== "string")) throw new Error("agent(): worktreeSeed needs worktree isolation and {head, files}");
   if (opts.detail !== undefined && typeof opts.detail !== "boolean") throw new Error("agent(): detail must be a boolean");
+  if (opts.readOnly !== undefined && typeof opts.readOnly !== "boolean") throw new Error("agent(): readOnly must be a boolean");
   if (opts.timeoutS !== undefined && !(Number.isFinite(opts.timeoutS) && opts.timeoutS > 0)) throw new Error("agent(): timeoutS must be a number > 0");
 }
 

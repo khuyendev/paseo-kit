@@ -248,7 +248,7 @@ prompts by index instead). Host commands run only through `shell()`.
 | `model` | tier name or `provider/model`; default: the role entry, then the agent type's `model:`, else config `default_tier` |
 | `effort` | thinking option: `off`, `low`, `medium`, `high`, `xhigh`, `max` |
 | `isolation` | `'worktree'`: a fresh git worktree per agent, kept after the run for the orchestrator to merge (expensive; only for parallel file edits that would conflict); after merging, `ph worktrees --prune` removes the merged, clean ones |
-| `readOnly` | `true` adds the read-only note |
+| `readOnly` | `true` adds the read-only note; any other non-boolean value throws |
 | `cwd` | working directory for the task, given to the agent as an instruction (section 10); default: the project root |
 | `keep` | `true` leaves the agent unarchived (for a follow-up with `ph send`) |
 | `session` | a key: the first call creates the agent, later calls with the key send their prompt to the same agent; its type, role, read-only flag, cwd and isolation cannot change; run end archives it unless `keep` |
