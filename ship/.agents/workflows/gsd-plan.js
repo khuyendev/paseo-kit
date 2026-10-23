@@ -217,7 +217,9 @@ if (mode === "gaps") return await gapMode();
 
 // ---- outline (GSDF-19) ----
 phase("Outline");
-const outlineCheck = async () => gsd(["outline", "check", N, ...(tracer ? [] : ["--tracer", "false"])]);
+// The writer runs the same check the gate runs (G027), so a deterministic outline failure is repaired in its own turn.
+const outlineCheckArgs = ["outline", "check", N, ...(tracer ? [] : ["--tracer", "false"])];
+const outlineCheck = async () => gsd(outlineCheckArgs);
 async function fixOutline(turns, stage) {
   let check = await outlineCheck();
   for (let t = 0; check.code !== 0 && t < turns; t++) {
@@ -243,6 +245,7 @@ if (parsed.json?.complete && inputsSame && !a.replan) {
     planningContext("outline"),
     SPECLESS,
     `Write the phase outline ${OUTLINE} (table: Plan ID, Objective, Wave, Depends, Requirements; last line exactly \`## OUTLINE COMPLETE\`) and its manifest ${MANIFEST} ({phase, plans:[{id, owns, requirements, produces, consumes, tracer, verify}]}). Do not write PLAN files yet.`,
+    `Before you return, run \`node ${PH} gsd ${outlineCheckArgs.join(" ")}\`, repair every error it reports in ${OUTLINE} and ${MANIFEST}, and run it again until it exits 0.`,
   ].join("\n\n");
   const { result: r, reason } = await plannerCall("planner:outline", "outline", body, "inputs", await inputsDigest());
   if (fatal(reason)) return failedCall("outline planner", reason);
