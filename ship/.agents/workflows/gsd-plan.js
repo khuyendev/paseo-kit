@@ -297,6 +297,7 @@ const passCounts = [];
 const integrationLane = (lanes.find((l) => l.lens === "integration") ?? lanes[0]).id;
 const hasEdges = (o) => Boolean(o?.needsWiring || (o?.crossPlan ?? []).length);
 const openIssues = () => [...issues.values()].filter((i) => i.state === "open");
+const openBlockers = () => openIssues().filter((i) => i.severity === "blocker");
 let laneSeq = 0;
 function addIssue(laneId, raw) {
   const sev = sevClass(String(raw.severity ?? "").toLowerCase());
@@ -345,8 +346,9 @@ async function skeletonGate() {
   }
   for (const c of outlineChangeIssues) addIssue(integrationLane, c);
   passCounts.push(openIssues().length);
-  for (let pass = 2; openIssues().length && pass <= maxSkeletonPasses; pass++) {
-    const startOpen = openIssues().length;
+  // Revisions and the stall rule follow open blockers only; warnings are carried after the loop.
+  for (let pass = 2; openBlockers().length && pass <= maxSkeletonPasses; pass++) {
+    const startBlockers = openBlockers().length;
     const open = openIssues();
     const toOutline = open.filter((i) => i.target === "outline" || i.target === "both" || (i.target === "wiring" && !wiringInUse));
     const toWiring = wiringInUse ? open.filter((i) => i.target === "wiring" || i.target === "both") : [];
@@ -385,9 +387,9 @@ async function skeletonGate() {
       if (i && i.lane === c.lane.id && i.state === "open") { i.state = "resolved"; i.resolution = res.evidence ?? ""; }
     }
     passCounts.push(openIssues().length);
-    if (openIssues().length >= startOpen) return { status: "needs-owner", stop: owner("Skeleton review", `stalled: ${openIssues().length} open issues at pass ${pass} (was ${startOpen})`, { issues: openIssues(), options: ["give guidance and rerun", "adjust CONTEXT", "abandon"] }) };
+    if (openBlockers().length >= startBlockers) return { status: "needs-owner", stop: owner("Skeleton review", `stalled: ${openBlockers().length} open blockers at pass ${pass} (was ${startBlockers})`, { issues: openBlockers(), options: ["give guidance and rerun", "adjust CONTEXT", "abandon"] }) };
   }
-  const blockers = openIssues().filter((i) => i.severity === "blocker");
+  const blockers = openBlockers();
   if (blockers.length) return { status: "needs-owner", stop: owner("Skeleton review", `${blockers.length} open blockers after ${passCounts.length} passes`, { issues: blockers, options: ["give guidance and rerun", "adjust CONTEXT", "abandon"] }) };
   for (const w of openIssues()) warnings.push(`skeleton ${w.id}${w.plan ? ` (${w.plan})` : ""}: ${w.description}`);
   return { status: "passed" };

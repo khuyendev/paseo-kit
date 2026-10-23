@@ -153,7 +153,7 @@ test("GSDF-22 skeleton passes: a remaining blocker ends needs-owner, a remaining
   assert.ok(warn.result.warnings.some((x) => x.includes("issue 3")));
   assert.match(warn.calls.find((c) => c.opts.label === "plan-01-01").prompt, /Open skeleton warnings for this plan:\n- skeleton L1-3 \(01-01\): issue 3/);
   const stall = await plan(makeWorld(), {}, scripted([["L1-1"], []]));
-  assert.match(stall.result.reason, /stalled: 2 open issues at pass 3/);
+  assert.match(stall.result.reason, /stalled: 2 open blockers at pass 3 \(was 2\)/);
 });
 
 test("GSDF-22 a revision adding the first consumes edge without an architect becomes an integration-lane blocker", async () => {
