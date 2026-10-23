@@ -38,7 +38,8 @@ Never add `--force` and never run `pull` without the owner's decision.
   `node <kit>/kit.mjs install <project> --enable-plugin` (or `update <project> --enable-plugin`).
 - Run it under the intended Claude config folder (`CLAUDE_CONFIG_DIR`, the one the Paseo provider uses, for example
   `~/.claude-circle`): the mod's marketplace is registered in that user configuration.
-- Exit code 2 means conflicts (kit files changed in the project): report each `conflict` line and stop for the owner.
+- Exit code 2 means kit parts were kept, not applied (kit files changed in the project): report each `conflict` line
+  (install) and each `kept` line (update), with the summary count, and stop for the owner.
   Never add `--force` and never run `node <kit>/kit.mjs pull` without the owner's decision.
 - `failed: mod activation: marketplace paseo-harness-kit is already registered from <path>`: one Claude config folder
   holds one `paseo-harness-kit` marketplace, and another project (often one on the old kit) owns it. The files are
@@ -65,4 +66,4 @@ Never add `--force` and never run `pull` without the owner's decision.
 
 One line per step (git, requirements, install/update, status and doctor, next steps): done, skipped (why) or
 needs-owner (what), then the kit version from `<kit>/kit.json` and anything waiting for the owner (new session,
-conflicts, missing tools, machine apply).
+the conflict or kept paths with the `N kept` count, missing tools, machine apply).
