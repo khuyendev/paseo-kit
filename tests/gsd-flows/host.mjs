@@ -63,9 +63,10 @@ export function loadScript(name) {
   return text.replace(/^(\s*)export const meta/, "$1const meta");
 }
 
-// opts: {root, args, runId, agent(prompt, opts, n) -> value | NULL(reason), gsd: FakeGsd, env}
+// opts: {root, args, runId, agent(prompt, opts, n) -> value | NULL(reason), gsd: FakeGsd, env, absoluteWorktrees}
+// absoluteWorktrees (kit feedback 91): worktrees are named by their absolute path, as the engine names them.
 export async function runScript(name, opts) {
-  const { root, runId = "wf_20261020-120000_ab12", gsd = new FakeGsd(), env = {} } = opts;
+  const { root, runId = "wf_20261020-120000_ab12", gsd = new FakeGsd(), env = {}, absoluteWorktrees = false } = opts;
   const calls = [];
   const logs = [];
   const shells = [];
@@ -88,7 +89,7 @@ export async function runScript(name, opts) {
     }
     // FLOW-27 stand-in: a real git worktree per agent that asks for isolation.
     if (o.isolation === "worktree" && !call.worktree) {
-      call.worktree = `.claude/worktrees/${runId}-${call.n}`;
+      call.worktree = absoluteWorktrees ? path.join(root, ".claude", "worktrees", `${runId}-${call.n}`) : `.claude/worktrees/${runId}-${call.n}`;
       await createWorktree(root, configMod.loadConfig(root), `${runId}-${call.n}`, { seed: o.worktreeSeed });
       if (o.session !== undefined) sessions.get(o.session).worktree = call.worktree;
     }

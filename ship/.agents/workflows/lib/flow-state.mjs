@@ -13,7 +13,7 @@ import { textDigest } from "../../harness/lib/hash.mjs";
 import { PLAN_STAGES, STATE_FILE, readStateFile } from "../../harness/lib/execute-state.mjs";
 import { readText, writeJsonAtomic } from "../../harness/lib/io.mjs";
 import { OWNER_ANSWERS_FILE, readAnswers, waveMatches } from "../../harness/lib/owner-answers.mjs";
-import { resolveInside } from "../../harness/lib/paths.mjs";
+import { isInside, resolveInside, toSlash } from "../../harness/lib/paths.mjs";
 import { git } from "./flow-git.mjs";
 
 // How a cross-plan request closes: tree (its path changed since the request), shared change (an applied or cleared shared
@@ -72,6 +72,12 @@ const relPath = (p, what) => {
   if (!s || path.isAbsolute(s) || /^[a-z]:/i.test(s) || s.split("/").includes("..")) refuse(`${what} ${JSON.stringify(p)} is not a path inside the project`);
   return s;
 };
+// Kit feedback 91: the runtime names an executor worktree by its absolute path; one inside the project is stored root-relative.
+const inProject = (root, p, what) => {
+  const s = slash(p);
+  const abs = path.isAbsolute(s) || /^[a-z]:/i.test(s);
+  return abs && isInside(s, root) && !isInside(root, s) ? toSlash(path.relative(root, path.resolve(s))) : relPath(p, what);
+};
 // via and outputs of a change: a generated target needs both, and outputs holds the target (item 86).
 function generator(root, target, { via, outputs }) {
   const v = typeof via === "string" && via.trim() ? via.trim() : null;
@@ -128,8 +134,8 @@ export function statePlan(root, phaseDir, input) {
     if (!PLAN_STAGES.includes(stage)) refuse(`stage ${JSON.stringify(stage)} is not one of ${PLAN_STAGES.join("|")}`);
     const rec = { stage };
     if (stage === "executed") {
-      const summary = relPath(input.summary, "summary");
-      const wt = input.worktree ? relPath(input.worktree, "worktree") : null;
+      const summary = inProject(root, input.summary, "summary");
+      const wt = input.worktree ? inProject(root, input.worktree, "worktree") : null;
       const at = wt ? `${wt}/${summary}` : summary;
       if (!fs.existsSync(resolveInside(root, at))) refuse(`plan ${plan} is not executed: no SUMMARY at ${at}`);
       Object.assign(rec, { summary, ...(wt ? { worktree: wt } : {}) });

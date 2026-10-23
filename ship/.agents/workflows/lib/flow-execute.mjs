@@ -189,7 +189,9 @@ export function scheduleGraph(root, { plans = [] }) {
 // A moved HEAD is checked commit by commit: a commit the orchestrator made but could not record (its `Plans:` trailer
 // names plans of this phase and every file it touches is theirs) is written into commits.json (`reconciled`); a
 // commit touching no file any plan of the phase owns (a docs commit between runs, kit-feedback 24) is `accepted`;
-// any other commit is foreign.
+// any other commit is foreign. Kit feedback 94: a foreign commit lists the files no trailer plan owns with the plans of the phase
+// owning each (F1), and is adoptable when every file it changes belongs to committed plans or to no plan of the phase; the
+// stop's reason, answer and options name the verbs (F3): `ph gsd commit adopt` records such a commit as the owner's (F2).
 export function resumeGate(root, phaseDir, { plans, integration = readState(root, phaseDir).integration }) {
   const base = readJsonIf(baselineFile(root, phaseDir), null);
   if (!base) throw new Error(`no execute baseline in ${phaseDir}`);
@@ -204,9 +206,11 @@ export function resumeGate(root, phaseDir, { plans, integration = readState(root
   const { commits, transfers, holders } = accounted(root, phaseDir);
   const now = snapshot(root);
   const own = new Set(commits.map((c) => c.sha));
+  const committed = committedPlans(root, phaseDir, commits);
   if (now.head !== base.head) {
     const moved = base.head ? gitLines(root, ["rev-list", "--reverse", `${base.head}..HEAD`], { allowFail: true }) : [];
     const foreign = [];
+    const detail = [];
     for (const sha of moved.filter((s) => !own.has(s))) {
       const files = commitFiles(root, sha);
       const ids = trailerPlans(root, sha);
@@ -220,9 +224,16 @@ export function resumeGate(root, phaseDir, { plans, integration = readState(root
         writeJsonAtomic(path.join(resolveInside(root, phaseDir), "commits.json"), [...list, entry]);
         reconciled.push({ sha, plans: mine.map((pl) => pl.id) });
       } else if (files.length && files.every((f) => !plans.some((pl) => owned(f, ownsOf(pl), prefixes)))) accepted.push({ sha, files });
-      else foreign.push(sha);
+      else {
+        foreign.push(sha);
+        const owners = (f) => specificOwners(f, plans, prefixes, ownsOf).map((pl) => pl.id);
+        const loose = files.filter((f) => !bookkeeping(f) && !integration.includes(f) && !specificOwners(f, mine, prefixes, ownsOf).length);
+        detail.push({ sha, files: loose.map((f) => ({ path: f, plans: owners(f) })), adoptable: files.every((f) => owners(f).every((id) => committed.has(id))) });
+      }
     }
-    if (!moved.length || foreign.length) problems.push({ kind: "head-moved", detail: `HEAD ${now.head} moved outside the orchestrator's commits (${foreign.length || "unrelated"} foreign${foreign.length ? `: ${foreign.slice(0, 3).map((s) => s.slice(0, 7)).join(", ")}` : ""})`, head: now.head });
+    const fileText = (c) => c.files.map((f) => `${f.path} (${f.plans.length ? f.plans.join(", ") : "no plan of the phase"})`).join(", ");
+    const named = detail.slice(0, 3).map((c) => `; ${c.sha.slice(0, 7)}: ${fileText(c) || "only files of its trailer plans"}${c.adoptable ? "" : " (changes files of plans not committed yet)"}`).join("");
+    if (!moved.length || foreign.length) problems.push({ kind: "head-moved", detail: `HEAD ${now.head} moved outside the orchestrator's commits (${foreign.length || "unrelated"} foreign${foreign.length ? `: ${foreign.slice(0, 3).map((s) => s.slice(0, 7)).join(", ")}` : ""})${named}`, head: now.head, ...(detail.length ? { commits: detail } : {}), ...(!moved.length ? { base: base.head } : {}) });
   }
   const baseDirty = new Map(base.dirty.map((d) => [d.path, d.sha256]));
   const baseUntracked = new Set(base.untracked);
@@ -242,7 +253,33 @@ export function resumeGate(root, phaseDir, { plans, integration = readState(root
     else if (owners.length > 1) problems.push({ kind: "ambiguous owner", path: p, plans: owners.map((o) => o.id) });
     else if (!owners[0].complete && !integration.includes(p)) problems.push({ kind: "incomplete plan changed", path: p, plan: owners[0].id });
   }
-  return { ok: problems.length === 0, problems, head: now.head, reconciled, accepted, code: problems.length ? 1 : 0 };
+  return { ok: problems.length === 0, problems, head: now.head, reconciled, accepted, ...(problems.length ? gateStop(phaseDir, problems) : {}), code: problems.length ? 1 : 0 };
+}
+
+// The plans of the phase with a recorded commit (execute-progress.json or a plan entry of commits.json).
+export function committedPlans(root, phaseDir, commits) {
+  const st = readState(root, phaseDir);
+  return new Set([...Object.keys(st.plans ?? {}).filter((id) => st.plans[id]?.commit !== undefined), ...commits.flatMap((c) => Object.keys(c.plans ?? {}))]);
+}
+
+// Kit feedback 94 F3: the resume gate's stop, {reason, answer: {verb, command}, options}: commit.adopt when every problem is an
+// adoptable owner commit, else fix-and-rerun with the action of the first problem; one option per problem, each a command.
+function gateStop(phaseDir, problems) {
+  const N = /phases\/(\d+(?:\.\d+)?)-/.exec(toSlash(phaseDir))?.[1] ?? "<phase>";
+  const rerun = "then rerun with the same args";
+  const adopt = (sha) => `ph gsd commit adopt ${N} ${sha.slice(0, 12)} --reason <why the commit stands>`;
+  const actions = (p) => {
+    if (p.kind === "head-moved" && p.commits) return p.commits.map((c) => (c.adoptable ? adopt(c.sha) : `git revert ${c.sha.slice(0, 12)} (it changes files of plans not committed yet; commit those files apart from the rest), ${rerun}`));
+    if (p.kind === "head-moved") return [`HEAD ${p.head?.slice(0, 12)} does not descend from the execute baseline ${String(p.base ?? "").slice(0, 12)}: check out the branch that holds it, ${rerun}`];
+    if (p.kind === "unauthorized path") return [`ph gsd grant ${N} --path ${p.path} (the run takes it as its own output), or commit it alone (a commit of files no plan owns is accepted), ${rerun}`];
+    if (p.kind === "incomplete plan changed") return [`restore ${p.path} (git checkout -- ${p.path}, or delete it when new): plan ${p.plan} has no SUMMARY yet and its executor writes it, ${rerun}`];
+    if (p.kind === "ambiguous owner") return [`make one plan own ${p.path} (owns of ${p.plans.join(", ")}), ${rerun}`];
+    return [`run from the code root the execute baseline names (${p.detail}), ${rerun}`];
+  };
+  const options = [...new Set(problems.flatMap(actions))];
+  const owned = problems.every((p) => p.kind === "head-moved" && p.commits?.length && p.commits.every((c) => c.adoptable));
+  const reason = problems.map((p) => `${p.kind}${p.path ? ` ${p.path}` : ""}${p.plan ? ` (plan ${p.plan})` : ""}${p.detail ? ` ${p.detail}` : ""}`).join("; ");
+  return { reason, answer: owned ? { verb: "commit.adopt", command: options[0] } : { verb: "fix-and-rerun", command: options.find((o) => !o.startsWith("ph gsd commit adopt")) ?? options[0] }, options };
 }
 
 // Every change of the main tree since the baseline, assigned for the commit manifest (GSDF-53, CR-GSF-07):

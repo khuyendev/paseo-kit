@@ -327,6 +327,7 @@
     ".agents/harness/gsd/allow.mjs",
     ".agents/harness/gsd/artifacts.mjs",
     ".agents/harness/gsd/commands.mjs",
+    ".agents/harness/gsd/commit-adopt.mjs",
     ".agents/harness/gsd/common.mjs",
     ".agents/harness/gsd/contracts.mjs",
     ".agents/harness/gsd/debug.mjs",

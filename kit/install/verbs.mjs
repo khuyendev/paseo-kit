@@ -9,6 +9,7 @@ import { checkModGates } from "./mod.mjs";
 import { adapterBaseline, addedKeyLines, overlayLines } from "./overlay.mjs";
 import { compositionEntries, droppedLine, isComposition, isEdited, keptLine, statusLine, verbLines } from "./composition.mjs";
 import { seededPass } from "./seeded.mjs";
+import { haltLines } from "./halts.mjs";
 import { fail } from "./failure.mjs";
 
 const LINK_CONFLICT = (key, prefix) => `conflict ${key}: ${linkProblem(prefix)}`;
@@ -118,6 +119,7 @@ export function update(ctx) {
   kept += finishInstallOrUpdate({ ...ctx, retiredHooks }, { records, installedAt: manifest.installedAt, composition: manifest.composition, adapter: baseline });
   const refused = overlayLines(ctx, manifest.version) + verbLines(ctx);
   addedKeyLines(ctx, baseline);
+  haltLines(ctx);
   const asEdited = composed ? `, ${composed} composition part(s) kept as edited` : "";
   ctx.out(`update: ${changed} part(s) changed, ${kept} kept${asEdited}; kit ${ctx.kit.version}`);
   return kept || refused ? 2 : 0;
