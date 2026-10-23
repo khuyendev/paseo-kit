@@ -155,6 +155,7 @@
     "review_depth": "standard",
     "verify_mode": "phase",
     "review_metrics": true,
-    "validation_strategy": true
+    "validation_strategy": true,
+    "contract_check": true
   }
 }

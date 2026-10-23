@@ -319,6 +319,7 @@ const GOLDEN = {
     verify_mode: "phase",
     review_metrics: true,
     validation_strategy: true,
+    contract_check: true,
   },
 };
 

@@ -15,7 +15,7 @@ const configMod = await import(pathToFileURL(path.join(SHIP_DIR, ".agents", "har
 const AsyncFunction = (async () => {}).constructor;
 // FLOW-04 options plus `detail` and `timeoutS` (as the engine).
 const AGENT_OPTS = new Set(AGENT_OPTIONS);
-const GROUPS = new Set(["research", "revisions", "attempt", "outline", "check", "verify", "verification", "state", "roadmap", "phase", "debug", "requirements", "init"]);
+const GROUPS = new Set(["research", "revisions", "attempt", "outline", "check", "verify", "verification", "state", "roadmap", "phase", "debug", "requirements", "init", "contracts"]);
 
 export const NULL = (reason) => ({ __null: reason });
 

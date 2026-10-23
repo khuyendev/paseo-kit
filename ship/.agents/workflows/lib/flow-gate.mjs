@@ -11,6 +11,7 @@ import { withMutex } from "../../harness/adapter/mutex.mjs";
 import { evidenceVerdict, requiredSteps, executionProblem, gateStepName, obligationStepName } from "../../harness/adapter/evidence.mjs";
 import { gateObligation } from "../../harness/adapter/contract.mjs";
 import { sha256 } from "../../harness/lib/hash.mjs";
+import { producedCheck } from "../../harness/gsd/contracts.mjs";
 import { gitLines, head } from "./flow-git.mjs";
 import { contentHash, owned, ownsPrefixes, ownsScope, specificOwners } from "./flow-owns.mjs";
 
@@ -224,6 +225,14 @@ export async function gate(root, phaseDir, input) {
       else { notes.push("build not configured (adapter.commands.build)"); steps.push(noRun(root, logDir, "build", "not_configured", notes.at(-1))); }
       if (cmds.test) { steps.push(await run("test", input.testArgv ?? cmds.test, cmds.test_timeout_s)); checkpoint(); }
       else { notes.push("tests not configured (adapter.commands.test)"); steps.push(noRun(root, logDir, "test", "not_configured", notes.at(-1))); }
+    }
+    // Kit feedback 67 F5: a plan that produces structured symbols (outline manifest) must have them at the declared file.
+    if (cfg.gsd.contract_check) for (const c of producedCheck(root, phaseDir, (input.plans ?? []).map((p) => p.id))) {
+      const text = c.ok ? `${c.symbols} produced symbol(s) found at their declared files` : ["produced symbols missing:", ...c.problems].join("\n");
+      const log = path.join(logDir, `${safeName(`contract-${c.plan}`)}.log`);
+      writeTextAtomic(log, `${text}\n`);
+      steps.push({ name: `contract-${c.plan}`, argv: [], outcome: c.ok ? "passed" : "failed", exitCode: c.ok ? 0 : 1, executed: { ...NOT_RUN }, log: toSlash(path.relative(root, log)), text, plan: c.plan, task: null, kind: "contract" });
+      for (const n of c.notes) notes.push(`contract ${c.plan}: ${n}`);
     }
     for (const p of input.plans ?? []) for (const ob of p.verify ?? []) {
       const name = obligationStepName(p.id, ob.task, ob.kind);

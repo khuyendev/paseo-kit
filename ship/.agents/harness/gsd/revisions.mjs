@@ -10,6 +10,7 @@ import { loadAgentDef } from "../runtime/agents.mjs";
 import { isInside } from "../lib/paths.mjs";
 import { headOf } from "./git.mjs";
 import { phaseFile, planPath, planIds, readPlan } from "./planning.mjs";
+import { manifestFreezeText } from "./contracts.mjs";
 import { loadRequirements } from "./requirements.mjs";
 import { loadRoadmap, roadmapPhase, sectionContent } from "./roadmap.mjs";
 
@@ -85,7 +86,14 @@ export function keyFiles(g, phase, key) {
     const source = markerDigest(readIf(file.abs));
     return source ? [{ label: file.label, text: `validation-source ${source}` }] : [];
   };
-  const freeze = () => [...inputs(), inPhase(`${phase.padded}-PLAN-OUTLINE.md`), inPhase(`${phase.padded}-PLAN-OUTLINE.manifest.json`), inPhase(`${phase.padded}-WIRING.md`)];
+  // Kit feedback 67: the contract-owner parts of a structured manifest (signatures, their history) are not part of the frozen skeleton's identity.
+  const manifestKey = () => {
+    const file = inPhase(`${phase.padded}-PLAN-OUTLINE.manifest.json`);
+    const text = readIf(file.abs);
+    const stable = manifestFreezeText(text);
+    return stable === text ? file : { label: file.label, text: stable };
+  };
+  const freeze = () => [...inputs(), inPhase(`${phase.padded}-PLAN-OUTLINE.md`), manifestKey(), inPhase(`${phase.padded}-WIRING.md`)];
   // G009: the skeleton lanes (lens, model, effort, lens texts) are written by gsd-plan beside the outline; the reviewer
   // definition is hashed here, since the freeze key covers the outline and wiring only.
   const skeleton = () => [inPhase(`${phase.padded}-SKELETON-LANES.json`), ...roleFiles(g, g.cfg.adapter.agents?.skeleton_lane ?? "gsd-skeleton-reviewer").map((p) => harness(p))];

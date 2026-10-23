@@ -172,6 +172,8 @@ export const SCHEMA = obj({
     review_metrics: bool(),
     // Kit feedback 70: gsd-plan renders <NN>-VALIDATION.md (upstream plan-phase step 5.5) for the checker's Dimension 8.
     validation_strategy: bool(),
+    // Kit feedback 67, 76: structured manifest contracts, `ph gsd verify contracts` after planners, revisions and plan-review edits and at handoff, the contract block of revisers, the wave-gate check of produced symbols.
+    contract_check: bool(),
   }),
 });
 
