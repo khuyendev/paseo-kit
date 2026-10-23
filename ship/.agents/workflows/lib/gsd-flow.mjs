@@ -30,6 +30,7 @@ const COMMANDS = {
   baseline: (root, [phaseDir]) => execute.recordBaseline(root, phaseDir),
   "resume-gate": (root, [phaseDir], input) => execute.resumeGate(root, phaseDir, JSON.parse(input)),
   transfer: (root, [phaseDir], input) => execute.transfer(root, phaseDir, JSON.parse(input)),
+  adopt: (root, [phaseDir, plan, rel]) => execute.adopt(root, phaseDir, plan, rel),
   "owned-changes": (root, [phaseDir], input) => execute.ownedChanges(root, phaseDir, JSON.parse(input)),
   "dirty-owned": (root, [phaseDir], input) => execute.dirtyOwned(root, phaseDir, JSON.parse(input)),
   "execution-inputs": (root) => execute.executionInputs(root),

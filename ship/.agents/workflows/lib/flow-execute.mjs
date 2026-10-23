@@ -84,17 +84,34 @@ export function recordBaseline(root, phaseDir) {
   return { kept: false, baseline: base };
 }
 
+// The transfer records of the phase, oldest written first (kit-feedback 54: `adopt` rewrites a record, which makes its
+// plan the latest holder). `transfers` is the content each path was last transferred with, `holders` the plans whose
+// records hold a path, latest first.
 function accounted(root, phaseDir) {
   const dir = resolveInside(root, phaseDir);
   const commits = readJsonIf(path.join(dir, "commits.json"), []) ?? [];
   const transfers = {};
+  const holders = {};
   const tdir = path.join(dir, "transfers");
-  if (fs.existsSync(tdir)) for (const f of fs.readdirSync(tdir)) {
+  if (fs.existsSync(tdir)) for (const f of recordsOldestFirst(tdir)) {
     const t = readJsonIf(path.join(tdir, f), null);
-    for (const file of t?.files ?? []) transfers[file.path] = file.sha256 ?? "deleted";
+    for (const file of t?.files ?? []) {
+      transfers[file.path] = file.sha256 ?? "deleted";
+      (holders[file.path] ??= []).unshift(t.plan);
+    }
   }
-  return { commits, transfers };
+  return { commits, transfers, holders };
 }
+const recordsOldestFirst = (dir) => fs.readdirSync(dir).map((f) => [f, fs.statSync(path.join(dir, f)).mtimeMs]).sort((a, b) => a[1] - b[1]).map(([f]) => f);
+
+// kit-feedback 54, 56: equally specific owners of a changed path go to the latest plan whose transfer record holds it (the
+// plan that carried the file; an owner's hand fix or the run's review fixer edited it after that transfer). A tie no
+// record breaks stays a tie.
+const breakTie = (owners, holders = []) => {
+  if (owners.length < 2) return owners;
+  const held = holders.find((id) => owners.some((o) => o.id === id));
+  return held ? owners.filter((o) => o.id === held) : owners;
+};
 
 const commitFiles = (root, sha) => gitLines(root, ["diff-tree", "--no-commit-id", "--name-only", "-r", "-m", "--root", sha], { allowFail: true });
 const trailerPlans = (root, sha) => {
@@ -119,7 +136,7 @@ export function resumeGate(root, phaseDir, { plans, integration = [] }) {
   const reconciled = [];
   const accepted = [];
   if (!samePath(base.codeRoot, root)) problems.push({ kind: "code-root-moved", detail: `baseline code root ${base.codeRoot} != ${toSlash(root)}` });
-  const { commits, transfers } = accounted(root, phaseDir);
+  const { commits, transfers, holders } = accounted(root, phaseDir);
   const now = snapshot(root);
   const own = new Set(commits.map((c) => c.sha));
   if (now.head !== base.head) {
@@ -151,7 +168,7 @@ export function resumeGate(root, phaseDir, { plans, integration = [] }) {
   }
   for (const p of changed) {
     if (ignored(p)) continue;
-    const owners = specificOwners(p, plans, prefixes, ownsOf);
+    const owners = breakTie(specificOwners(p, plans, prefixes, ownsOf), holders[p]);
     if (!owners.length && (bookkeeping(p) || integration.includes(p))) continue;
     if (!owners.length) problems.push({ kind: "unauthorized path", path: p });
     else if (owners.length > 1) problems.push({ kind: "ambiguous owner", path: p, plans: owners.map((o) => o.id) });
@@ -344,6 +361,26 @@ export function pendingTransfers(root, phaseDir) {
   const dir = path.join(resolveInside(root, phaseDir), "transfers-pending");
   const plans = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => readJsonIf(path.join(dir, f), null)).filter(Boolean) : [];
   return { pending: plans.map((p) => ({ plan: p.plan, worktree: p.worktree, paths: p.paths ?? [] })) };
+}
+
+// kit-feedback 54: the owner's hand fix to a path a plan transferred is recorded by re-hashing that path in the plan's own
+// transfer record (the record is never edited by hand). Only a path the plan's transfer carried can be adopted, and only
+// once that transfer finished; the rewritten record makes the plan the latest holder of the path.
+export function adopt(root, phaseDir, plan, rel) {
+  if (!/^\d+(\.\d+)?-\d+$/.test(plan)) throw new Error("invalid plan id");
+  const dir = resolveInside(root, phaseDir);
+  const file = path.join(dir, "transfers", `${plan}.json`);
+  const record = readJsonIf(file, null);
+  if (!record || record.plan !== plan) throw new Error(`no accepted transfer for plan ${plan} in ${phaseDir}`);
+  const p = toSlash(rel).replace(/^\.\//, "");
+  if (fs.existsSync(pendingTransferFile(root, phaseDir, plan))) return { ok: false, plan, path: p, reason: "the transfer of this plan did not finish (transfers-pending); copy the rest from its worktree first", code: 1 };
+  const i = record.files.findIndex((f) => f.path === p);
+  if (i < 0) return { ok: false, plan, path: p, reason: "not in the plan's transfer record", code: 1 };
+  const hash = contentHash(resolveInside(root, p));
+  if ((record.files[i].deleted ? "deleted" : record.files[i].sha256) === hash) return { ok: true, plan, path: p, adopted: false };
+  record.files[i] = hash === "deleted" ? { path: p, deleted: true } : { path: p, sha256: hash };
+  writeJsonAtomic(file, record);
+  return { ok: true, plan, path: p, adopted: true };
 }
 
 export function spotCheck(root, summaryRel) {
