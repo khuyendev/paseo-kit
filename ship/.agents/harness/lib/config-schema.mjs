@@ -163,6 +163,8 @@ export const SCHEMA = obj({
     verify_mode: str({ oneOf: ["phase", "per-criterion"] }),
     // Kit feedback 64: pre-code review records, the plan-catchable tag and plan-defect events (measurement only).
     review_metrics: bool(),
+    // Kit feedback 70: gsd-plan renders <NN>-VALIDATION.md (upstream plan-phase step 5.5) for the checker's Dimension 8.
+    validation_strategy: bool(),
   }),
 });
 

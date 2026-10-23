@@ -11,6 +11,7 @@ import * as project from "./flow-project.mjs";
 import * as execute from "./flow-execute.mjs";
 import * as review from "./flow-review.mjs";
 import * as gate from "./flow-gate.mjs";
+import * as validation from "./flow-validation.mjs";
 
 const COMMANDS = {
   exists: (root, args) => files.exists(root, args),
@@ -52,6 +53,7 @@ const COMMANDS = {
   "review-scope": (root, [phaseDir], input) => review.reviewScope(root, phaseDir, JSON.parse(input)),
   "review-record": (root, [phaseDir], input) => review.writeRecord(root, phaseDir, JSON.parse(input)),
   "prereview-record": (root, [phaseDir], input) => review.writePrereview(root, phaseDir, JSON.parse(input)),
+  "validation-strategy": (root, [phaseDir]) => validation.validationStrategy(root, phaseDir),
   "changed-lines": (root, [phaseDir], input) => review.changedLines(root, phaseDir, JSON.parse(input)),
   "quick-dir": (root, [slugSource]) => project.quickDir(root, slugSource),
   "quick-verification": (root, [dir, action]) => project.quickVerification(root, dir, action),
