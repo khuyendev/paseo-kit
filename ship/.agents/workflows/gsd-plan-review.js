@@ -77,6 +77,7 @@ const planPath = (id) => `${phaseDir}/${id}-PLAN.md`;
 const policy = policyBlock(a.researchPath ?? null);
 const roles = a.roles ?? {};
 const ro = (role) => ({ role, ...(roles[role]?.model ? { model: roles[role].model } : {}), ...(roles[role]?.effort ? { effort: roles[role].effort } : {}) });
+const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
 // GSDF-37: config lenses of stage plan_review plus the kit's source-grounding lens.
 const lenses = [
   ...(cfg.adapter.review_lenses ?? []).filter((l) => l.stage === "plan_review").map((l) => ({ name: l.name, text: l.text })),
