@@ -132,6 +132,8 @@ async function checkPlans() {
 let prev = Infinity;
 let planRevision = null;
 let structure = [];
+// The high and medium/low counts of every cycle (kit-feedback 46), returned with the converged and needs-owner results.
+const counts = [];
 // The notes of an earlier converged review never outlive this run.
 await flow(["remove", notesPath]);
 // A plan whose last pass kept no issue is not re-found until its file changes; an edit by the editor re-opens it.
@@ -184,25 +186,26 @@ for (let cycle = 1; ; cycle++) {
   const blocking = kept.filter(isBlocking);
   const count = blocking.length;
   log(`plan review cycle ${cycle}: ${count} high issues, ${kept.length - count} medium or low`);
+  counts.push({ cycle, high: count, mediumOrLow: kept.length - count });
   if (count === 0) {
     await flow(["write", notesPath], JSON.stringify(kept.map(({ plan, severity, description }) => ({ plan, severity, description })), null, 2));
     // Kept issues that do not count are advisories too: returned here, never sent to the editor.
-    return { status: "converged", cycles: cycle, planRevision, structure, issues: kept };
+    return { status: "converged", cycles: cycle, planRevision, structure, issues: kept, counts };
   }
-  if (count >= prev) return { status: "needs-owner", reason: `plan review not converging: ${count} high issues, not below ${prev}`, issues: kept };
+  if (count >= prev) return { status: "needs-owner", reason: `plan review not converging: ${count} high issues, not below ${prev}`, issues: kept, counts };
   prev = count;
   phase("Edit");
   const before = new Map(await Promise.all(plans.map(async (p) => [p, await fileSha(planPath(p))])));
   const ed = await ask([`Revise these plans in one pass so the issues below are resolved: ${plans.map(planPath).join(", ")}.`, `Issues (JSON): ${JSON.stringify(blocking)}`, "Return JSON {marker: REVISION COMPLETE | REVISION_CONFLICT, conflict?}. Never ask the owner; never commit.", "Before you reply, run verify plan-structure on each plan you revise and fix what it reports.", ...lockedDecisions, policy, digestLine("checked", digest)].join("\n\n"), { label: `editor-${cycle}`, agentType: agentFor("plan_editor", "gsd-planner"), schema: EDITOR_SCHEMA, judges, ...ro("plan_editor") }, "plan editor");
   if (ed.fail) return ed.fail;
-  if (conflicted(ed)) return { status: "needs-owner", reason: "plan editor returned REVISION_CONFLICT", conflict: ed.result.conflict ?? null, issues: kept };
+  if (conflicted(ed)) return { status: "needs-owner", reason: "plan editor returned REVISION_CONFLICT", conflict: ed.result.conflict ?? null, issues: kept, counts };
   // G041: plans that fail verify plan-structure after the edit get one editor repair, as gsd-plan's structureFix gives a planner.
   let checks = await checkPlans();
   if (checks.some((c) => !c.ok)) {
     const failing = checks.filter((c) => !c.ok);
     const fix = await ask([`Fix these plans in place: ${failing.map((c) => planPath(c.plan)).join(", ")}. verify plan-structure reported exactly these errors:`, ...failing.flatMap((c) => c.errors.map((e) => `- ${c.plan}: ${typeof e === "string" ? e : JSON.stringify(e)}`)), "Return JSON {marker: REVISION COMPLETE | REVISION_CONFLICT, conflict?}. Never ask the owner; never commit.", ...lockedDecisions, policy, digestLine("checked", digest)].join("\n\n"), { label: `editor-${cycle}-fix`, agentType: agentFor("plan_editor", "gsd-planner"), schema: EDITOR_SCHEMA, judges, ...ro("plan_editor") }, "plan editor repair");
     if (fix.fail) return fix.fail;
-    if (conflicted(fix)) return { status: "needs-owner", reason: "plan editor returned REVISION_CONFLICT", conflict: fix.result.conflict ?? null, issues: kept };
+    if (conflicted(fix)) return { status: "needs-owner", reason: "plan editor returned REVISION_CONFLICT", conflict: fix.result.conflict ?? null, issues: kept, counts };
     checks = await checkPlans();
   }
   const broken = checks.find((c) => !c.ok);

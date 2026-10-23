@@ -591,7 +591,7 @@ if (planReview) {
   phase("Plan review");
   const pr = await workflow("gsd-plan-review", { phaseDir, plans: planIds, roles: roleOverrides, researchPath: approvedResearch, guidance: a.reviewGuidance ?? null, planSettings: settingsDigest.plan });
   if (pr?.status !== "converged") {
-    const stop = { stage: "Plan review", reason: pr?.reason ?? "plan review did not converge", issues: pr?.issues ?? [], conflict: pr?.conflict ?? null };
+    const stop = { stage: "Plan review", reason: pr?.reason ?? "plan review did not converge", issues: pr?.issues ?? [], conflict: pr?.conflict ?? null, counts: pr?.counts ?? [] };
     // The owner answers here and reruns: reviewGuidance goes to the review prompts, a CONTEXT decision is read by them too.
     return pr?.status === "failed" ? result("failed", stop) : result("needs-owner", { ...stop, options: ["give reviewGuidance and rerun", "record the decision in CONTEXT and rerun", "disable plan review (planReview false) and rerun"] });
   }
