@@ -21,9 +21,11 @@ export function cacheKey(prompt, opts, identity) {
 }
 
 // `<key>#<occ>` -> finish entry of an earlier run, only for calls that produced a result; bad lines are skipped.
+// A missing journal throws: an empty cache would silently rerun every agent of the resumed run.
 export function loadJournalCache(journalPath) {
   const cache = new Map();
-  if (!journalPath || !fs.existsSync(journalPath)) return cache;
+  if (!journalPath) return cache;
+  if (!fs.existsSync(journalPath)) throw new UsageError(`cannot resume: ${journalPath} not found`);
   for (const line of readText(journalPath).split("\n")) {
     if (!line.trim()) continue;
     let e;

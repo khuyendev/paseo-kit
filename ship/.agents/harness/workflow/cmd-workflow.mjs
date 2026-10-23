@@ -58,7 +58,8 @@ async function prepare(ctx, deps) {
   if (opts.resume !== undefined) checkRunId(opts.resume, "--resume");
   if (opts["run-id"] !== undefined) checkRunId(opts["run-id"], "--run-id");
   const prevDir = opts.resume !== undefined ? path.join(runsDir, opts.resume) : null;
-  if (prevDir && !fs.existsSync(path.join(prevDir, RUN_FILES.journal))) throw new UsageError(`cannot resume: ${path.join(prevDir, RUN_FILES.journal)} not found`);
+  // Read before the first await, so a prune of the source run after this point cannot empty the cache (G136).
+  const cache = prevDir ? loadJournalCache(path.join(prevDir, RUN_FILES.journal)) : new Map();
   let ref;
   if (opts.script !== undefined) ref = { scriptPath: opts.script };
   else if (opts.name !== undefined) ref = opts.name;
@@ -93,7 +94,7 @@ async function prepare(ctx, deps) {
   const runDir = path.join(runsDir, runId);
   const claimed = ctx.env[CLAIMED_ENV] !== undefined && samePath(ctx.env[CLAIMED_ENV], runDir);
   if (!claimed && fs.existsSync(runDir)) throw new UsageError(`run ${runId} already exists in ${runsDir}; give another --run-id`);
-  return { runsDir, prevDir, script, meta, args, budgetTotal, runtime, session, connectError, runId, attemptRunId, runDir, claimed };
+  return { runsDir, prevDir, script, meta, args, budgetTotal, runtime, session, connectError, runId, attemptRunId, runDir, claimed, cache };
 }
 
 // Claims the run dir exclusively, so a repeated or concurrent --run-id never overwrites a run (CR-WFL-01).
@@ -214,7 +215,7 @@ async function runForeground(ctx, p) {
     const r = await runWorkflow({
       source: p.script.source, scriptPath: p.script.scriptPath, args: p.args, runId: p.runId, attemptRunId: p.attemptRunId, root: ctx.root, env: ctx.env,
       limits: { maxConcurrent: ctx.cfg.max_subagents, maxAgents: ctx.cfg.max_agents_per_workflow, budgetTotal: p.budgetTotal, shellTimeoutS: ctx.cfg.wait_timeout_s },
-      journalPath, cache: p.prevDir ? loadJournalCache(path.join(p.prevDir, RUN_FILES.journal)) : new Map(), out,
+      journalPath, cache: p.cache, out,
       resolveChild: (ref) => resolveScript(ctx.root, ref),
       extraSpent: () => (session.usage.get(caller)?.output ?? 0) - callerBase,
       host,
