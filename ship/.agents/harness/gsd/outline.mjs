@@ -106,13 +106,20 @@ export async function outlineCheck(g, phase, { tracer = true, plansPerPhase, wav
   const crossPlan = [];
   if (o.manifestError) errors.push(o.manifestError);
   else {
-    const mplans = new Map(o.manifest.plans.map((p) => [String(p.id), p]));
+    // G014: a repeated id is refused, and every entry (not one per id) feeds the owns, shared and overlap checks.
+    const mplans = new Map();
+    for (const p of o.manifest.plans) {
+      const id = String(p.id);
+      if (mplans.has(id)) errors.push(`manifest has duplicate plan id ${id}`);
+      mplans.set(id, p);
+    }
     for (const id of ids) if (!mplans.has(id)) errors.push(`manifest has no entry for ${id}`);
     for (const id of mplans.keys()) if (!byId.has(id)) errors.push(`manifest entry ${id} is not in the outline`);
     const forms = g.cfg.adapter.ownership.owns_forms;
     const ownedOf = new Map();
     const candidates = new Set();
-    for (const [id, p] of mplans) {
+    for (const p of o.manifest.plans) {
+      const id = String(p.id);
       const owns = Array.isArray(p.owns) ? p.owns : [];
       if (!owns.length) errors.push(`${id}: empty owns`);
       const paths = [];
@@ -125,7 +132,7 @@ export async function outlineCheck(g, phase, { tracer = true, plansPerPhase, wav
           for (const f of filesUnder(g.codeRoot, m)) candidates.add(f);
         }
       }
-      ownedOf.set(id, paths);
+      ownedOf.set(id, [...(ownedOf.get(id) ?? []), ...paths]);
       const row = byId.get(id);
       if (row && JSON.stringify([...(p.requirements ?? [])].sort()) !== JSON.stringify([...row.requirements].sort())) warnings.push(`${id}: manifest requirements differ from the outline row`);
       for (const v of p.verify ?? []) if (classify(v, g.cfg.adapter.verify_vocabulary).kind === "unknown") warnings.push(`${id}: verify obligation outside the vocabulary: ${v}`);
