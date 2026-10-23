@@ -83,6 +83,27 @@ export function commandFor(cfg, name) {
   return argv ? { configured: true, argv: [...argv], timeoutS: commands[`${name}_timeout_s`] } : { configured: false, argv: null, timeoutS: null };
 }
 
+// Kit feedback 102 F2: the arguments that give each test case its own limit (adapter.commands.test_case_timeout_s through the
+// test_case_timeout_arg template, `{s}` = the seconds), so a hung test fails in seconds, not at the step timeout. An argv that
+// starts with adapter.commands.test gets them right after that prefix, unless its rest already names the flag (the template's
+// first word up to `{s}`); any other argv, or either key unset, is returned as it is.
+export function withTestCaseTimeout(cfg, argv) {
+  const { test, test_case_timeout_s: seconds, test_case_timeout_arg: template } = cfg.adapter.commands;
+  if (!Array.isArray(argv) || !test?.length || !seconds || !template?.length) return argv;
+  if (argv.length < test.length || test.some((w, i) => argv[i] !== w)) return argv;
+  const flag = template[0].split("{s}")[0];
+  const rest = argv.slice(test.length);
+  if (flag && rest.some((w) => w === flag || w.startsWith(flag.endsWith("=") ? flag : `${flag}=`))) return argv;
+  return [...test, ...template.map((w) => w.split("{s}").join(String(seconds))), ...rest];
+}
+// The test command the gate runs and its fixers are given: {argv (null without adapter.commands.test), caseTimeoutS (the per-test
+// limit it carries, or null)}; `argv` defaults to adapter.commands.test (gsd-execute passes its normalized form).
+export function testCommandOf(cfg, argv = cfg.adapter.commands.test) {
+  if (!argv) return { argv: null, caseTimeoutS: null };
+  const out = withTestCaseTimeout(cfg, argv);
+  return { argv: out, caseTimeoutS: out.length > argv.length ? cfg.adapter.commands.test_case_timeout_s : null };
+}
+
 export const isBuiltinRunnerKind = (kind) => BUILTIN_RUNNERS.has(kind);
 
 // ADPT-03 default `cmd` resolution: the first path-like token (has a slash or a file extension) against the code root.
@@ -180,5 +201,5 @@ export async function gateObligation(cfg, { codeRoot, phaseDir, kind, command = 
     return { ...base, targets, outcome: "unavailable", reason: e.message };
   }
   if (!run.configured) return { ...base, targets, outcome: "not_configured", reason: `no command for kind ${kind}` };
-  return { ...base, targets, outcome: "ready", argv: run.argv, timeoutS: run.timeoutS };
+  return { ...base, targets, outcome: "ready", argv: withTestCaseTimeout(cfg, run.argv), timeoutS: run.timeoutS };
 }

@@ -335,15 +335,20 @@ export function execVerdict({ reply, plan = null, requests = {}, shared = [], pe
   return out;
 }
 
-// exec-fixers: who fixes a red gate. {gate, plans (ids of the round), worktreeMode, trees (plans with an executor worktree)} ->
-// {plans: [{id, kind: executor | fixer (a plan resumed without its worktree is fixed in the main tree), failures}], placed (the
-// failures no plan owns that name files, G064), files (theirs, for the integration fixer), fileless (failures naming no file)}.
-export function execFixers({ gate, plans = [], worktreeMode = false, trees = [] }) {
+// exec-fixers: who fixes a red gate. {gate, plans (ids of the round), worktreeMode, trees (plans with an executor worktree),
+// verifies (the composition's gsd.fixer_verifies_itself)} -> {plans: [{id, kind: executor | fixer (a plan resumed without its
+// worktree is fixed in the main tree), failures, tests?}], placed (the failures no plan owns that name files, G064), files (theirs,
+// for the integration fixer), tests, fileless (failures naming no file)}. Kit feedback 102 F3: tests are the test files of a
+// fixer's failures it may run itself (the gate's failure tests); none when it does not verify itself.
+export function execFixers({ gate, plans = [], worktreeMode = false, trees = [], verifies = false }) {
   const placed = (gate.unplaced ?? []).filter((f) => (f.files ?? []).length);
+  const testsOf = (failures) => (verifies ? [...new Set(failures.flatMap((f) => f.tests ?? []))] : []);
+  const withTests = (failures) => (testsOf(failures).length ? { tests: testsOf(failures) } : {});
   return {
-    plans: Object.entries(gate.byPlan ?? {}).filter(([id]) => plans.includes(id)).map(([id, failures]) => ({ id, kind: worktreeMode && !trees.includes(id) ? "fixer" : "executor", failures })),
+    plans: Object.entries(gate.byPlan ?? {}).filter(([id]) => plans.includes(id)).map(([id, failures]) => ({ id, kind: worktreeMode && !trees.includes(id) ? "fixer" : "executor", failures, ...withTests(failures) })),
     placed,
     files: [...new Set(placed.flatMap((f) => f.files ?? []))],
+    tests: testsOf(placed),
     fileless: (gate.unplaced ?? []).filter((f) => !(f.files ?? []).length).length,
   };
 }

@@ -158,6 +158,12 @@ function classify(rel, checks, baseText) {
   return null;
 }
 
+// Kit feedback 102: a file a test runner runs, by the same paths (adapter.checks.paths, else its stack's), of a stack's extension.
+export function isTestFile(rel, checks = {}) {
+  const stack = stackOf(toSlash(rel));
+  return Boolean(stack && (checks.paths ?? stack.paths).some((g) => matchesGlob(toSlash(rel), g)));
+}
+
 // Tracked changes since the base (deletions too, renames as delete + add) and untracked files that are not ignored.
 function changedFiles(root, base, skipDir) {
   const out = new Map();

@@ -30,7 +30,7 @@ const { N, prefix, mode: execMode, worktreeMode } = S;
 // review's depth, the fixer's own verification and limits (gsd.fixer_verifies_itself, gsd.fixer), the files that trigger the
 // smoke builds (adapter.smoke_triggers), the branches a commit warns about (gsd.branching none, gsd.protected_branches).
 const R = executeSteps({ phaseDir, args: a, cfg, setup: S, policy: { pending: pendingOn, requestCheck: g.request_check ?? "auto", reviewLimit, reviewers, reviewDepth: g.review_depth, fixer: { verifies: Boolean(g.fixer_verifies_itself), attempts: g.fixer.max_build_attempts, minutes: g.fixer.minutes }, smokeTriggers: cfg.adapter.smoke_triggers ?? [], protectedBranches: g.branching === "none" ? g.protected_branches ?? [] : [] } });
-const { result, owner, ANSWER, GATE_RED, state, unsaved, tracked, planInfo, index, selectedTask, skipped, worktrees, inFlight, defectEvent, call, digestOf, failureText, fixerOpts, classify, aloneOnTree } = R;
+const { result, owner, ANSWER, GATE_RED, state, unsaved, tracked, planInfo, index, selectedTask, skipped, worktrees, inFlight, defectEvent, call, integrationPrompt, fixerOpts, classify, aloneOnTree } = R;
 const { dispatch, integrate, haltStop, haltedStop, partialStop, dirtyStop, seedTrees, acceptedStop, pendingTransfers, declareShared, codeWave, runGate, gateNow, smokeStop, strayStop, unownedStop, applyShared, fixRounds } = R;
 const { reviewPlan, reviewAll, reviewFix, unverifiedStop, planFiles, commitWaves, track, trackCommitted, stopAsked, pauseBefore, paused, finish, phaseGate } = R;
 if (S.metricsOn) await defectEvent(null);
@@ -417,7 +417,7 @@ if (!final.green) {
     await state("integration", { op: "add", files, why: "integration fix of the batch" });
     const lost = unsaved("before the integration fix");
     if (lost) return lost;
-    const r = await call(await renderPrompt("integration-fix", { files: JSON.stringify(files), failures: failureText(placed), digest: digestLine("fix:integration", await digestOf({ files })) }), fixerOpts("integration-fix-batch"));
+    const r = await call(await integrationPrompt(files, placed), fixerOpts("integration-fix-batch"));
     const named = await defectEvent("fix-round", { wave: batchId, round: 1, label: "the batch", plan: null, fixer: "integration" }, { reply: r.result });
     await defectEvent("gate-failure", batchRed, { defects: named });
     if (!r.result || r.result.status !== "fixed") return owner("Gate", `the integration fixer of the batch ${r.result ? "answered unresolved" : `returned nothing${r.reason ? ` (${r.reason})` : ""}`}`, { answer: fatal(r.reason) ? ANSWER.rerun("rerun after the reset") : GATE_RED, failures: placed, evidence: final.evidence, ...(fatal(r.reason) ? { failure: classify(r.reason) } : {}) });

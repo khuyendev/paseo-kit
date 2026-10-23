@@ -93,7 +93,10 @@ export const SCHEMA = obj({
       verify: map(obj({ argv: argv(), timeout_s: int(1) })),
       // F50: one argv per declared verification target, built once before planning (gsd-plan stage Smoke build).
       smoke_builds: arr(argv()),
-    }, ["smoke_builds"]),
+      // Kit feedback 102 F2: the per-test limit the gate passes to the test runner through the argv template (`{s}` = the seconds).
+      test_case_timeout_s: nullable(int(1)),
+      test_case_timeout_arg: nullable(argv()),
+    }, ["smoke_builds", "test_case_timeout_s", "test_case_timeout_arg"]),
     verify_vocabulary: map(obj({
       prefix: str({ nonEmpty: true }),
       parser: nullable(str({ nonEmpty: true, repoPath: true })),

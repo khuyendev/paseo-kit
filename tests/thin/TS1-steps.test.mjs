@@ -58,9 +58,10 @@ test("TS1 gsd-execute.js composes the kit steps: within the size stage 3 reached
   const names = [...KIT_STEP_NAMES, ...EXECUTE_STEP_NAMES];
   const defined = [...SCRIPT.matchAll(/^(?:(?:const|let|var)\s+(\w+)\s*=|(?:async\s+)?function\s*\*?\s*(\w+)\s*\()/gm)].map((m) => m[1] ?? m[2]).filter((n) => names.includes(n));
   assert.deepEqual(defined, []);
-  // The three schedules are still inside (S2 splits them); the agent prompts are rendered by the steps, but for the batch's integration fixer.
+  // The three schedules are still inside (S2 splits them); the agent prompts are rendered by the steps (kit feedback 102 moved the
+  // batch's integration fixer prompt into the step integrationPrompt).
   for (const s of [/async function graphRun\(\)/, /if \(execMode === "per-wave"\)/, /---- batch mode/]) assert.match(SCRIPT, s);
-  assert.deepEqual([...new Set([...SCRIPT.matchAll(/renderPrompt\("([a-z0-9-]+)"/g)].map((m) => m[1]))], ["integration-fix"]);
+  assert.deepEqual([...new Set([...SCRIPT.matchAll(/renderPrompt\("([a-z0-9-]+)"/g)].map((m) => m[1]))], []);
   assert.doesNotMatch(SCRIPT, /\bagent\(/, "the executors are dispatched by the step");
 });
 

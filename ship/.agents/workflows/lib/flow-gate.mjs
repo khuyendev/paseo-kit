@@ -10,12 +10,12 @@ import { runArgv } from "../../harness/lib/proc.mjs";
 import { invokeHook } from "../../harness/adapter/hooks.mjs";
 import { withMutex } from "../../harness/adapter/mutex.mjs";
 import { evidenceVerdict, requiredSteps, executionProblem, gateStepName, obligationStepNames } from "../../harness/adapter/evidence.mjs";
-import { gateObligation } from "../../harness/adapter/contract.mjs";
+import { gateObligation, testCommandOf } from "../../harness/adapter/contract.mjs";
 import { sha256 } from "../../harness/lib/hash.mjs";
 import { producedCheck } from "../../harness/gsd/contracts.mjs";
 import { gitLines, head } from "./flow-git.mjs";
 import { contentHash, owned, ownsPrefixes, ownsScope, specificOwners } from "./flow-owns.mjs";
-import { checksStop, checkWeakening } from "./flow-checks.mjs";
+import { checksStop, checkWeakening, isTestFile } from "./flow-checks.mjs";
 
 const TIMEOUT_CODE = 124;
 const EXCERPT_LINES = 40;
@@ -56,7 +56,7 @@ function visibleFiles(root) {
 }
 // A file the output reports at a position (`path:line`) is the one that failed; a run's other files (every passing test's
 // progress line, a helper in a stack) are only mentioned. Without any position, every mentioned file counts (kit-feedback 51).
-function mentionedFiles(root, text, visible) {
+function mentionedFiles(root, text, visible, { locatedOnly = false } = {}) {
   const found = new Set();
   const located = new Set();
   for (const line of String(text).split(/\r?\n/)) {
@@ -75,7 +75,34 @@ function mentionedFiles(root, text, visible) {
       }
     }
   }
-  return [...(located.size ? located : found)];
+  return [...(located.size || locatedOnly ? located : found)];
+}
+
+// Kit feedback 102: the visible files an argv names (a word that is a path to one, relative to the root or absolute inside it).
+function argvFiles(root, argv, visible) {
+  const out = new Set();
+  for (const w of argv ?? []) {
+    if (!w || w.startsWith("-")) continue;
+    const abs = path.resolve(root, w);
+    const rel = toSlash(path.relative(root, abs));
+    if (isInside(abs, root) && visible.has(pathKey(rel))) out.add(rel);
+  }
+  return [...out];
+}
+// The test files a timed-out step was running: those its argv names (an obligation), else those the last output line that names
+// one names (the suite names no file; a runner that prints a test when it starts names the one that never finished).
+function hungFiles(root, s, visible, checks) {
+  const tests = (list) => list.filter((f) => isTestFile(f, checks));
+  const named = tests(argvFiles(root, s.argv, visible));
+  if (named.length) return { files: named, source: "argv" };
+  for (const stream of [s.streams?.stdout, s.streams?.stderr].filter(Boolean)) {
+    const lines = String(fs.readFileSync(path.join(root, stream), "utf8")).split(/\r?\n/);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const files = tests(mentionedFiles(root, lines[i], visible));
+      if (files.length) return { files, source: "output" };
+    }
+  }
+  return { files: [], source: null };
 }
 
 // Input scopes of a gate: the owned paths of its plans and the adapter instructions (ADPT-17).
@@ -212,6 +239,12 @@ function checksStep(root, phaseDir, logDir, notes) {
   return { summary, stop, step: { name: CHECKS_STEP, argv: [], outcome, exitCode: outcome === "passed" ? 0 : 1, executed: { ...NOT_RUN }, log: toSlash(path.relative(root, log)), text, plan: null, task: null, kind: CHECKS_STEP } };
 }
 
+// Flow verb test-command {testArgv?} -> {argv, caseTimeoutS}: the test command a gate runs, with the per-test timeout (kit feedback 102).
+export const testCommand = (root, { testArgv } = {}) => {
+  const cfg = loadConfig(root);
+  return testCommandOf(cfg, cfg.adapter.commands.test ? testArgv ?? cfg.adapter.commands.test : null);
+};
+
 // input: {waveId, plans: [{id, owns, verify: [{task, kind, command, target}]}], testArgv?, skipObligations?, suite?, context?}
 // kit-feedback 66 (gsd.execute_schedule graph): `suite: false` runs only the plans' obligations (the adapter gates, the build
 // and the tests are the repo-wide suite, run once before a commit); `context` [{id, owns}] are other open plans of the run:
@@ -230,6 +263,27 @@ export async function gate(root, phaseDir, input) {
   const inputs = inputsOf(root, scopes);
   const reusable = interruptedSteps(root, path.dirname(evidenceFile), input.waveId, inputs);
   const checkpoint = () => writeJsonAtomic(path.join(logDir, "checkpoint.json"), { inputs, steps: steps.map(({ text, ...s }) => s) });
+  // Kit feedback 102 F1: the test files of a step that timed out; a later step of this gate run that would run one does not run.
+  const checks = cfg.adapter.checks ?? {};
+  const hung = [];
+  let seen = null;
+  const noteHang = (s) => {
+    if (s.outcome !== "timeout") return;
+    const h = hungFiles(root, s, (seen ??= visibleFiles(root)), checks);
+    if (h.files.length) s.hang = h;
+    hung.push({ step: s.name, files: h.files, source: h.source, blocked: [] });
+  };
+  const hangOf = (argv) => {
+    const files = hung.some((h) => h.files.length) ? argvFiles(root, argv, (seen ??= visibleFiles(root))) : [];
+    for (const h of hung) {
+      const hit = h.files.filter((f) => files.includes(f));
+      if (hit.length) return { h, files: hit };
+    }
+    return null;
+  };
+  // Kit feedback 102 F2: the suite runs with the per-test limit, like every obligation that runs the test command (gateObligation).
+  const { argv: suiteArgv, caseTimeoutS } = testCommandOf(cfg, cmds.test ? input.testArgv ?? cmds.test : null);
+  if (Boolean(cmds.test_case_timeout_s) !== Boolean(cmds.test_case_timeout_arg?.length)) notes.push(`adapter.commands.${cmds.test_case_timeout_s ? "test_case_timeout_s is set without test_case_timeout_arg" : "test_case_timeout_arg is set without test_case_timeout_s"}: the test runner gets no per-test timeout`);
   const run = async (name, argv, timeoutS, extra = {}) => {
     const prior = reusable.get(name);
     if (prior && JSON.stringify(prior.argv) === JSON.stringify(argv)) {
@@ -246,12 +300,13 @@ export async function gate(root, phaseDir, input) {
       for (const g of cmds.gates ?? []) {
         const s = await run(gateStepName(g.name), g.argv, cmds.build_timeout_s);
         steps.push(s);
+        noteHang(s);
         checkpoint();
         if (s.outcome !== "passed") gateRed = true;
       }
-      if (cmds.build) { steps.push(await run("build", cmds.build, cmds.build_timeout_s)); checkpoint(); }
+      if (cmds.build) { steps.push(await run("build", cmds.build, cmds.build_timeout_s)); noteHang(steps.at(-1)); checkpoint(); }
       else { notes.push("build not configured (adapter.commands.build)"); steps.push(noRun(root, logDir, "build", "not_configured", notes.at(-1))); }
-      if (cmds.test) { steps.push(await run("test", input.testArgv ?? cmds.test, cmds.test_timeout_s)); checkpoint(); }
+      if (cmds.test) { steps.push(await run("test", suiteArgv, cmds.test_timeout_s)); noteHang(steps.at(-1)); checkpoint(); }
       else { notes.push("tests not configured (adapter.commands.test)"); steps.push(noRun(root, logDir, "test", "not_configured", notes.at(-1))); }
     }
     // Kit feedback 67 F5: a plan that produces structured symbols (outline manifest) must have them at the declared file.
@@ -269,7 +324,14 @@ export async function gate(root, phaseDir, input) {
       const o = await gateObligation(cfg, { codeRoot: root, phaseDir, ...ob });
       if (o.outcome !== "ready") { steps.push(noRun(root, logDir, name, o.outcome, o.reason, meta)); continue; }
       const { argument, targets } = o;
+      const block = hangOf(o.argv);
+      if (block) {
+        block.h.blocked.push(name);
+        steps.push(noRun(root, logDir, name, "failed", `blocked by hang: ${block.files.join(", ")} timed out in step ${block.h.step} of this gate run; not run again in this pass`, { ...meta, argv: o.argv, blockedByHang: { step: block.h.step, files: block.files } }));
+        continue;
+      }
       const s = await step(root, logDir, name, o.argv, o.timeoutS, meta);
+      noteHang(s);
       checkpoint();
       if (o.evidenceParser) {
         const ev = await runHook(root, cfg, o.evidenceParser, { op: "evidence", phaseDir, kind: ob.kind, argument, targets, exitCode: s.exitCode, stdoutPath: s.streams.stdout, stderrPath: s.streams.stderr });
@@ -284,8 +346,8 @@ export async function gate(root, phaseDir, input) {
       steps.push(s);
     }
   }, { log: (m) => notes.push(m) });
-  const checks = checksStep(root, phaseDir, logDir, notes);
-  if (checks.step) steps.push(checks.step);
+  const weak = checksStep(root, phaseDir, logDir, notes);
+  if (weak.step) steps.push(weak.step);
   const after = inputsOf(root, scopes);
   const moved = Object.keys({ ...inputs.files, ...after.files }).filter((f) => inputs.files[f] !== after.files[f]);
   if (after.head !== inputs.head) moved.unshift("HEAD");
@@ -295,12 +357,25 @@ export async function gate(root, phaseDir, input) {
   writeJsonAtomic(evidenceFile, evidence);
   const visible = visibleFiles(root);
   const failures = steps.filter((s) => s.outcome !== "passed").map((s) => (s.kind === CHECKS_STEP
-    ? { step: s.name, plan: null, outcome: s.outcome, excerpt: s.text, log: s.log, files: [], needsOwner: checks.stop ?? { stage: "Checks", reason: s.text, options: ["fix the cause (git, the harness config), then rerun with the same args"] } }
-    : { step: s.name, plan: s.plan ?? null, outcome: s.outcome, excerpt: excerpt(s.text), log: s.log, files: mentionedFiles(root, s.text, visible) }));
+    ? { step: s.name, plan: null, outcome: s.outcome, excerpt: s.text, log: s.log, files: [], needsOwner: weak.stop ?? { stage: "Checks", reason: s.text, options: ["fix the cause (git, the harness config), then rerun with the same args"] } }
+    : stepFailure(root, s, visible, checks)));
   const attribution = await attribute(root, cfg, [...(input.plans ?? []), ...(input.context ?? []).map(({ id, owns }) => ({ id, owns: owns ?? [] }))], failures.filter((f) => f.step !== CHECKS_STEP), prefixes);
   if (attribution.attributionError) notes.push(`attribution hook failed: ${attribution.attributionError}; its failures stay unplaced`);
-  const timedOut = steps.filter((s) => s.outcome === "timeout").map((s) => `${s.name} timed out after its limit (exit ${TIMEOUT_CODE})`);
-  return { green: failures.length === 0, evidence: toSlash(path.relative(root, evidenceFile)), notes, timedOut, failures, failureCount: failures.length, checks: checks.summary, ...attribution };
+  const timedOut = steps.filter((s) => s.outcome === "timeout").map((s) => {
+    const h = hung.find((x) => x.step === s.name);
+    return `${s.name} timed out after its limit (exit ${TIMEOUT_CODE})${h?.files.length ? `; hung test file(s) ${h.files.join(", ")} (${h.source === "argv" ? "named by its command" : "named last in its output"})${h.blocked.length ? `; blocked by hang in this pass: ${h.blocked.join(", ")}` : ""}` : ""}`;
+  });
+  return { green: failures.length === 0, evidence: toSlash(path.relative(root, evidenceFile)), notes, timedOut, ...(hung.length ? { hung } : {}), ...(suiteArgv ? { testCommand: suiteArgv, caseTimeoutS } : {}), failures, failureCount: failures.length, checks: weak.summary, ...attribution };
+}
+
+// A failed step as the fixers see it: the files its output names, and the test files a fixer may run to see it (kit feedback 102
+// F3): those its command names, among its files, and the hung ones. A step that hung (or was blocked by a hang) names its hung
+// files and the files its output reports at a position; a file only mentioned (a progress line of a test that ran) is none.
+function stepFailure(root, s, visible, checks) {
+  const hungOnes = s.hang?.files ?? s.blockedByHang?.files ?? [];
+  const files = [...new Set([...mentionedFiles(root, s.text, visible, { locatedOnly: hungOnes.length > 0 }), ...hungOnes])];
+  const tests = [...new Set([...argvFiles(root, s.argv, visible), ...files].filter((f) => isTestFile(f, checks)))];
+  return { step: s.name, plan: s.plan ?? null, outcome: s.outcome, excerpt: excerpt(s.text), log: s.log, files, ...(tests.length ? { tests } : {}) };
 }
 
 async function attribute(root, cfg, plans, failures, prefixes) {

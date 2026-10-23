@@ -269,6 +269,8 @@ export function executeSteps(kit, run) {
   // test command the gate runs.
   let mainRoot = null;
   let testArgv = null;
+  // Kit feedback 102 F2: the test command the gate runs (test-command: with the per-test timeout when declared), the one fixers run.
+  let testCommand = null;
   async function executionInputs() {
     const snapshot = worktreeMode ? await flow(["execution-inputs"]) : null;
     if (snapshot && snapshot.code !== 0) return result("failed", { reason: `execution inputs unavailable: ${snapshot.json?.error}` });
@@ -277,6 +279,7 @@ export function executeSteps(kit, run) {
       const joined = cmds.test.join(" ");
       const nt = (await gsd(["normalize-test-command", joined])).json?.command;
       testArgv = nt && nt !== joined && nt.startsWith(joined) ? [...cmds.test, ...nt.slice(joined.length).trim().split(/\s+/)] : cmds.test;
+      testCommand = (await flow(["test-command"], { testArgv })).json?.argv ?? null;
     }
     return null;
   }
@@ -494,7 +497,7 @@ export function executeSteps(kit, run) {
   const failureText = (list) => list.map((f) => `- ${f.step}${f.plan ? ` (plan ${f.plan})` : ""}: ${f.outcome ?? "failed"}; full log ${f.log ?? "n/a"}\n${String(f.excerpt ?? "").split(/\r?\n/).map((l) => `    ${l}`).join("\n")}`).join("\n");
   // The fixer prompt (template fixer): G070, an edit outside the owns is never a workaround but a request; the fixer policy
   // (gsd.fixer_verifies_itself) lets it run the build and tests within the gsd.fixer limits.
-  const fixerPrompt = (owns, findings, failures, requests, digest) => renderPrompt("fixer", { owns: JSON.stringify(owns), generated: S.generated, verifies: P.fixer.verifies, build: String(JSON.stringify(cmds.build)), tests: String(JSON.stringify(testArgv)), attempts: String(P.fixer.attempts), minutes: String(P.fixer.minutes), metrics: metricsOn, findings: findings.length ? JSON.stringify(findings.map(findingBrief)) : "", failures: failureText(failures), requests: requests.length ? JSON.stringify(requests) : "", digest });
+  const fixerPrompt = (owns, findings, failures, requests, digest) => renderPrompt("fixer", { owns: JSON.stringify(owns), generated: S.generated, verifies: P.fixer.verifies, build: String(JSON.stringify(cmds.build)), tests: String(JSON.stringify(testCommand ?? testArgv)), attempts: String(P.fixer.attempts), minutes: String(P.fixer.minutes), metrics: metricsOn, findings: findings.length ? JSON.stringify(findings.map(findingBrief)) : "", failures: failureText(failures), requests: requests.length ? JSON.stringify(requests) : "", digest });
   // The fixer repairs confirmed defects and failed checks in existing code, where more effort finds the edge cases its tests miss
   // (owner decision 2026-10-22): it runs at FIXER_EFFORT on its own tier's model unless gsd.roles.fixer sets an effort.
   const FIXER_EFFORT = "high";
@@ -552,6 +555,14 @@ export function executeSteps(kit, run) {
     ev(`shared ${waveId} ${files.length}`);
     return held.length ? generatedStop(waveId, label, held) : null;
   }
+  // Kit feedback 102 F3: a gate fixer that verifies itself (gsd.fixer_verifies_itself) may run the failing test files of its
+  // failures (exec-fixers tests) with the gate's test command, within the gsd.fixer limits; none listed, the prompt is as before.
+  const fixRuntime = (tests = []) => ({ tests: tests.length ? JSON.stringify(tests) : "", command: String(JSON.stringify(testCommand ?? testArgv)), attempts: String(P.fixer.attempts), minutes: String(P.fixer.minutes) });
+  // The integration fixer's prompt (template integration-fix, G064): it owns exactly `files`, the files of the `placed` failures.
+  async function integrationPrompt(files, placed, tests) {
+    const own = tests ?? (await flow(["exec-fixers"], { gate: { unplaced: placed }, verifies: P.fixer.verifies })).json?.tests ?? [];
+    return renderPrompt("integration-fix", { files: JSON.stringify(files), failures: failureText(placed), ...fixRuntime(own), digest: digestLine("fix:integration", await digestOf({ files })) });
+  }
   // CR-GSF-16: every fix result is inspected before the gate reruns. A quota or a call that could not run stops the round at once;
   // a fixer that answers unresolved, or a fix call that returned nothing, is judged on a fresh gate (G066, G088, kit-feedback
   // 28/30); an owner decision of a fixer (kit-feedback 51) waits for the transfers and the rerun (exec-round-end, with the stall
@@ -565,8 +576,8 @@ export function executeSteps(kit, run) {
       // Fixer routing (exec-fixers): a plan's failures go to its executor session, or to a main-tree fixer when the plan resumed
       // without its worktree (a new one would start from HEAD); G064: an integration fixer owns exactly the files of the failures
       // no plan owns; a failure naming no file has no owner.
-      const route = (await flow(["exec-fixers"], { gate: cur, plans: tasks.map((t) => t.plan), worktreeMode, trees: Object.keys(worktrees).filter((id) => worktrees[id]) })).json;
-      const fixes = route.plans.map(({ id, kind, failures }) => async () => {
+      const route = (await flow(["exec-fixers"], { gate: cur, plans: tasks.map((t) => t.plan), worktreeMode, trees: Object.keys(worktrees).filter((id) => worktrees[id]), verifies: P.fixer.verifies })).json;
+      const fixes = route.plans.map(({ id, kind, failures, tests }) => async () => {
         const t = tasks.find((x) => x.plan === id);
         const reqs = pendingRequests[id] ?? [];
         const dg = digestLine(`fix:${id}`, await digestOf({ owns: t.owns ?? [] }));
@@ -574,7 +585,7 @@ export function executeSteps(kit, run) {
           const prompt = await fixerPrompt(t.owns ?? [], [], failures, reqs, dg);
           return { id, kind, ...(await writeTree(() => call(prompt, fixerOpts(`fix-${id}-${round}`)))) };
         }
-        const prompt = await renderPrompt("executor-fix", { round, plan: id, failures: failureText(failures), requests: reqs.length ? JSON.stringify(reqs) : "", evidence: String(cur.evidence), digest: dg });
+        const prompt = await renderPrompt("executor-fix", { round, plan: id, failures: failureText(failures), requests: reqs.length ? JSON.stringify(reqs) : "", evidence: String(cur.evidence), ...fixRuntime(tests), digest: dg });
         const fix = () => call(prompt, execOpts(t, `fix-${id}-${round}`));
         return { id, kind, t, ...(await (worktreeMode ? fix() : writeTree(fix))) };
       });
@@ -584,7 +595,7 @@ export function executeSteps(kit, run) {
         const lost = unsaved("before the integration fix");
         if (lost) return { stop: lost };
         fixes.push(async () => {
-          const prompt = await renderPrompt("integration-fix", { files: JSON.stringify(route.files), failures: failureText(route.placed), digest: digestLine("fix:integration", await digestOf({ files: route.files })) });
+          const prompt = await integrationPrompt(route.files, route.placed, route.tests);
           return { id: null, kind: "integration", ...(await writeTree(() => call(prompt, fixerOpts(`integration-fix-${round}`)))) };
         });
       }
@@ -1103,7 +1114,7 @@ export function executeSteps(kit, run) {
     get allTasks() { return allTasks; },
     get waves() { return waves; },
     // agent calls and their parts
-    call, digestOf, failureText, fixerOpts, classify,
+    call, digestOf, failureText, fixerOpts, classify, integrationPrompt,
     // preconditions
     lock, unlock, scanHandEdits, antiPatterns, load, switchBranch, baseline, takeOwnerAnswers, resumeGate, gapCap, executionInputs,
     // the main tree
