@@ -4,8 +4,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { UsageError, failedLine } from "../lib/cli.mjs";
 import { readJson, readText } from "../lib/io.mjs";
+import { resolveInside } from "../lib/paths.mjs";
 import { homeDir } from "../platform.mjs";
-import { RUN_FILES, readJournal, runsDirOf } from "./journal.mjs";
+import { RUN_FILES, checkRunId, readJournal, runsDirOf } from "./journal.mjs";
 import { KINDS, toolKind } from "./tools.mjs";
 
 export const RUN_STATS_OPTIONS = Object.freeze({ transcripts: "bool", "runs-dir": "string" });
@@ -103,10 +104,11 @@ export async function runStatsCommand(ctx) {
   }
   let code = 0;
   for (const id of ctx.args) {
-    const dir = path.join(runsDir, id);
     let info;
     let journal;
     try {
+      checkRunId(id, "run id");
+      const dir = resolveInside(runsDir, id);
       info = readJson(path.join(dir, RUN_FILES.run));
       journal = readJournal(path.join(dir, RUN_FILES.journal));
     } catch (e) {

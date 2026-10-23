@@ -3,8 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { UsageError, oneLine } from "../lib/cli.mjs";
 import { readJsonIf } from "../lib/io.mjs";
+import { resolveInside } from "../lib/paths.mjs";
 import { pidAlive } from "../lib/proc.mjs";
-import { RUN_FILES, runsDirOf, runsDirSuffix } from "./journal.mjs";
+import { RUN_FILES, checkRunId, runsDirOf, runsDirSuffix } from "./journal.mjs";
 
 export const WATCH_OPTIONS = Object.freeze({ all: "bool", "from-start": "bool", "runs-dir": "string" });
 const POLL_MS = 1000;
@@ -43,13 +44,18 @@ function readAppended(st) {
 export async function watchRunCommand(ctx) {
   const ids = ctx.args;
   if (!ids.length) throw new UsageError("name at least one run id: ph watch-run RUNID... [--all] [--from-start] [--runs-dir D]");
+  // Every id is checked before any run starts streaming, so one bad id stops the whole command.
+  for (const id of ids) checkRunId(id, "run id");
   const runsDir = runsDirOf(ctx.root, ctx.opts["runs-dir"]);
   const archiveHint = runsDirSuffix(ctx.root, runsDir);
   const many = ids.length > 1;
-  const runs = ids.map((id) => ({
-    id, dir: path.join(runsDir, id), logFile: path.join(runsDir, id, RUN_FILES.log), offset: 0, rest: Buffer.alloc(0),
-    first: true, ended: false, deadChecks: 0, since: ctx.clock.now(),
-  }));
+  const runs = ids.map((id) => {
+    const dir = resolveInside(runsDir, id);
+    return {
+      id, dir, logFile: path.join(dir, RUN_FILES.log), offset: 0, rest: Buffer.alloc(0),
+      first: true, ended: false, deadChecks: 0, since: ctx.clock.now(),
+    };
+  });
   const say = (st, line) => ctx.out(`${many ? `[${st.id.slice(-4)}] ` : ""}${line}`);
   const end = (st, line) => {
     if (line) say(st, line);

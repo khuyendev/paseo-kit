@@ -7,7 +7,7 @@ import { PH_FILE, UsageError, errText } from "../lib/cli.mjs";
 import { readText, writeJsonAtomic, readJsonIf } from "../lib/io.mjs";
 import { samePath } from "../lib/paths.mjs";
 import { runWorkflow } from "./engine.mjs";
-import { RUN_FILES, loadInFlight, loadJournalCache, newRunId, parseBudget, readJournal, runsDirOf, runsDirSuffix } from "./journal.mjs";
+import { RUN_FILES, checkRunId, loadInFlight, loadJournalCache, newRunId, parseBudget, readJournal, runsDirOf, runsDirSuffix } from "./journal.mjs";
 import { METRICS_REL, appendRecords, runRecord } from "./metrics.mjs";
 import { createPaseoHost } from "./runner.mjs";
 import { runtime as kitRuntime } from "./runtime-bridge.mjs";
@@ -21,11 +21,6 @@ export const WORKFLOW_USAGE = "ph workflow [--script F | --name N] [--args JSON 
 const NO_CALLER = "PASEO_AGENT_ID is not set: run ph from an agent inside Paseo, so every agent is created as its subagent";
 // The detached child runs in the directory its parent claimed; this names it, nothing else may reuse a run dir.
 const CLAIMED_ENV = "PASEO_HARNESS_CLAIMED_RUN_DIR";
-
-// A run id names one immediate child of the runs dir: never "." or ".." (CR-WFL-01).
-function checkRunId(id, flag) {
-  if (!/^[A-Za-z0-9._-]+$/.test(id) || /^\.+$/.test(id)) throw new UsageError(`invalid ${flag} '${id}' (letters, digits, . _ - only, not only dots)`);
-}
 
 // A saved workflow lives only in .agents/workflows/ (FLOW-10); {scriptPath} is relative to the root.
 export function resolveScript(root, ref) {

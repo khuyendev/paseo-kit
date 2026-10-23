@@ -93,6 +93,11 @@ export function newRunId(date) {
   return `wf_${stamp}_${crypto.randomBytes(2).toString("hex")}`;
 }
 
+// A run id names one immediate child of the runs dir: never "." or ".." (CR-WFL-01). Every command that takes an id checks it.
+export function checkRunId(id, flag) {
+  if (!/^[A-Za-z0-9._-]+$/.test(id) || /^\.+$/.test(id)) throw new UsageError(`invalid ${flag} '${id}' (letters, digits, . _ - only, not only dots)`);
+}
+
 export const runsDirOf = (root, opt) => path.resolve(root, opt ?? DEFAULT_RUNS_DIR);
 
 // The ` --runs-dir <D>` suffix for hints, present whenever the run is not under the default directory.
