@@ -10,7 +10,7 @@ description: "Executes a planned GSD phase wave by wave through the gsd-execute 
 
 Method text: the orchestration of upstream `execute-phase` is the workflow script below; for each plan follow `.agents/gsd/generated/workflows/execute-plan.md` (generated upstream text, unchanged; the executor's deviation rules, `.agents/gsd/generated/executor-rules.md`, reach it through its role include), then apply `.agents/workflows/gsd-overlay.md` and the project section below (overlays win).
 
-The workflow is the project's composition `.agents/workflows/gsd-execute.js`: a script of kit verbs that the project owns and evolves. This block is the kit's contract for every composition; the project section below the markers describes what this project's script takes and returns.
+The workflow is the project's composition `.agents/workflows/gsd-execute.js`: a script of kit verbs and kit steps (the engine global `executeSteps`: the steps its schedules share, each returning its stop with the answer) that the project owns and evolves. This block is the kit's contract for every composition; the project section below the markers describes what this project's script takes and returns.
 
 Run: write the args file `_workspace/args/gsd-execute.json` (its fields are in the project section), run `node .agents/harness/ph.mjs workflow --name gsd-execute --args-file _workspace/args/gsd-execute.json --detach` and wait as its `next:` line says. A run that died is continued with `node .agents/harness/ph.mjs workflow --resume <runId>` (finished agent calls replay from the journal); a stopped run is answered, then run again with the same args.
 

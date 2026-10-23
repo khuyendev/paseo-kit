@@ -26,6 +26,7 @@ test("TI a script with the old copied block is still scanned; one with its own f
 test("TI the shipped compositions without the block still have every verb call checked, none unknown", () => {
   const r = checkCompositionVerbs(SHIP_DIR);
   assert.equal(r.scripts, 9);
-  assert.ok(r.calls > 200, JSON.stringify(r));
+  // THIN stage 3: the verb calls of gsd-execute's shared steps moved into the kit step library (harness/workflow/steps.mjs).
+  assert.ok(r.calls > 150, JSON.stringify(r));
   assert.deepEqual(r.problems, []);
 });

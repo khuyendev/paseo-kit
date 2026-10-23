@@ -1,6 +1,7 @@
 // Workflow script format (FLOW-01) and the script context with its determinism guards (FLOW-02).
 // The context is not a security boundary (FLOW-49): scripts are trusted project code.
 import vm from "node:vm";
+import { executeSteps } from "./steps.mjs";
 
 const META_START = /^export\s+const\s+meta\s*=\s*/;
 
@@ -208,9 +209,14 @@ export function kitHelpers({ shell, agent, parallel }) {
 }
 
 export const KIT_HELPER_NAMES = Object.freeze(Object.keys(kitHelpers({ shell: null, agent: null, parallel: null })));
+// The step libraries (THIN.md stage 3): `executeSteps(run)` (steps.mjs) is bound to the kit helpers above and the runtime
+// (agent, shell, parallel, log, phase, runId), never to a script's replacement of one.
+export const KIT_STEP_NAMES = Object.freeze(["executeSteps"]);
+export { executeSteps };
 
 // Runs inside the script context: defines the globals on top of the host bridge `__host` (values cross as JSON), then
-// the kit helpers on top of `shell` and `agent` (writable: a script may wrap `call`).
+// the kit helpers on top of `shell` and `agent` (writable: a script may wrap `call`), then the step libraries on top of the
+// kit's helpers.
 const PRELUDE = String.raw`
 "use strict";
 const __h = globalThis.__host;
@@ -278,7 +284,14 @@ globalThis.workflow = async (ref, a) => {
   return r === undefined ? undefined : JSON.parse(r);
 };
 globalThis.shell = async (cmd, opts) => JSON.parse(await __h.shell(JSON.stringify(cmd), opts === undefined ? undefined : JSON.stringify(opts)));
-` + `Object.assign(globalThis, (${kitHelpers})({ shell: globalThis.shell, agent: globalThis.agent, parallel: globalThis.parallel }));\n`;
+` + `{
+  const __kit = (${kitHelpers})({ shell: globalThis.shell, agent: globalThis.agent, parallel: globalThis.parallel });
+  Object.assign(globalThis, __kit);
+  const __rt = { shell: globalThis.shell, agent: globalThis.agent, parallel: globalThis.parallel, log: globalThis.log, phase: globalThis.phase, runId: globalThis.runId };
+  const __executeSteps = (${executeSteps});
+  globalThis.executeSteps = (run) => __executeSteps({ ...__kit, ...__rt }, run);
+}
+`;
 
 // Run a parsed body in a fresh context; `host` is the bridge the prelude wraps. Resolves the JSON-cloned return value.
 export async function runBody(body, scriptPath, host) {

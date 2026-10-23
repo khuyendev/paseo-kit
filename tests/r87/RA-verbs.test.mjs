@@ -70,7 +70,8 @@ test("RA a script without the shared helpers is not scanned (another flow() is n
 
 test("RA every shipped composition calls only kit verbs", () => {
   const r = checkCompositionVerbs(SHIP_DIR);
-  assert.ok(r.scripts >= 9 && r.calls > 200, JSON.stringify(r));
+  // THIN stage 3: the verb calls of gsd-execute's shared steps moved into the kit step library (harness/workflow/steps.mjs).
+  assert.ok(r.scripts >= 9 && r.calls > 150, JSON.stringify(r));
   assert.deepEqual(r.problems, []);
 });
 

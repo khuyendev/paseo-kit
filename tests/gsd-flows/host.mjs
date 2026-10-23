@@ -8,7 +8,7 @@ import { pathToFileURL } from "node:url";
 import { SHIP_DIR } from "../helpers/temp.mjs";
 import { createWorktree } from "../../ship/.agents/harness/runtime/worktrees.mjs";
 import { AGENT_OPTIONS } from "../../ship/.agents/harness/workflow/engine.mjs";
-import { kitHelpers } from "../../ship/.agents/harness/workflow/script.mjs";
+import { executeSteps, kitHelpers } from "../../ship/.agents/harness/workflow/script.mjs";
 
 const WORKFLOWS = path.join(SHIP_DIR, ".agents", "workflows");
 const flowMod = await import(pathToFileURL(path.join(WORKFLOWS, "lib", "gsd-flow.mjs")).href);
@@ -140,9 +140,12 @@ export async function runScript(name, opts) {
   async function evaluate(scriptName, scriptArgs, depth = 0) {
     const body = loadScript(scriptName);
     const g = guardedGlobals();
+    const log = (m) => logs.push(`log ${m}`);
+    const phase = (t) => logs.push(`phase ${t}`);
+    const kit = kitHelpers({ shell, agent, parallel });
     const globals = {
       agent, shell, parallel, pipeline, args: scriptArgs === undefined ? undefined : JSON.parse(JSON.stringify(scriptArgs)), runId,
-      phase: (t) => logs.push(`phase ${t}`), log: (m) => logs.push(`log ${m}`),
+      phase, log,
       budget: { total: null, spent: () => 0, remaining: () => Infinity },
       workflow: async (child, childArgs) => {
         if (depth >= 1) throw new Error("workflow() nesting is one level only");
@@ -150,8 +153,10 @@ export async function runScript(name, opts) {
       },
       console: { log: (m) => logs.push(`log ${m}`), warn: (m) => logs.push(`log ${m}`), error: (m) => logs.push(`log ${m}`), info: (m) => logs.push(`log ${m}`) },
       Date: g.Date, Math: g.Math,
-      // As the engine: the kit helpers are globals (THIN.md item 1), built on this host's shell and agent.
-      ...kitHelpers({ shell, agent, parallel }),
+      // As the engine: the kit helpers are globals (THIN.md item 1), built on this host's shell and agent; the step libraries
+      // (THIN.md stage 3) are bound to them and to the runtime.
+      ...kit,
+      executeSteps: (run) => executeSteps({ ...kit, shell, agent, parallel, log, phase, runId }, run),
     };
     // As the engine: the body is a function scope inside the globals, so a script's own helper definitions win.
     const fn = new Function(...Object.keys(globals), `return (async () => {\n${body}\n})();`);

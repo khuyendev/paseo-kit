@@ -417,6 +417,7 @@
     ".agents/harness/workflow/schema.mjs",
     ".agents/harness/workflow/script.mjs",
     ".agents/harness/workflow/shell.mjs",
+    ".agents/harness/workflow/steps.mjs",
     ".agents/harness/workflow/tools.mjs",
     ".agents/harness/workflow/watchdog.mjs",
     ".agents/model-prices.json",

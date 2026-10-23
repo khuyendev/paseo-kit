@@ -11,6 +11,9 @@ import { runScript } from "../gsd-flows/host.mjs";
 import { PHASE_DIR } from "../gsd-flows/world.mjs";
 
 const SCRIPT = fs.readFileSync(path.join(SHIP_DIR, ".agents/workflows/gsd-execute.js"), "utf8");
+// THIN stage 3: the steps the schedules share are the kit's step library; a step returns its stop (made there with owner()) to the
+// composition, so the stops of a run are those of the script and of the steps it composes.
+const STEPS = fs.readFileSync(path.join(SHIP_DIR, ".agents/harness/workflow/steps.mjs"), "utf8");
 // accepted.confirm: kit feedback 89 (an open accepted checker issue before its plans run).
 const VERBS = ["halt.clear", "shared.clear", "request.clear", "grant", "allow", "accepted.confirm", "fix-and-rerun", "rerun", "workflow"];
 
@@ -43,23 +46,24 @@ function callArgs(text, open) {
   }
   throw new Error(`unbalanced call at ${open}`);
 }
-const stops = [...SCRIPT.matchAll(/(?<![\w.])owner\(/g)].map((m) => {
-  const args = callArgs(SCRIPT, m.index + m[0].length - 1);
-  return { line: SCRIPT.slice(0, m.index).split("\n").length, stage: args[0], extra: args[2] ?? "" };
-});
+const stops = [["gsd-execute.js", SCRIPT], ["steps.mjs", STEPS]].flatMap(([file, text]) => [...text.matchAll(/(?<![\w.])owner\(/g)].map((m) => {
+  const args = callArgs(text, m.index + m[0].length - 1);
+  return { file, line: text.slice(0, m.index).split("\n").length, stage: args[0], extra: args[2] ?? "" };
+}));
 
 test("RB B3 every needs-owner stop of gsd-execute names its answer verb", () => {
   assert.ok(stops.length >= 40, `found ${stops.length} stops`);
   const without = stops.filter((s) => !/^\{(.*[,{])?\s*answer:\s*(ANSWER\.\w+\(|GATE_RED\b|grantRequests\.length \? ANSWER|fatal\(r\.reason\) \? ANSWER)/s.test(s.extra));
-  assert.deepEqual(without.map((s) => `line ${s.line} (${s.stage})`), [], "stops without an answer path");
-  // The answer table: one entry per verb, nothing outside the list.
-  const table = /const ANSWER = \{([\s\S]*?)\n\};/.exec(SCRIPT)?.[1] ?? "";
+  assert.deepEqual(without.map((s) => `${s.file} line ${s.line} (${s.stage})`), [], "stops without an answer path");
+  assert.ok(stops.some((s) => s.file === "gsd-execute.js") && stops.some((s) => s.file === "steps.mjs"));
+  // The answer table (the run's, in the step library): one entry per verb, nothing outside the list.
+  const table = /const ANSWER = \{([\s\S]*?)\n\s*\};/.exec(STEPS)?.[1] ?? "";
   const verbs = [...table.matchAll(/verb: "([^"]+)"/g)].map((m) => m[1]);
   assert.ok(verbs.length >= 6);
   for (const v of verbs) assert.ok(VERBS.includes(v), v);
   // Every needs-owner result is made by owner(): no other construction of the status.
   // The needsOwner helper is the engine's global since THIN stage 1, no longer a copy in the script.
-  assert.deepEqual([...SCRIPT.matchAll(/"needs-owner"/g)].length, 3, "owner() (its default and its Checks stop of item 87 C1) and the graph drain check");
+  assert.deepEqual([...`${SCRIPT}${STEPS}`.matchAll(/"needs-owner"/g)].length, 3, "owner() (its default and its Checks stop of item 87 C1) and the graph drain check");
 });
 
 const exec = (w, overrides = {}) => runScript("gsd-execute", { root: w.root, args: { phaseDir: PHASE_DIR }, gsd: w.gsd, agent: executor(w, overrides) });

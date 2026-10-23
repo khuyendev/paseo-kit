@@ -531,8 +531,27 @@ wait in order), `serialize()` (calls one at a time, in order; a failed call does
 ones). A script's own top-level definition of a name wins (a
 project script that still carries the old block keeps working, and resumes replay the same agent calls either way: the
 journal keys a call by its prompt and options, not by script text); the kit's helpers keep calling each other, so a
-script that replaces only `run` does not change `flow`. Reassigning a global (`call = ...`, as gsd-execute and gsd-plan
+script that replaces only `run` does not change `flow`. Reassigning a global (`call = ...`, as gsd-plan, gsd-plan-review and gsd-quick
 wrap it) affects only that script's run.
+
+Step library (THIN.md stage 3): the steps the execute schedules (waves, graph, batch) share are kit steps,
+`harness/workflow/steps.mjs` `executeSteps`, evaluated in each script context like the helpers and bound to the kit's
+helpers and the runtime (`agent`, `shell`, `parallel`, `log`, `phase`, `runId`; never a script's replacement). The global
+`executeSteps({phaseDir, args, cfg, setup, policy})` takes the answers of `exec-args` and `exec-setup` and the composition
+policies as values (`policy`: `pending`, `requestCheck`, `reviewLimit`, `reviewers`, `reviewDepth`, `fixer {verifies, attempts,
+minutes}`, `smokeTriggers`, `protectedBranches`; per call: `rounds` of `fixRounds`, `limit` and `earlier` of `codeWave`; no
+kit module reads a policy key, section 4.3) and returns the run: its record (`skipped`, `worktrees`, `inFlight`; getters
+`progress`, `stateError`, `handoff`, `allTasks`, `waves`), `result(status, extra)`, `owner(stage, reason, extra)`, `ANSWER`,
+`GATE_RED`, the judged agent call `call(prompt, {judges, ...opts})` (the digest of what it judges and the research policy),
+and the steps: preconditions (`lock`/`unlock`, `scanHandEdits`, `antiPatterns`, `load`, `switchBranch`, `baseline`,
+`takeOwnerAnswers`, `resumeGate`, `gapCap`, `executionInputs`), executors (`dispatch`, `integrate`, `codeWave`, `seedTrees`,
+`declareShared`, the stops before a dispatch), the gate (`runGate`, `gateNow`, `smokeStop`, `strayStop`, `applyShared`,
+`fixRounds`), the review (`reviewPlan`, `reviewAll`, `reviewFix`: finders, finding verification, fixer, resolution check),
+the commit transaction (`planFiles`, `commitWaves`, `track`, `trackCommitted`) and the end (`stopAsked`, `pauseBefore`,
+`paused`, `finish`, `phaseGate`); `EXECUTE_STEP_NAMES` lists them. A precondition returns its stop or null, the other steps
+`{stop}` (or the stop), always with its `answer`; no step ends the run itself. The bounds of a step's protocol (two verifier
+attempts and a second verifier, two fix passes, one reviewer retry) are the step's. The agent prompts and options are those
+of the inline code the steps replaced, so the journal keys and a resumed run are unchanged.
 
 Prompt templates (THIN.md item 2): a prompt that is a contract with a verb or a schema is kit text in
 `.agents/workflows/prompts/<name>.md` (a kit part, shipped prompt text for the release check); a project adds its own as

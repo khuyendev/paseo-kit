@@ -47,7 +47,9 @@ test("GSDF-02 plan chains execute and verify, --plan-only stops after the handof
   const plan = skill("gsd-plan");
   assert.match(plan, /chain: `gsd-execute`, then `gsd-verify`, stopping at the first `needs-owner` or `failed`/);
   assert.match(plan, /`--plan-only`: stop after the handoff/);
-  assert.match(loadScript("gsd-execute"), /no handoff files in/);
+  // THIN stage 3: the handoff check is the kit step `load` that gsd-execute runs among its preconditions.
+  assert.match(loadScript("gsd-execute"), /await R\.load\(\)/);
+  assert.match(read(path.join(SHIP_DIR, ".agents", "harness", "workflow", "steps.mjs")), /no handoff files in/);
 });
 
 // THIN.md item 1: the one verb helper is the engine's (kitHelpers in workflow/script.mjs); no script carries a copy.

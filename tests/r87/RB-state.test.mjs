@@ -189,7 +189,8 @@ test("RB open requests of a 3c00968 record are judged by the tree with the diges
 });
 
 test("RB gsd-execute writes execute-progress.json only through the state verbs and records the plan lifecycle", async () => {
-  const text = fs.readFileSync(path.join(SHIP_DIR, ".agents/workflows/gsd-execute.js"), "utf8");
+  // THIN stage 3: the composition and the kit steps it runs (harness/workflow/steps.mjs).
+  const text = [".agents/workflows/gsd-execute.js", ".agents/harness/workflow/steps.mjs"].map((f) => fs.readFileSync(path.join(SHIP_DIR, f), "utf8")).join("\n");
   assert.doesNotMatch(text, /flow\(\["write", PROGRESS\]/);
   assert.doesNotMatch(text, /saveProgress|integrationFiles|closeRequest|closeLinked/);
   assert.doesNotMatch(text, /progress\.\w+(\[[^\]]+\])?\s*=[^=]/, "no field of the record is assigned in the script");

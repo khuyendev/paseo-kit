@@ -1,19 +1,23 @@
 // THIN.md stage 2 (TE, kit feedback 87): gsd-execute.js is a composition: its agent prompts are kit templates, its reply schemas
 // and decisions are kit verbs, and it does not grow back. The 700-line budget of THIN item 4 (TI-budget) is not met by stage 2:
-// this ratchet keeps the size reached (1887 -> at most EXECUTE_RATCHET lines) until a later stage moves more out.
+// this ratchet keeps the size reached (1887 -> at most EXECUTE_RATCHET lines) until a later stage moves more out. Stage 3 S1
+// (TS1) moved the steps the schedules share into the kit step library (harness/workflow/steps.mjs): 1461 -> 441, the
+// ratchet follows; the prompts and the exec-* verbs are the composition's and its steps'.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { COMMAND_NAMES } from "../../ship/.agents/workflows/lib/gsd-flow.mjs";
+import { SHIP_DIR } from "../helpers/temp.mjs";
 import { compositionBudget, WORKFLOWS_DIR } from "./budget.mjs";
 
-const EXECUTE_RATCHET = 1465;
-const text = fs.readFileSync(path.join(WORKFLOWS_DIR, "gsd-execute.js"), "utf8").replace(/\r\n/g, "\n");
+const EXECUTE_RATCHET = 441;
+const read = (file) => fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
+const text = `${read(path.join(WORKFLOWS_DIR, "gsd-execute.js"))}\n${read(path.join(SHIP_DIR, ".agents/harness/workflow/steps.mjs"))}`;
 
 test("TE gsd-execute.js stays within the size stage 2 reached and defines no engine helper", () => {
   const { lines, helperDefinitions } = compositionBudget("gsd-execute.js");
-  assert.ok(lines <= EXECUTE_RATCHET, `gsd-execute.js has ${lines} lines; stage 2 left it at ${EXECUTE_RATCHET}`);
+  assert.ok(lines <= EXECUTE_RATCHET, `gsd-execute.js has ${lines} lines; stage 3 S1 left it at ${EXECUTE_RATCHET}`);
   assert.deepEqual(helperDefinitions, []);
 });
 
