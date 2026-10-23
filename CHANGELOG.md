@@ -6,6 +6,32 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Bug-hunt fix pass, all other areas (owner-approved 2026-10-23: fix every verified group, design groups per the
+  owner's kit-feedback suggestions, GSD-related policy kept as upstream GSD does; kit-bughunt dedup/VERIFIED-ALL.json,
+  one Haiku agent per group, merged on bughunt-fixes). 157 groups across plan, plan review, research, revisions,
+  verify, quick, debug, map, new-project, workflow engine and CLI, ph verbs and help (`--help`/`-h` on every verb),
+  Windows (`.cmd`/`.bat` and `.ps1` resolution through PATHEXT), hooks, installer, harness-files mod, pricing and the
+  two plugins. Owner design choices: only blockers revise, stall or cap a checker, skeleton or quick loop, warnings are
+  carried (feedback 13, 20); the file line scales with `plans_per_phase` (20); checker cap and stall count per plan
+  (9); plan review converges on high, carries medium/low as advisories, caps by trend and re-reviews its last edit (16,
+  17); delegated discuss mode (8); plan-review edits and each finished plan are recorded at once (18, 20); revision keys
+  hash what each judgement reads (3, 14). Feedback 2: gsd-plan holds only its phase lease, execute, debug and quick keep
+  the code-root lease, `ph gsd commit` takes a git writer lock, so planning phase N+1 overlaps executing phase N.
+  Feedback 22: optional `adapter.dependency_probe` (argv, default unset) runs at handoff on the plans' structured
+  `<path>: dependency <name> [<constraint>]` lines and stops needs-owner at Dependencies on failure. Feedback 26:
+  `adapter.ownership.regenerated` globs (default empty) and line-ending-only changes outside owns are dropped at
+  transfer with a log line; executors delete their scratch files. `ph gsd phase uat-passed` follows upstream GSD: a
+  verified gap resolution and a skipped test with a reason no longer block (GSDC-16 wording updated). Kept as GSD does
+  (owner 2026-10-23): research reuse does not hash STATE.md (G051), standalone plan review adds no deterministic size
+  rule (G042), every UAT issue blocks (G099); kept as is: the skill-usage log is not rotated (G171). Prompt text: the
+  gsd-plan-checker overlay (blocker-only gates, scaled file line, task limit, research questions answered in a plan),
+  gsd-planner overlay (dependency lines), skills gsd-plan, gsd-quick, gsd-execute, gsd-debug, gsd-discuss, gsd-verify,
+  gsd-research, gsd-map-codebase, ph, harness references, INTERFACES.md (role catalog 4.2, worktree_setup,
+  code_review). Integration commits keep generated role files untouched (G026 rule moved to the overlay) and
+  `.planning/requirements/tools.md` at its phase base (OFFC-25). Measured check: one regression test per group in
+  tests/bughunt/ (failing before each fix), full offline suite 1806 pass / 0 fail / 11 skipped on Windows; not run on
+  a live phase or in the Paseo app.
+
 - Bug-hunt fix pass, execute flow (owner-approved fix brief 2026-10-23, kit-bughunt FIX-BRIEF; groups G054-G092, G006,
   G020, G126; kit-feedback 1, 19, 21, 23-36). Safe resume: a nested path belongs to the plan owning it most specifically
   (the hotfix of feedback 31, done on normalized owns); a commit of the run whose commits.json record failed is
