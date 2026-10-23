@@ -91,7 +91,7 @@ export function quickDir(root, description, now = new Date()) {
   }
 }
 
-export function forensicsPath(root, description, now = new Date()) {
+export function forensicsPath(root, topic, now = new Date()) {
   const date = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
-  return { path: `.planning/forensics/${date}-${slugify(description)}.md` };
+  return { path: `.planning/forensics/${date}-${slugify(topic)}.md` };
 }
