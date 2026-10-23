@@ -76,8 +76,8 @@ export function planRequest(request, store) {
 
 const HANDLERS = { read_ranges: readRanges, edit_multiple_files: editMultiple, write_multiple_files: writeMultiple };
 
-// Returns { text, isError? }; the store is updated in place.
-export function executeRequest(request, store, plan, env = process.env) {
+// Returns { text, isError? }; the store is updated in place. journal: { file, ticket, method } for the batch journal.
+export function executeRequest(request, store, plan, env = process.env, journal = null) {
   const current = planRequest(request, store);
   if (current.signature !== plan.signature) throw new Error("permission plan changed (paths, symlinks or retained fixes); nothing executed, retry the call");
   const expected = new Map(plan.checks.map((c) => [pathKey(path.resolve(c.abs)), c.real]));
@@ -87,6 +87,6 @@ export function executeRequest(request, store, plan, env = process.env) {
   };
   // FTOL-17: the project's read_limits per request; an invalid overlay fails this call only
   const limits = loadConfig(discoverConfigRoot(request.cwd, env)).read_limits;
-  const out = HANDLERS[request.method](request.args, { cwd: request.cwd, limits, guard, store });
+  const out = HANDLERS[request.method](request.args, { cwd: request.cwd, limits, guard, store, journal });
   return typeof out === "string" ? { text: out } : out;
 }

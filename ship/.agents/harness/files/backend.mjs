@@ -6,6 +6,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { recoverCommit } from "./commit.mjs";
 import { executeRequest, planRequest } from "./plan.mjs";
 import { defaultStateRoot, identifier, locked, readPrivate, sessionDirectory, sessionHash, sweep, sweepSessions, writePrivate } from "./private.mjs";
 import { createStore } from "./store.mjs";
@@ -47,6 +48,28 @@ export function pageResult(dir, method, out, token) {
 
 const file = (dir, ticket, kind) => path.join(dir, kind === "started" ? `${ticket}.started` : `${ticket}.${kind}.json`);
 const UNAVAILABLE = "ticket/receipt unavailable: execution may still be running, or its private one-hour retention/budget expired; inspect target state, do not blindly repeat mutations";
+const PENDING = "interrupted by a killed process; its batch is rolled back by the next file call (every call's plan step does it), then recover this receipt";
+// the batch journal of the session's execution in progress: present only while a batch is being written
+const JOURNAL = "journal.json";
+
+// the reply for a ticket with no result: the rollback is still pending when its batch journal is there
+function unavailable(dir, ticket) {
+  const journal = path.join(dir, JOURNAL);
+  return fs.existsSync(journal) && readPrivate(journal).ticket === ticket ? PENDING : UNAVAILABLE;
+}
+
+// A batch that a killed process left half-written is rolled back before any ticket runs; its ticket then gets the
+// rollback as its result, so its receipt does not report an outcome that is no longer partly written
+function recoverInterrupted(dir) {
+  const journal = path.join(dir, JOURNAL);
+  if (!fs.existsSync(journal)) return;
+  const { ticket, method, incomplete } = recoverCommit(journal);
+  const text = incomplete.length
+    ? `interrupted by a killed process; ROLLBACK INCOMPLETE, these files may hold the new text: ${incomplete.join("; ")}`
+    : "interrupted by a killed process; rolled back: nothing written";
+  writePrivate(file(dir, ticket, "result"), pageResult(dir, method, { isError: true, text }));
+  fs.rmSync(file(dir, ticket, "started"), { force: true });
+}
 
 function stage(dir, session, input) {
   if (typeof input.cwd !== "string" || !path.isAbsolute(input.cwd)) throw new Error("absolute session cwd required");
@@ -57,7 +80,7 @@ function stage(dir, session, input) {
     try {
       result = readPrivate(file(dir, receipt, "result"));
     } catch (e) {
-      if (e.code === "ENOENT") throw new Error(UNAVAILABLE);
+      if (e.code === "ENOENT") throw new Error(unavailable(dir, receipt));
       throw e;
     }
     if (result.method !== input.method) throw new Error("receipt belongs to a different tool");
@@ -90,7 +113,7 @@ function collect(dir, input) {
   try {
     result = readPrivate(file(dir, ticket, "result"));
   } catch (e) {
-    if (e.code === "ENOENT") throw new Error(UNAVAILABLE);
+    if (e.code === "ENOENT") throw new Error(unavailable(dir, ticket));
     throw e;
   }
   for (const kind of ["request", "plan"]) fs.rmSync(file(dir, ticket, kind), { force: true });
@@ -133,6 +156,7 @@ export function runTicket(action, session, ticket, opts = {}) {
   identifier(ticket, "backend ticket");
   const dir = sessionDirectory(opts.stateRoot ?? defaultStateRoot(), session);
   return locked(dir, () => {
+    recoverInterrupted(dir);
     const stateFile = path.join(dir, "state.json");
     const store = createStore(readPrivate(stateFile, {}));
     if (action === "--execute" && fs.existsSync(file(dir, ticket, "result"))) return; // completed: never repeat
@@ -152,7 +176,7 @@ export function runTicket(action, session, ticket, opts = {}) {
     fs.writeFileSync(file(dir, ticket, "started"), String(Date.now()), { flag: "wx", mode: 0o600 }); // FTOL-11
     let out;
     try {
-      out = executeRequest(request, store, plan, opts.env ?? process.env);
+      out = executeRequest(request, store, plan, opts.env ?? process.env, { file: path.join(dir, JOURNAL), ticket, method: request.method });
     } catch (e) {
       out = { isError: true, text: e.message };
     }

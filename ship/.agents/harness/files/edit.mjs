@@ -307,7 +307,7 @@ export function editMultiple({ files = [], fixes = [], dryRun = false, atomic = 
   }
   if (!dryRun) {
     try {
-      commitFiles(plan, ctx.io);
+      commitFiles(plan, ctx.io, ctx.journal);
     } catch (e) {
       return { isError: true, text: [e.message, ...report].join("\n") };
     }
@@ -344,7 +344,7 @@ export function writeMultiple({ files }, ctx) {
   }
   if (errors.length) return { isError: true, text: `nothing written:\n${errors.join("\n")}` };
   try {
-    commitFiles(plan, ctx.io);
+    commitFiles(plan, ctx.io, ctx.journal);
   } catch (e) {
     return { isError: true, text: e.message };
   }
