@@ -6,6 +6,18 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Kit feedback 102 (owner 2026-10-24: "Check feed back"; one Opus agent, note kit-bughunt/fb8/design/W102.md): hung
+  tests and gate fixers. A gate step that times out names its hung test files (from its argv, else its last output
+  line naming one); later steps of the same gate run that would run them are failed `blocked by hang` without running,
+  and the result lists `hung`; the failure goes to the owner of the hung file. Optional
+  `adapter.commands.test_case_timeout_s` with `test_case_timeout_arg` (argv template, `{s}` = seconds; e.g. flutter/dart
+  `["--timeout","{s}s"]`, jest/vitest `["--testTimeout={s}000"]`, pytest `["--timeout={s}"]`, go `["-timeout","{s}s"]`)
+  is added to every test command the gate and the fixers run, so a hang fails one test in seconds; new flow verb
+  `test-command`. With `gsd.fixer_verifies_itself` (default true) a gate fixer and the integration fixer may run the
+  failing test files they own with that timeout (bounded like the review fixer); off keeps the old "do not run tests".
+  Prompt text: executor-fix and integration-fix templates. Measured check: tests/fb8/, full offline suite 2438: 2425
+  pass, 0 fail, 13 skipped; not run on a live phase.
+
 - Kit step library for execute (thin composition stage 3, part S1; owner 2026-10-24 "Ok tách"; design
   kit-bughunt/thin/STAGE3.md, one Opus agent). The steps the waves, graph and batch schedules share moved verbatim into
   `harness/workflow/steps.mjs`, which the engine binds per run as the global `executeSteps(...)`: preconditions, dispatch
