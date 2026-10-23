@@ -151,6 +151,8 @@ function compositionVerbLines(ctx, line) {
   if (!r.scripts) return line("note", `composition verbs: no workflow scripts in ${WORKFLOWS_REL}/`);
   for (const p of r.problems) line("problem", `composition ${problemText(p)}`);
   if (!r.problems.length) line("ok", `composition verbs: ${r.scripts} workflow script(s), ${r.calls} flow and gsd calls use kit verbs${r.dynamic ? ` (${r.dynamic} with a computed verb not checked)` : ""}`);
+}
+
 // Integrity is independent of the project overlay so doctor can report both faults (CONF-08).
 async function gsdUpstreamLines(ctx, line) {
   let r;

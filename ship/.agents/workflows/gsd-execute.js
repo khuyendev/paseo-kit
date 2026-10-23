@@ -155,6 +155,7 @@ const ANSWER = {
   tree: (what) => ({ verb: "fix-and-rerun", command: what }),
   rerun: (what = "rerun with the same args") => ({ verb: "rerun", command: what }),
   workflow: (what) => ({ verb: "workflow", command: what }),
+};
 const GATE_RED = ANSWER.tree("fix the failing files by hand (or give a fixer a file with ph gsd grant), then rerun with the same args");
 const digestOf = async (input) => (await flow(["digest"], input)).json?.hash ?? "none";
 
