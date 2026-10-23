@@ -102,7 +102,7 @@ Conventions used below:
 - Scope: v1
 
 ### GSDC-16 `phase uat-passed` predicate
-- Requirement: `phase uat-passed <N> [--require-verification|--uat-only]` returns `{passed, uat_files, verification_files, checks, blockers}` and exits 0 only when no UAT test is pending, issue, skipped or blocked (and, with `--require-verification`, VERIFICATION is `passed`); otherwise exit 1 with named blockers.
+- Requirement: `phase uat-passed <N> [--require-verification|--uat-only]` returns `{passed, uat_files, verification_files, checks, blockers}` and exits 0 only when a UAT test passed and none is pending, blocked, skipped without a reason, or an issue that is not a verified gap resolution (every `## Gaps` entry of the test `resolved`, `resolved_by` naming a plan of the phase with its SUMMARY; upstream GSD rule) (and, with `--require-verification`, VERIFICATION is `passed`); otherwise exit 1 with named blockers.
 - Acceptance: fixture UAT with 0 pass, 0 issue, 3 blocked exits 1 naming the three tests.
 - Source: UPS-55, UPS-54.
 - Scope: v1
