@@ -44,10 +44,12 @@ export const MSG = {
 const EMPTY_RE = /\b(No files found|No matches found)\b/i;
 const TRUNCATED_RE = /\(Showing \d+ of \d+|more are not listed|with pagination = limit/i;
 
-// HOOK-18: backslashes, relative to the hook cwd, dot segments, lower case.
+// HOOK-18: backslashes, relative to the hook cwd, dot segments, lower case; on Windows the Git Bash drive (/c/...)
+// is the native drive (c:/...) as in the file tools' nativePath, so both spellings of one file compare equal.
 export function normPath(p, cwd) {
   let s = String(p).replace(/\\/g, "/");
   if (cwd && !/^([a-z]:)?\//i.test(s)) s = `${String(cwd).replace(/\\/g, "/")}/${s}`;
+  if (process.platform === "win32") s = s.replace(/^\/([a-z])(\/|$)/i, (_, drive) => `${drive}:/`);
   return path.posix.normalize(s).toLowerCase();
 }
 const normAll = (values, cwd) => values.filter((v) => typeof v === "string" && v).map((p) => normPath(p, cwd));
