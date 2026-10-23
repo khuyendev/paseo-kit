@@ -325,6 +325,7 @@ export function check(L, known, { verbose = false } = {}) {
   problems.push(...installedProblems(L, fresh));
   let followed = 0;
   const verbTexts = [...fresh.values()];
+  const deepTexts = [];
   const seen = new Set();
   let frontier = [...fresh.values()].flatMap((t) => extractRefs(t).map((ref) => ({ ref, depth: 1 })));
   while (frontier.length) {
@@ -340,13 +341,22 @@ export function check(L, known, { verbose = false } = {}) {
         continue;
       }
       const text = fs.readFileSync(path.join(L.snapshot, ...ref.split("/")), "utf8");
-      if (depth === 1 && !/\/workflows\/[^/]+\.md$/.test(ref)) verbTexts.push(text);
+      const workflow = /\/workflows\/[^/]+\.md$/.test(ref);
+      if (depth === 1 && !workflow) verbTexts.push(text);
+      else if (!workflow) deepTexts.push({ ref, depth, text });
       if (depth < MAX_DEPTH) next.push(...extractRefs(text).map((r) => ({ ref: r, depth: depth + 1 })));
     }
     frontier = next;
   }
   const verbs = new Set(verbTexts.flatMap((t) => scanVerbs(t, known)));
   for (const v of [...verbs].sort()) if (!known.has(v)) problems.push(`unmapped gsd-tools verb "${v}" (add a verb-table row with a reason)`);
+  // A verb only a deeper reference names is compared too, but only warns (as a dangling reference at depth 2-3 does).
+  for (const { ref, depth, text } of deepTexts) {
+    for (const v of scanVerbs(text, known)) {
+      if (!known.has(v)) warnings.push(`unmapped gsd-tools verb "${v}" (depth ${depth}): ${ref}`);
+      verbs.add(v);
+    }
+  }
   return { problems, warnings, references: followed, verbs: verbs.size, verbose };
 }
 
