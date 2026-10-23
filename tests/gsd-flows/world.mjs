@@ -39,6 +39,7 @@ export function makeWorld(opts = {}) {
     research: () => read(phaseFile("CONTEXT.md")),
     inputs: () => read(phaseFile("CONTEXT.md")) + read(phaseFile("RESEARCH.md")),
     freeze: () => keyText.inputs() + read(phaseFile("PLAN-OUTLINE.md")) + read(phaseFile("PLAN-OUTLINE.manifest.json")) + read(phaseFile("WIRING.md")),
+    skeleton: () => read(phaseFile("SKELETON-LANES.json")) + read(".agents/agents/gsd-skeleton-reviewer.md"),
     checked: () => planIdsOnDisk().map((id) => read(`${PHASE_DIR}/${id}-PLAN.md`)).join(""),
     handoff: () => keyText.checked(),
   };

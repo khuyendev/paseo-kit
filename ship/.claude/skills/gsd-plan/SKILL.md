@@ -14,7 +14,7 @@ Method text: the orchestration of upstream `plan-phase` is the workflow script b
 - The run refuses a `COMPLETE` phase (`refused`, pointing at its VERIFICATION) unless the owner says force: pass `"force": true` and show the warning banner.
 
 ### Run (GSDF-15, GSDF-02)
-Args file `_workspace/args/gsd-plan.json`, e.g. `{"phaseDir": ".planning/phases/02-api"}`; optional `mode` (`plan` | `gaps`), `tracer` (default true), `reversibilityGates` (default true), `maxSkeletonPasses` / `maxCheckIterations` (integers 1..3, defaults from `gsd`), `skeletonLanes` (`[{lens, model?, effort?}]`, default `gsd.skeleton_lanes`), `wiring` (`auto|always|never`), `replan`, `skipResearch` + `researchSkipReason`, `forceProceed {reason}`, `planReview`, `roles {role: {model, effort}}`.
+Args file `_workspace/args/gsd-plan.json`, e.g. `{"phaseDir": ".planning/phases/02-api"}`; optional `mode` (`plan` | `gaps`), `tracer` (default true), `reversibilityGates` (default true), `maxSkeletonPasses` / `maxCheckIterations` (integers 1..3, defaults from `gsd`), `skeletonLanes` (`[{lens, model?, effort?}]`, default `gsd.skeleton_lanes`; a changed lane set, lens text or reviewer definition reruns the skeleton review), `wiring` (`auto|always|never`), `replan`, `skipResearch` + `researchSkipReason`, `forceProceed {reason}`, `planReview`, `roles {role: {model, effort}}`.
 `node .agents/harness/ph.mjs workflow --name gsd-plan --args-file _workspace/args/gsd-plan.json --detach`, then wait as `next:` says. Rerunning with the same args reuses everything whose inputs did not change; a run that died is continued with `ph workflow --resume <runId>`.
 
 ### Results

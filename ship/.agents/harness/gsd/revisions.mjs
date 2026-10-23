@@ -13,15 +13,15 @@ import { loadRoadmap, roadmapPhase } from "./roadmap.mjs";
 
 const RESEARCHER = "gsd-phase-researcher";
 export const RESEARCH_FRAGMENT = ".agents/gsd/upstream/capabilities/research/fragments/plan-pre.md";
-export const FIXED_KEYS = new Set(["research", "inputs", "freeze", "plans", "checked", "handoff"]);
+export const FIXED_KEYS = new Set(["research", "inputs", "freeze", "skeleton", "plans", "checked", "handoff"]);
 
-// The researcher's effective role text: its definition plus every include, resolved as prompt assembly resolves
+// An agent's effective role text: its definition plus every include, resolved as prompt assembly resolves
 // them, so an edited or added include changes the research revision (INV-22). A definition that does not load
 // (missing include) still hashes its own text, which lists the includes.
-function researcherRoleFiles(g) {
-  const agent = `.agents/agents/${RESEARCHER}.md`;
+function roleFiles(g, type) {
+  const agent = `.agents/agents/${type}.md`;
   try {
-    return [agent, ...loadAgentDef(g.harnessRoot, RESEARCHER).includes.map((i) => i.rel)];
+    return [agent, ...loadAgentDef(g.harnessRoot, type).includes.map((i) => i.rel)];
   } catch {
     return [agent];
   }
@@ -46,19 +46,23 @@ export function keyFiles(g, phase, key) {
     const refs = /<canonical_refs>([\s\S]*?)<\/canonical_refs>/.exec(readIf(ctxFile) ?? "")?.[1];
     for (const p of backticked(refs)) out.push(code(p));
     for (const p of g.cfg.adapter.instructions) out.push(code(p));
-    for (const p of [...researcherRoleFiles(g), RESEARCH_FRAGMENT]) out.push(harness(p));
+    for (const p of [...roleFiles(g, RESEARCHER), RESEARCH_FRAGMENT]) out.push(harness(p));
     return out;
   };
   const inputs = () => [...research(), inPhase(`${phase.padded}-RESEARCH.md`), inPhase("research-attempt.json")];
   const freeze = () => [...inputs(), inPhase(`${phase.padded}-PLAN-OUTLINE.md`), inPhase(`${phase.padded}-PLAN-OUTLINE.manifest.json`), inPhase(`${phase.padded}-WIRING.md`)];
+  // G009: the skeleton lanes (lens, model, effort, lens texts) are written by gsd-plan beside the outline; the reviewer
+  // definition is hashed here, since the freeze key covers the outline and wiring only.
+  const skeleton = () => [inPhase(`${phase.padded}-SKELETON-LANES.json`), ...roleFiles(g, g.cfg.adapter.agents?.skeleton_lane ?? "gsd-skeleton-reviewer").map((p) => harness(p))];
   const allPlans = () => [...freeze(), ...planIds(phase).map((id) => code(rel(g.codeRoot, planPath(phase, id))))];
   if (key === "research") return research();
   if (key === "inputs") return inputs();
   if (key === "freeze") return freeze();
+  if (key === "skeleton") return skeleton();
   if (key === "plans" || key === "checked" || key === "handoff") return allPlans();
   const m = /^plan:(.+)$/.exec(key);
   if (m) return [...freeze(), code(rel(g.codeRoot, planPath(phase, m[1])))];
-  throw fail(`unknown revisions key ${key} (research, inputs, freeze, plan:<id>, plans, checked, handoff)`);
+  throw fail(`unknown revisions key ${key} (research, inputs, freeze, skeleton, plan:<id>, plans, checked, handoff)`);
 }
 
 function digestOf(abs) {

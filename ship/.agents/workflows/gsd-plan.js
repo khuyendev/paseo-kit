@@ -421,9 +421,19 @@ async function commitDocs(message, paths) {
   const c = await gsd(["commit", message, "--files", ...paths]);
   if (c.code !== 0) log(`warning: docs commit failed: ${c.json?.error ?? c.stderr ?? c.code}`);
 }
+// G009: the lanes, their lens texts and the role settings are skeleton-review inputs too; the freeze key covers the outline
+// only. They are written here for the skeleton key, which also hashes the reviewer definition.
+const laneInputs = { role: { ...g.roles?.skeleton_lane, ...roleOverrides.skeleton_lane }, lanes: [] };
+for (const l of lanes) {
+  const file = KIT_LENSES.includes(l.lens) ? (await flow(["read", `.agents/workflows/lenses/${l.lens}.md`])).json?.text ?? null : null;
+  laneInputs.lanes.push({ id: l.id, lens: l.lens, model: l.model ?? null, effort: l.effort ?? null, text: lensText(l.lens), file });
+}
+const laneWrite = await flow(["write", P("SKELETON-LANES.json")], JSON.stringify(laneInputs, null, 2));
+if (laneWrite.code !== 0) return failedCall("skeleton lane inputs", laneWrite.stderr);
+
 // A skeleton reviewed in this run invalidates every plan written against the old one (GSDF-24).
 let skeletonFresh = false;
-if ((await gsd(["revisions", "check", phaseDir, "freeze"])).code === 0 && !a.replan) {
+if ((await gsd(["revisions", "check", phaseDir, "freeze"])).code === 0 && (await gsd(["revisions", "check", phaseDir, "skeleton"])).code === 0 && !a.replan) {
   log("skeleton unchanged since its review passed");
 } else {
   skeletonFresh = true;
@@ -431,6 +441,7 @@ if ((await gsd(["revisions", "check", phaseDir, "freeze"])).code === 0 && !a.rep
   await gsd(["write", phaseDir, "OUTLINE-REVIEW"], renderReview(gate));
   if (gate.status !== "passed") return gate.stop;
   await gsd(["revisions", "record", phaseDir, "freeze"]);
+  await gsd(["revisions", "record", phaseDir, "skeleton"]);
   docPaths.push(P("OUTLINE-REVIEW.md"));
   if (await wiringExists()) docPaths.push(WIRING);
   await commitDocs(`docs(${N}): phase ${N} outline and skeleton review`, docPaths);
