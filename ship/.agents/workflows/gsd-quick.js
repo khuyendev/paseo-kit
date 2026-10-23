@@ -78,7 +78,12 @@ const cfg = await loadCfg();
 const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
 const roadmap = (await flow(["exists", ".planning/ROADMAP.md"])).json?.exists?.[".planning/ROADMAP.md"];
 if (!roadmap) return { status: "refused", reason: "gsd-quick needs .planning/ROADMAP.md (run gsd-new-project first)" };
-const q = a.dir && /^\.planning\/quick\/\d{6}-[0-9a-z]{3}-[a-z0-9-]+$/.test(a.dir) ? { dir: a.dir, id: a.dir.split("/").pop().slice(0, 10) } : (await flow(["quick-dir", description])).json;
+// GSDF-64: quick writes the code root like plan and execute, so it takes the same writer lease once per run and holds it
+// to the end; a refusal here creates no quick directory or plan.
+const lease = await flow(["lock", "debug", runId, "gsd-quick"]);
+if (lease.code !== 0) return { status: "refused", reason: `${leaseText(lease.json)}; quick after it ends` };
+try {
+const q =a.dir && /^\.planning\/quick\/\d{6}-[0-9a-z]{3}-[a-z0-9-]+$/.test(a.dir) ? { dir: a.dir, id: a.dir.split("/").pop().slice(0, 10) } : (await flow(["quick-dir", description])).json;
 if (!q?.dir) return { status: "failed", reason: "could not create the quick task directory" };
 const PLAN = `${q.dir}/${q.id}-PLAN.md`;
 const SUMMARY = `${q.dir}/${q.id}-SUMMARY.md`;
@@ -173,3 +178,6 @@ if (cfg.gsd.commit_policy.docs) {
   if (c.code !== 0) log(`warning: quick commit failed: ${c.json?.error ?? c.code}`);
 }
 return { status: "done", id: q.id, dir: q.dir, plan: PLAN, summary: SUMMARY, warnings: carried, ...(researchSkipReason ? { researchSkipped: researchSkipReason } : {}) };
+} finally {
+  await flow(["unlock", "debug", lease.json.token]);
+}

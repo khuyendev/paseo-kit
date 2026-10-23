@@ -11,6 +11,7 @@ Method text: follow `.agents/gsd/generated/workflows/quick.md` (generated upstre
 
 - A trivial one-line fix: do it inline in the main session, no plan.
 - Requires `.planning/ROADMAP.md`; the run refuses otherwise.
+- The run takes the code-root writer lease (GSDF-64) like plan, execute and debug: while another of them holds the code root it is `refused` and names the holder; it holds the lease until it ends.
 - `--full`: first discuss the gray areas in the main session and write the decisions to a CONTEXT file in the quick directory; pass its path as `contextPath`.
 - Args file `_workspace/args/gsd-quick.json`: `{"description": "<task text>", "full": false}` (`"contextPath"` and `"dir"` from the discussion when `--full`; `"skipResearch": true` with a `"researchSkipReason"` only when the owner decides to continue without research). Run `node .agents/harness/ph.mjs workflow --name gsd-quick --args-file _workspace/args/gsd-quick.json --detach` and wait as `next:` says. The description reaches agents only as data.
 - The run creates `.planning/quick/<YYMMDD-xxx>-<slug>/` (slug at most 40 characters), plans ONE plan of 1-3 tasks with repo-root-relative paths, executes it through the executor contract and, with `--full`, adds research, a checker loop of at most 2 iterations and a verifier.
