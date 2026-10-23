@@ -17,6 +17,8 @@
 //   seen, accepted the forceProceed issues the instance met, and what its override accepted (item 71)
 //   changes        the contract changes the run applied (all its instances): a resumed reviser's `contracts change` answers
 //                  `already`, and this says it was the run's own change, so its consumers are still revised (item 67)
+//   replan         per plan, the changes other planners asked of it (a reply's plan_changes, item 99 F3) and the instance whose
+//                  planner was given them; open across runs until a planner was given them and the plan was recorded (plan-replan)
 // A verb call names {run, part, step, ops}; `step` is an id the workflow gives in a fixed order, so the fold of a log is a function
 // of the ops sent: a resumed run that sends the same ops gets the same answers. The same step sent again with the same ops is
 // answered from the log without a write; with other ops it replaces its entry in place.
@@ -38,7 +40,7 @@ const isObj = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 const fail = (why) => { throw Object.assign(new Error(why), { refused: true }); };
 
 function fresh() {
-  return { version: PLAN_STATE_VERSION, rev: 0, run: null, instance: 0, since: 0, open: false, force: null, settings: {}, plans: {}, outline: null, logs: {}, seen: [], accepted: null, changes: [] };
+  return { version: PLAN_STATE_VERSION, rev: 0, run: null, instance: 0, since: 0, open: false, force: null, settings: {}, plans: {}, outline: null, logs: {}, seen: [], accepted: null, changes: [], replan: {} };
 }
 const instanceOf = (st) => `${st.run}#${st.instance}`;
 // The instance number of a mark of this run, else null.
@@ -56,6 +58,7 @@ function check(data, file) {
   if (data.settings !== undefined && !isObj(data.settings)) bad("settings is not an object");
   if (data.seen !== undefined && !Array.isArray(data.seen)) bad("seen is not a list");
   if (data.changes !== undefined && !Array.isArray(data.changes)) bad("changes is not a list");
+  if (data.replan !== undefined && (!isObj(data.replan) || Object.values(data.replan).some((r) => !isObj(r) || !Array.isArray(r.notes)))) bad("replan is not {<id>: {notes, given}}");
   if (data.instance !== undefined && !(Number.isInteger(data.instance) && data.instance >= 0)) bad("instance is not a count");
 }
 
@@ -481,7 +484,7 @@ export function planRun(root, phaseDir, { run, settings, force = null } = {}) {
     st.force = force ? { reason: force.reason, issues: force.issues ?? null } : null;
     // A resumed run: the plans an earlier instance recorded (so complete then), and the outline it wrote.
     const recorded = resumed ? Object.keys(st.plans).filter((id) => { const n = markOf(st, st.plans[id].recorded); return n !== null && n < st.instance; }).sort() : [];
-    return { reply: { resumed, instance: instanceOf(st), recorded, outline: resumed ? st.outline : null } };
+    return { reply: { resumed, instance: instanceOf(st), recorded, outline: resumed ? st.outline : null, ...(Object.keys(st.replan).length ? { replan: Object.keys(st.replan).sort() } : {}) } };
   });
 }
 
@@ -504,16 +507,37 @@ export function planOutline(root, phaseDir, { run, inputs, sha } = {}) {
   });
 }
 
-/** plan-mark {run, plans, stage: planned|recorded}: a planner of this instance writes these plans, or the instance recorded them. */
+/** plan-mark {run, plans, stage: planned|recorded}: a planner of this instance writes these plans, or the instance recorded them.
+ * Item 99 F3: `planned` hands the plans' open replan notes to that planner (answered as `notes`); `recorded` closes handed ones. */
 export function planMark(root, phaseDir, { run, plans, stage } = {}) {
   return update(root, phaseDir, (st) => {
     if (st.run !== run) fail(`plan-mark: ${PLAN_STATE_FILE} belongs to run ${st.run ?? "none"}, not ${run}`);
     if (!PLAN_STAGES.includes(stage)) fail(`stage must be one of ${PLAN_STAGES.join(", ")}, not ${stage}`);
     if (!Array.isArray(plans) || !plans.length || plans.some((p) => !PLAN_ID.test(String(p)))) fail("plans is a non-empty list of plan ids NN-MM");
-    if (plans.every((p) => st.plans[p]?.[stage] === instanceOf(st))) return { write: false, reply: { plans: st.plans } };
+    const notes = Object.fromEntries(plans.filter((p) => st.replan[p]).map((p) => [p, st.replan[p].notes]));
+    const handOver = stage === "planned" ? plans.filter((p) => st.replan[p] && st.replan[p].given !== instanceOf(st)) : [];
+    const close = stage === "recorded" ? plans.filter((p) => st.replan[p]?.given) : [];
+    if (!handOver.length && !close.length && plans.every((p) => st.plans[p]?.[stage] === instanceOf(st))) return { write: false, reply: { plans: st.plans, notes } };
     st.plans = { ...st.plans };
     for (const p of plans) st.plans[p] = { ...(st.plans[p] ?? {}), [stage]: instanceOf(st) };
-    return { reply: { plans: st.plans } };
+    st.replan = { ...st.replan };
+    for (const p of handOver) st.replan[p] = { ...st.replan[p], given: instanceOf(st) };
+    for (const p of close) delete st.replan[p];
+    return { reply: { plans: st.plans, notes } };
+  });
+}
+
+/** plan-replan {run, plan, by, change}: item 99 F3, a planner (call `by`) needs `change` in another plan: the plan is planned again,
+ * with the note, before the run hands off. The same note again (a replayed reply) changes nothing. */
+export function planReplan(root, phaseDir, { run, plan, by, change } = {}) {
+  return update(root, phaseDir, (st) => {
+    if (st.run !== run) fail(`plan-replan: ${PLAN_STATE_FILE} belongs to run ${st.run ?? "none"}, not ${run}`);
+    if (!PLAN_ID.test(String(plan ?? ""))) fail(`plan-replan needs a plan id NN-MM, not ${plan}`);
+    if (![by, change].every((v) => typeof v === "string" && v.trim())) fail("plan-replan needs by (the call) and change (what the plan needs)");
+    const cur = st.replan[plan] ?? { notes: [], given: null };
+    if (cur.notes.some((n) => n.by === by && n.change === change)) return { write: false, reply: { plan, open: Object.keys(st.replan).sort() } };
+    st.replan = { ...st.replan, [plan]: { notes: [...cur.notes, { by, change }], given: null } };
+    return { reply: { plan, open: Object.keys(st.replan).sort() } };
   });
 }
 

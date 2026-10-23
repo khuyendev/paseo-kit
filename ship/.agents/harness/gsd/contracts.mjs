@@ -94,9 +94,18 @@ export function producesProblems(entry, ownedPaths) {
 // --- verify contracts ---
 
 const planText = (plan) => plan.text;
-const err = (plans, kind, message, extra = {}) => ({ plan: plans[0], plans, kind, message, ...extra });
+// Kit feedback 100 F1: the plans whose planner can fix an error. A missing or wrong quotation is the quoting plan's (the consumer,
+// the holder of a superseded signature), an unprovided precondition that names its provider is the provider's; an unresolved edge
+// (a manifest edge) and a precondition of a later wave can be fixed on either side.
+export function fixPlans(e) {
+  const plans = asArray(e?.plans).length ? asArray(e.plans).map(String) : [String(e?.plan ?? "")];
+  if (e?.kind === "consumer-signature" || e?.kind === "stale-signature") return plans.slice(0, 1);
+  if (e?.kind === "requires-unprovided" && plans.length > 1) return plans.slice(1);
+  return plans;
+}
+const err = (plans, kind, message, extra = {}) => ({ plan: plans[0], plans, kind, message, ...extra, fixers: fixPlans({ plans, kind }) });
 
-// Every error names the plans that must change; the workflow routes it to each of them.
+// Every error names the plans it involves (`plans`) and the plans whose planner fixes it (`fixers`); the workflow routes it to those.
 export function contractCheck(g, phase, { plans: only = null, complete = false } = {}) {
   const errors = [];
   const warnings = [];
@@ -239,6 +248,46 @@ export function contractsChange(g, phase, input) {
     writeJsonAtomic(file, fresh);
     return done({ changed: true, plan: entry.id, symbol, signature: next, old: cur.signature, consumers, manifest: rel(g.codeRoot, file) });
   });
+}
+
+// --- kit feedback 98 F1: an outline revision that changed a symbol's shape in the prose but not in the manifest ---
+
+const IDENT = /[A-Za-z_$][A-Za-z0-9_$]*/g;
+// The code of a text: its inline code spans and the lines of its fenced blocks.
+function codeSpans(text) {
+  const t = String(text ?? "");
+  const fenced = [...t.matchAll(/^```[^\n]*\n([\s\S]*?)^```/gm)].flatMap((m) => m[1].split(/\r?\n/));
+  const inline = [...t.replace(/^```[^\n]*\n[\s\S]*?^```/gm, "").matchAll(/`([^`\n]+)`/g)].map((m) => m[1]);
+  return [...inline, ...fenced].map((s) => s.trim()).filter(Boolean);
+}
+// The spans that give `symbol` a shape: the symbol (or the last segment of a qualified one, 5+ letters) before `(`, `{` or `<`.
+function shapeSpans(text, symbol) {
+  const seg = lastSegment(symbol);
+  const names = [symbol, ...(seg !== symbol && seg.length >= 5 ? [seg] : [])].map(escapeRe).join("|");
+  const re = new RegExp(`(^|[^A-Za-z0-9_$])(${names})\\s*[({<]`);
+  return new Map(codeSpans(text).filter((s) => re.test(s)).map((s) => [squash(s), s]));
+}
+const parseManifest = (text) => { try { return entriesOf(JSON.parse(String(text ?? ""))); } catch { return null; } };
+
+// `before` and `after` are {outline, manifest} texts around a revision. Drift: a structured produced symbol whose manifest
+// signature the revision left as it was, while the revision added a code span that shapes it with a name the signature does not
+// have. A new symbol, a changed signature, a removed span or a span that only reuses the signature's names is no drift.
+export function contractDrift(before = {}, after = {}) {
+  const [was, now] = [parseManifest(before.manifest), parseManifest(after.manifest)];
+  if (!was || !now) return { drift: [], warnings: [`contract drift not checked: the manifest ${!now ? "after" : "before"} the revision is not valid JSON`] };
+  const drift = [];
+  for (const entry of now) for (const p of producesOf(entry).filter((x) => x.structured)) {
+    const old = producesOf(was.find((e) => e.id === entry.id)).find((x) => x.structured && x.symbol === p.symbol);
+    if (!old || squash(old.signature) !== squash(p.signature)) continue;
+    const known = new Set([...p.signature.matchAll(IDENT)].map((m) => m[0]));
+    const prior = shapeSpans(before.outline, p.symbol);
+    const added = [...shapeSpans(after.outline, p.symbol)].filter(([k]) => !prior.has(k)).map(([, s]) => s);
+    const names = new Set([p.symbol, lastSegment(p.symbol), ...p.symbol.split(/[.:#]+/)]);
+    const spans = added.filter((s) => [...s.matchAll(IDENT)].some((m) => !names.has(m[0]) && !known.has(m[0])));
+    if (spans.length) drift.push({ plan: entry.id, symbol: p.symbol, signature: p.signature, spans });
+  }
+  const errors = drift.map((d) => `contract drift: the outline now shapes ${d.symbol} as \`${d.spans[0]}\`, but the manifest still freezes it (${d.plan} produces) as \`${d.signature}\`; change that produces entry's signature to the new shape (add the old one to its supersedes), or write the outline's code span as the manifest signature`);
+  return { drift, errors, warnings: [] };
 }
 
 // --- F5: the produced symbols after execute (called by the wave gate) ---
