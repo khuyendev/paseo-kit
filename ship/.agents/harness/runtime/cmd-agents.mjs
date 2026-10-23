@@ -119,6 +119,17 @@ function rotatePct(ctx) {
   return n;
 }
 
+// The context guard reminds the main session at start_pct and every step_pct above it (context_guard.mjs contextBand); this
+// is that threshold and the tokens left before the next reminder, from the window the self row reports.
+function reminderLine(agent, cfg) {
+  const p = usedPct(agent);
+  if (p === null) return `compact reminder at ${cfg.start_pct}% (usage not reported yet)`;
+  const { start_pct: start, step_pct: step } = cfg;
+  const next = p < start ? start : start + (Math.floor((p - start) / step) + 1) * step;
+  const u = agent.lastUsage;
+  return `compact reminder at ${start}% (next in ${Math.ceil((next * u.contextWindowMaxTokens) / 100) - u.contextWindowUsedTokens} tokens)`;
+}
+
 async function context(ctx) {
   const rotate = rotatePct(ctx);
   const session = await ctx.paseo();
@@ -137,6 +148,7 @@ async function context(ctx) {
     const pct = p === null ? "  n/a" : `${p.toFixed(0).padStart(4)}%`;
     ctx.out(`${id8(a.id)} ${pct} ${orQ(u.contextWindowUsedTokens)}/${orQ(u.contextWindowMaxTokens)} ${a.status} ${a.title ?? ""}${p !== null && p >= rotate ? "  ROTATE" : ""}`);
   }
+  if (ctx.opts.self) ctx.out(reminderLine(agents[0], ctx.cfg.context_guard));
   return 0;
 }
 
