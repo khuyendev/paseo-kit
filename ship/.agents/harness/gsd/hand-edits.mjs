@@ -2,12 +2,18 @@
 // as a moved hash (and not at all after a hand `revisions record`). Each is listed with its cause category once, answered by
 // `ph gsd hand-edit record`, and counted by `ph review-stats`. The log is `<phase dir>/hand-edits.json`, written only here.
 // Measurement only: the run result lists the edits and the categories seen twice; no flow decision reads them.
+// Kit feedback 93, 99: what the flow itself made is never listed (flowEvidence); the first scan of a log the previous kit wrote
+// (`v: 1`) drops its open entries the flow made.
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { readJsonIf, writeJsonAtomic } from "../lib/io.mjs";
 import { sha256, textDigest } from "../lib/hash.mjs";
-import { isInside } from "../lib/paths.mjs";
+import { isInside, toSlash } from "../lib/paths.mjs";
+import { matchesGlob } from "../adapter/contract.mjs";
+import { DEFAULT_RUNS_DIR, RUN_FILES } from "../workflow/journal.mjs";
 import { done, fail, isFile, nowIso, rel, withFileLock } from "./common.mjs";
+import { GIT_TIMEOUT_MS, git } from "./git.mjs";
 import { CATEGORIES, HAND_EDITS_FILE, candidateLine, projectEdits, readEdits, summarize } from "../lib/hand-edit-log.mjs";
 import { planPath } from "./planning.mjs";
 import { FIXED_KEYS, changedParts, keyParts, readRevisions } from "./revisions.mjs";
@@ -27,7 +33,18 @@ const open = (e) => !CATEGORIES.includes(e.category);
 export const handEditsFile = (phase) => path.join(phase.dir, HAND_EDITS_FILE);
 const contentOf = (abs) => (isFile(abs) ? sha256(fs.readFileSync(abs)) : "deleted");
 const readStore = (phase) => readEdits(handEditsFile(phase)).edits;
-const nextId = (edits) => `HE-${edits.reduce((n, e) => Math.max(n, Number(/^HE-(\d+)$/.exec(e.id)?.[1] ?? 0)), 0) + 1}`;
+const LOG_VERSION = 2;
+// The entries the v1 migration dropped stay listed (id, file, why), so an id is never given twice.
+const droppedOf = (phase) => {
+  try {
+    const d = readJsonIf(handEditsFile(phase), null)?.dropped;
+    return Array.isArray(d) ? d : [];
+  } catch {
+    return [];
+  }
+};
+const writeStore = (phase, edits, dropped = droppedOf(phase)) => writeJsonAtomic(handEditsFile(phase), { v: LOG_VERSION, edits, ...(dropped.length ? { dropped } : {}) });
+const nextId = (edits, dropped = []) => `HE-${[...edits, ...dropped].reduce((n, e) => Math.max(n, Number(/^HE-(\d+)$/.exec(e.id)?.[1] ?? 0)), 0) + 1}`;
 const candidatesOf = (g) => summarize(projectEdits(g.codeRoot).edits).candidates.map(candidateLine);
 
 // Flow-written files that differ from the record of the given revisions keys: `label -> {key, kind, digest}`.
@@ -78,6 +95,179 @@ function changedOwned(g, phase) {
   return found;
 }
 
+// A commits.json entry the flow made: a `reconciled` entry is an orchestrator commit with a Plans trailer, an owner entry an
+// owner commit recorded for the resume gate; neither holds the flow's content.
+const flowCommit = (c) => typeof c?.sha === "string" && /^[0-9a-f]{7,64}$/.test(c.sha) && !c.reconciled && !c.owner && !c.adopted && c.by !== "owner" && c.kind !== "owner";
+const committedPaths = (c) => [...Object.values(c.plans ?? {}).flatMap((l) => (Array.isArray(l) ? l : [])), ...(Array.isArray(c.integration) ? c.integration : [])];
+const gitBytes = (root, args, input) => {
+  const r = spawnSync("git", args, { cwd: root, input, timeout: GIT_TIMEOUT_MS, windowsHide: true, maxBuffer: 256 * 1024 * 1024 });
+  return r.status === 0 && !r.error ? r.stdout : null;
+};
+// The digests a committed blob can have in the tree: as committed, and with CRLF line ends (a checkout under core.autocrlf).
+const blobDigests = (body) => [sha256(body), sha256(Buffer.from(body.toString("latin1").replace(/\r?\n/g, "\r\n"), "latin1"))];
+
+// What the flow commits of commits.json committed for each of `labels`, oldest first: `label -> [{sha, at (ms), digests}]`
+// (`deleted` for a commit that removed it). The fixers' edits of a wave land in its commit. No git or no record: nothing.
+function flowCommitted(g, phase, labels) {
+  const out = new Map();
+  let commits = [];
+  try {
+    commits = readJsonIf(path.join(phase.dir, "commits.json"), []) ?? [];
+  } catch {
+    return out;
+  }
+  if (!Array.isArray(commits)) return out;
+  const want = new Set(labels.filter((p) => !/[\r\n]/.test(p)));
+  const pairs = commits.filter(flowCommit).flatMap((c) => [...new Set(committedPaths(c))].filter((p) => want.has(p)).map((p) => [p, c.sha]));
+  if (!pairs.length) return out;
+  const prefix = git(g.codeRoot, ["rev-parse", "--show-prefix"]);
+  const times = git(g.codeRoot, ["show", "-s", "--format=%H %cI", ...new Set(pairs.map(([, sha]) => sha))]);
+  const blobs = prefix.code === 0 ? gitBytes(g.codeRoot, ["cat-file", "--batch"], pairs.map(([p, sha]) => `${sha}:${prefix.stdout.trim()}${p}\n`).join("")) : null;
+  if (!blobs || times.code !== 0) return out;
+  const commitTimes = times.stdout.split("\n").map((l) => l.trim().split(" ")).filter((l) => l.length === 2);
+  let pos = 0;
+  for (const [p, sha] of pairs) {
+    const nl = blobs.indexOf(0x0a, pos);
+    if (nl < 0) break;
+    const head = /^[0-9a-f]+ (\w+) (\d+)$/.exec(blobs.toString("utf8", pos, nl));
+    pos = nl + 1;
+    let digests = ["deleted"];
+    if (head) {
+      const body = blobs.subarray(pos, pos + Number(head[2]));
+      pos += Number(head[2]) + 1;
+      digests = head[1] === "blob" ? blobDigests(body) : [];
+    }
+    const at = Date.parse(commitTimes.find(([full]) => full.startsWith(sha))?.[1]);
+    if (!out.has(p)) out.set(p, []);
+    out.get(p).push({ sha, at: Number.isFinite(at) ? at : null, digests });
+  }
+  return out;
+}
+
+const mtimeOf = (file) => {
+  try {
+    return fs.statSync(file).mtimeMs;
+  } catch {
+    return null;
+  }
+};
+
+// The workflow runs of this phase (`args.phaseDir` names its directory) as [id, start, end] in ms; a run without an end (live,
+// or its runner died) ends at its journal's last write. The runs directory is the calling run's, else the default.
+function phaseRuns(g, phase) {
+  const runDir = g.env?.PASEO_HARNESS_WORKFLOW_RUN_DIR;
+  const dir = runDir ? path.dirname(runDir) : path.resolve(g.harnessRoot ?? g.codeRoot, DEFAULT_RUNS_DIR);
+  const name = path.basename(phase.dir);
+  const runs = [];
+  let ids = [];
+  try {
+    ids = fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+  } catch {
+    return runs;
+  }
+  for (const id of ids) {
+    let run = null;
+    let args = null;
+    try {
+      run = readJsonIf(path.join(dir, id, RUN_FILES.run), null);
+      args = readJsonIf(path.join(dir, id, RUN_FILES.args), null);
+    } catch {
+      continue;
+    }
+    if (typeof args?.phaseDir !== "string" || path.posix.basename(toSlash(args.phaseDir).replace(/\/+$/, "")) !== name) continue;
+    const start = Date.parse(run?.startedAt);
+    if (!Number.isFinite(start)) continue;
+    const ended = Date.parse(run.endedAt);
+    runs.push([id, start, Number.isFinite(ended) ? ended : Math.max(mtimeOf(path.join(dir, id, RUN_FILES.journal)) ?? 0, mtimeOf(path.join(dir, id, RUN_FILES.run)) ?? 0)]);
+  }
+  return runs;
+}
+
+// Kit feedback 93, 99: the evidence that the flow itself made a file's content. `of(label, kind, digest, before)` names it or
+// returns null: a generator output (adapter.ownership.regenerated); an owned file holding what a flow commit committed; an
+// artifact holding what a revisions record holds; with `before` (a logged entry's time) only a commit or record made by then
+// counts, since a later flow commit takes in whatever edit the tree held. `run(label)`: the file was last written inside a
+// workflow run of this phase (what an agent or verb of a run wrote when the run stopped before its commit or record: an outline
+// revision, a fixer's answer to a request); a hand edit made while a run of the phase is live counts as the run's.
+function flowEvidence(g, phase, labels) {
+  const generated = g.cfg.adapter?.ownership?.regenerated ?? [];
+  const committed = flowCommitted(g, phase, labels);
+  const records = Object.entries(readRevisions(phase).keys ?? {}).filter(([, r]) => r?.parts);
+  let runs = null;
+  const of = (label, kind, digest, before = null) => {
+    if (generated.some((glob) => matchesGlob(label, glob))) return "regenerated";
+    if (kind === "owned") {
+      const list = committed.get(label) ?? [];
+      const hit = before === null ? list.slice(-1).find((c) => c.digests.includes(digest)) : list.find((c) => c.at !== null && c.at <= before && c.digests.includes(digest));
+      return hit ? `commit ${hit.sha.slice(0, 7)}` : null;
+    }
+    // Without `before`: the newest record covering the artifact holds it (an older key that still differs is only stale, e.g. a
+    // plan key recorded before an outline revision).
+    const holding = records.filter(([, r]) => Object.hasOwn(r.parts, label) && (before === null || Date.parse(r.at) <= before));
+    const newest = holding.reduce((m, [, r]) => (String(r.at) > m ? String(r.at) : m), "");
+    const hit = holding.find(([, r]) => (before !== null || String(r.at) === newest) && r.parts[label] === digest);
+    return hit ? `record ${hit[0]}` : null;
+  };
+  const run = (label) => {
+    const at = mtimeOf(path.resolve(g.codeRoot, label));
+    if (at === null) return null;
+    runs ??= phaseRuns(g, phase);
+    const hit = runs.find(([, start, end]) => start <= at && at <= end);
+    return hit ? `run ${hit[0]}` : null;
+  };
+  return { of, run };
+}
+
+// Takes the flow's own changes out of `found` (`label -> {kind, digest}`) and returns them as [{file, by}].
+function withoutFlow(g, phase, found) {
+  if (!found.size) return [];
+  const ev = flowEvidence(g, phase, [...found.keys()]);
+  const made = [];
+  for (const [label, { kind, digest }] of found) {
+    const by = ev.of(label, kind, digest) ?? ev.run(label);
+    if (by) made.push({ file: label, by });
+  }
+  for (const { file } of made) found.delete(file);
+  return made;
+}
+
+// The first scan of a log the previous kit wrote (`v: 1`, before flow-made changes were told apart) drops its open entries whose
+// logged content the flow made: a commit or record made by the time of the entry holds it, or the file still holds it and was
+// written inside a run. They are kept under `dropped` with the reason. Answered entries stay, and later scans never re-check an
+// entry (a hand edit a later flow commit takes in is still a hand edit).
+function migrateLog(g, phase) {
+  const file = handEditsFile(phase);
+  let data = null;
+  try {
+    data = readJsonIf(file, null);
+  } catch {
+    return [];
+  }
+  if (data?.v !== 1) return [];
+  return withFileLock(`${file}.lock`, () => {
+    const edits = readStore(phase);
+    const pending = edits.filter((e) => open(e) && typeof e.files[0] === "string" && typeof e.digest === "string");
+    const ev = flowEvidence(g, phase, pending.map((e) => e.files[0]));
+    const currentOf = (e) => {
+      if (e.kind === "owned") return contentOf(path.resolve(g.codeRoot, e.files[0]));
+      try {
+        return new Map(keyParts(g, phase, e.key).parts).get(e.files[0]) ?? null;
+      } catch {
+        return null;
+      }
+    };
+    const gone = [];
+    for (const e of pending) {
+      const loggedAt = Date.parse(e.at);
+      const by = ev.of(e.files[0], e.kind, e.digest, Number.isFinite(loggedAt) ? loggedAt : -Infinity) ?? (currentOf(e) === e.digest ? ev.run(e.files[0]) : null);
+      if (by) gone.push({ e, by });
+    }
+    const at = nowIso();
+    writeStore(phase, edits.filter((e) => !gone.some((x) => x.e === e)), [...droppedOf(phase), ...gone.map(({ e, by }) => ({ id: e.id, files: e.files, digest: e.digest, by, at }))]);
+    return gone.map(({ e }) => e.id);
+  });
+}
+
 // Adds what is not in the log yet: an edit with the same file and content is known (answered or not); a file edited again
 // while its earlier edit is unanswered updates that entry, so one file is one question.
 function addFound(phase, found) {
@@ -85,14 +275,15 @@ function addFound(phase, found) {
   const added = [];
   withFileLock(`${handEditsFile(phase)}.lock`, () => {
     const edits = readStore(phase);
+    const dropped = droppedOf(phase);
     for (const [label, { key, kind, digest }] of found) {
       if (edits.some((e) => e.files[0] === label && e.digest === digest)) continue;
       const earlier = edits.find((e) => e.files[0] === label && open(e));
       if (earlier) Object.assign(earlier, { key, kind, digest, at: nowIso() });
-      else edits.push({ id: nextId(edits), key, kind, files: [label], digest, at: nowIso(), category: null, note: null });
+      else edits.push({ id: nextId(edits, dropped), key, kind, files: [label], digest, at: nowIso(), category: null, note: null });
       added.push(label);
     }
-    writeJsonAtomic(handEditsFile(phase), { v: 1, edits });
+    writeStore(phase, edits, dropped);
   });
   return added;
 }
@@ -101,12 +292,16 @@ function addFound(phase, found) {
 // overwrites the record the change shows against, so what changed in the key's flow-written files is kept first.
 export function captureBeforeRecord(g, phase, key) {
   if (!g.cfg.gsd.review_metrics || g.env?.PASEO_HARNESS_WORKFLOW_RUN) return [];
-  return addFound(phase, changedArtifacts(g, phase, [key]));
+  const found = changedArtifacts(g, phase, [key]);
+  withoutFlow(g, phase, found);
+  return addFound(phase, found);
 }
 
 export function scanHandEdits(g, phase) {
+  const dropped = migrateLog(g, phase);
   const found = changedArtifacts(g, phase, Object.keys(readRevisions(phase).keys));
   for (const [label, v] of changedOwned(g, phase)) if (!found.has(label)) found.set(label, v);
+  const flowMadeNow = withoutFlow(g, phase, found);
   const added = addFound(phase, found);
   const edits = readStore(phase);
   const pending = edits.filter(open);
@@ -115,6 +310,8 @@ export function scanHandEdits(g, phase) {
     new: added.length,
     pending: pending.map(({ id, key, kind, files, at }) => ({ id, key, kind, files, at })),
     logged: edits.length - pending.length,
+    flowMade: flowMadeNow,
+    ...(dropped.length ? { dropped } : {}),
     candidates: candidatesOf(g),
     ...(pending.length ? { ask: `say why each was changed: ph gsd hand-edit record ${phase.number} <id> --category ${CATEGORIES.join("|")} --note "<one line>"` } : {}),
   });
@@ -146,12 +343,13 @@ export function recordHandEdit(g, phase, ref, { category, note }) {
   const answered = [];
   withFileLock(`${handEditsFile(phase)}.lock`, () => {
     const edits = readStore(phase);
+    const dropped = droppedOf(phase);
     let hits = edits.filter((e) => open(e) && (e.id === ref || e.key === ref || e.files.includes(ref)));
     if (!hits.length) {
       if (edits.some((e) => e.id === ref)) throw fail(`${ref} is already logged`);
       const made = manualEdit(g, phase, ref);
       if (made.files.length && edits.some((e) => e.files[0] === made.files[0] && e.digest === made.digest)) throw fail(`${ref} is already logged in its current content`);
-      const edit = { id: nextId(edits), ...made, at: nowIso(), category: null, note: null };
+      const edit = { id: nextId(edits, dropped), ...made, at: nowIso(), category: null, note: null };
       edits.push(edit);
       hits = [edit];
     }
@@ -159,7 +357,7 @@ export function recordHandEdit(g, phase, ref, { category, note }) {
       Object.assign(e, { category, note: line, loggedAt: nowIso() });
       answered.push(e.id);
     }
-    writeJsonAtomic(handEditsFile(phase), { v: 1, edits });
+    writeStore(phase, edits, dropped);
   });
   const count = summarize(projectEdits(g.codeRoot).edits).byCategory.find((c) => c.category === category)?.count ?? 0;
   return done({ phase: phase.padded, logged: answered, category, note: line, count, candidates: candidatesOf(g) });
