@@ -553,6 +553,7 @@ if (planReview) {
     return pr?.status === "failed" ? result("failed", stop) : result("needs-owner", { ...stop, options: ["give reviewGuidance and rerun", "record the decision in CONTEXT and rerun", "disable plan review (planReview false) and rerun"] });
   }
   for (const s of pr.structure ?? []) setStructureWarnings(s.plan, s.warnings);
+  advisories.push(...(pr.issues ?? []).map((x) => ({ lane: "plan-review", plan: x.plan ?? null, severity: x.severity, description: x.description })));
 }
 
 // ---- coverage and handoff (GSDF-29, GSDF-36) ----

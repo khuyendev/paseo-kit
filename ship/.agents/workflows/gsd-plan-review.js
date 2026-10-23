@@ -130,7 +130,8 @@ for (let cycle = 1; cycle <= MAX_CYCLES; cycle++) {
   }
   const count = counted(kept);
   log(`plan review cycle ${cycle}: ${count} high or actionable issues`);
-  if (count === 0) return { status: "converged", cycles: cycle, planRevision, structure };
+  // Kept issues that do not count are advisories: returned here, never sent to the editor.
+  if (count === 0) return { status: "converged", cycles: cycle, planRevision, structure, issues: kept };
   if (count >= prev) return { status: "needs-owner", reason: `plan review not converging: ${count} issues, not below ${prev}`, issues: kept };
   prev = count;
   phase("Edit");
