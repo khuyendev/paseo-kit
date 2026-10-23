@@ -146,6 +146,7 @@ phase("Route");
 if (verdict.status === "passed") {
   const done = await gsd(["phase", "complete", N]);
   for (const w of done.json?.warnings ?? []) log(`phase complete warning: ${typeof w === "string" ? w : JSON.stringify(w)}`);
+  for (const p of done.json?.proposals ?? []) log(`phase complete proposes ${p.skill}: ${p.reason}`);
   return { ...verdict, route: done.code === 0 ? "complete" : "complete-failed", completion: done.json };
 }
 if (verdict.status === "human_needed") {

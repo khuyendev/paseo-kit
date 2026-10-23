@@ -287,6 +287,22 @@ function summaryClaims(g, phase) {
   return warnings;
 }
 
+// F38 (items 38, 42): after a phase that ships code, propose the codebase map (none yet) and the harness pass (no review
+// lens yet). A SUMMARY key-file outside .planning/ is shipped code. Advisory: the owner decides when to run them.
+function proposals(g, phase) {
+  const shipsCode = summaryIds(phase).some((id) => {
+    const kf = frontmatter(readIf(summaryPath(phase, id)) ?? "").fm["key-files"] ?? {};
+    return [...(kf.created ?? []), ...(kf.modified ?? [])].map(String).some((p) => !p.startsWith(".planning/"));
+  });
+  if (!shipsCode) return [];
+  const mapDir = path.join(g.codeRoot, ".planning", "codebase");
+  const hasMap = fs.existsSync(mapDir) && fs.readdirSync(mapDir).some((f) => f.endsWith(".md"));
+  const out = [];
+  if (!hasMap) out.push({ skill: "gsd-map-codebase", reason: "the phase ships code and .planning/codebase/ holds no map" });
+  if (!g.cfg.adapter.review_lenses.length) out.push({ skill: "harness", reason: "the phase ships code and the adapter has no review lens; the harness pass reads the map" });
+  return out;
+}
+
 export function phaseComplete(g, ref) {
   const phase = findPhase(g.codeRoot, ref);
   if (!phase) throw fail(`phase not found: ${ref}`);
@@ -306,7 +322,7 @@ export function phaseComplete(g, ref) {
     const marked = entry.requirements.filter((id) => reqs.map.has(id));
     if (reqs.exists && marked.length) writeTextAtomic(sharedFile(g.codeRoot, "REQUIREMENTS.md"), setComplete(reqs, marked, true));
     const state = advanceState(g, entry.number);
-    return { completed: entry.number, date, requirements: marked, state: state?.status ?? null, warnings: summaryClaims(g, phase) };
+    return { completed: entry.number, date, requirements: marked, state: state?.status ?? null, warnings: summaryClaims(g, phase), proposals: proposals(g, phase) };
   });
 }
 

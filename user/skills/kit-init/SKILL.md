@@ -61,6 +61,8 @@ Never add `--force` and never run `pull` without the owner's decision.
 - Point the owner to `gsd-map-codebase` (writes the codebase map under `.planning/`), then to the `harness` skill's
   adapter generator, which writes the project's adapter (build and test commands, tiers, review lenses) into
   `.agents/harness.config.json`. Do not run them as part of this skill unless the owner asks.
+- On a greenfield project (no code yet) the map is not made here: `phase complete` proposes `gsd-map-codebase` and
+  `harness` (its `proposals`) once a phase that ships code completes; gsd-verify shows them to the owner.
 
 ## Summary
 
