@@ -56,7 +56,9 @@ node kit.mjs machine export
 adds missing providers and models (never removes one), gives the worker provider (`circle-agent`) the kit's deny
 list and env, and the main provider (`circle`) the deny list `Agent`, `Workflow` (main sessions orchestrate through
 `ph`, not native subagents). `--enable-paseo-plugins` installs the two kit Paseo plugins; `--link-user-skills` links
-the `kit-init` user skill into each Claude config dir. `check` reports the same policy lines as `ph doctor`.
+the `kit-init` user skill into each Claude config dir. `check` reports the same policy lines as `ph doctor`. A reload
+that did not finish (the apply was cut short, or `paseo reload` failed) is retried by the next apply, and `check` reports
+it as a problem until then; `--no-reload` drops it.
 
 ## Project flow
 

@@ -1,4 +1,5 @@
 // `machine check`: read-only readiness lines `ok|problem|note <text>`; its only external call is `claude --version` (MACH-02, MACH-03).
+import fs from "node:fs";
 import { claudeVersion, MIN_CLAUDE_VERSION, NODE_REQUIREMENT, nodeRuntimeProblem, versionAtLeast } from "../../ship/.agents/harness/platform.mjs";
 import { claudeConfigDir, loadInputs, readLive } from "./context.mjs";
 import { linkDirs, linkLines, linkStates, readRecord } from "./links.mjs";
@@ -39,6 +40,7 @@ export function runCheck(ctx, { enablePlugins = false } = {}) {
     say("problem", p.missing ? `Paseo provider ${p.name} is missing from ${ctx.paseoConfig}; run kit.mjs machine apply` : `Paseo provider ${p.name} lacks the models ${p.add.map((m) => m.id).join(", ")}; run kit.mjs machine apply`);
   }
   if (!plan.length) say("ok", `Paseo providers ${[...new Set(Object.entries(cfg.agent_providers).flat())].join(", ")} have every template model`);
+  if (fs.existsSync(ctx.reloadPending)) say("problem", "Paseo config change is not reloaded yet; run kit.mjs machine apply");
   for (const line of policyLines(live, cfg)) say(line.level, line.text);
   for (const { name, id } of retiredModels(live, tpl, cfg)) say("note", `Paseo provider ${name} has the model ${id}, which the template no longer ships; left for the owner to remove in Paseo`);
   for (const line of pluginLines(live, kitPlugins(ctx.pluginsDir), enablePlugins)) say(line.level, line.text);

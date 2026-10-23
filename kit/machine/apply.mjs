@@ -1,5 +1,5 @@
-// `machine apply`: every gate and the whole patch in memory first, then backup, atomic write, links, reload, check
-// (MACH-07..12, MACH-15, MACH-16, MACH-18). Never starts, stops or restarts the daemon.
+// `machine apply`: every gate and the whole patch in memory first, then backup, pending-reload marker, atomic write, links,
+// reload, check (MACH-07..12, MACH-15, MACH-16, MACH-18). Never starts, stops or restarts the daemon.
 import fs from "node:fs";
 import { writeJsonAtomic } from "../../ship/.agents/harness/lib/io.mjs";
 import { claudeGate, nodeGate, runCheck } from "./check.mjs";
@@ -46,7 +46,14 @@ export async function runApply(ctx, opts) {
   if (written) {
     const backup = backupPath(ctx.paseoConfig);
     fs.copyFileSync(ctx.paseoConfig, backup);
-    writeJsonAtomic(ctx.paseoConfig, next);
+    // The marker goes down before the write, so an abrupt exit after the write leaves it behind (G176).
+    writeJsonAtomic(ctx.reloadPending, { version: 1, config: ctx.paseoConfig, backup });
+    try {
+      writeJsonAtomic(ctx.paseoConfig, next);
+    } catch (e) {
+      fs.rmSync(ctx.reloadPending, { force: true });
+      throw e;
+    }
     for (const change of allChanges) ctx.out(`paseo: ${change}`);
     ctx.out(`paseo: backup ${backup}`);
   } else ctx.out("paseo: every template provider, model and policy entry is present");
@@ -71,14 +78,21 @@ export async function runApply(ctx, opts) {
     for (const line of lines) ctx.out(line);
     problems += failures;
   }
-  if (written && !opts.noReload) {
+  // A marker left by an earlier write whose reload never finished makes this run reload again (G176).
+  const reload = written || fs.existsSync(ctx.reloadPending);
+  if (reload && !opts.noReload) {
     const r = await paseoReload(ctx.env);
-    if (r.ok) ctx.out("paseo: configuration reloaded (paseo reload; no daemon restart)");
-    else {
+    if (r.ok) {
+      fs.rmSync(ctx.reloadPending, { force: true });
+      ctx.out("paseo: configuration reloaded (paseo reload; no daemon restart)");
+    } else {
       problems++;
       ctx.out(`paseo reload failed (${r.reason}); run it yourself: paseo reload`);
     }
-  } else if (written) ctx.out("paseo: reload skipped (--no-reload); run paseo reload to load the change");
+  } else if (reload) {
+    fs.rmSync(ctx.reloadPending, { force: true });
+    ctx.out("paseo: reload skipped (--no-reload); run paseo reload to load the change");
+  }
   ctx.out("--- check");
   const checked = runCheck(ctx, { enablePlugins: opts.enablePlugins });
   return problems || checked ? 2 : 0;

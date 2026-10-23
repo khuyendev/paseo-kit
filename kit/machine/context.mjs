@@ -27,6 +27,7 @@ export function machineContext(io = {}) {
     skillDir: path.join(kitDir, "user", "skills", "kit-init"),
     paseoConfig: paseoConfigFile(env),
     linksRecord: path.join(home, ".paseo-kit", "user-links.json"),
+    reloadPending: path.join(home, ".paseo-kit", "paseo-reload-pending.json"),
   };
 }
 
