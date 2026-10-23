@@ -94,7 +94,7 @@ function digestOf(entry) {
 
 // The digest of each part of a key, in hash order: its files (deduplicated, sorted), this phase's ROADMAP section without its
 // generated block, and the settings digest. A record keeps the parts, so a check can name the part that changed (F40).
-function keyParts(g, phase, key, settings = null) {
+export function keyParts(g, phase, key, settings = null) {
   const seen = new Map();
   const outside = new Set();
   for (const f of keyFiles(g, phase, key)) {
@@ -122,7 +122,7 @@ export function keyHash(g, phase, key, settings = null) {
 }
 
 // The parts whose digest differs from the record (a removed part included); null for a record written before parts were kept.
-function changedParts(recorded, parts) {
+export function changedParts(recorded, parts) {
   if (!recorded?.parts) return null;
   const now = new Map(parts);
   const was = new Map(Object.entries(recorded.parts));
@@ -133,7 +133,29 @@ const revisionsFile = (phase) => path.join(phase.dir, "revisions.json");
 
 export const readRevisions = (phase) => readJsonIf(revisionsFile(phase), null) ?? { v: 1, keys: {}, lists: {} };
 
+// The keys the workflows check with `--settings`, by the digest they pass (gsd-plan `settingsDigest`): a record of one of them
+// without a settings part never matches that check (kit feedback 73).
+const settingsFamily = (key) => (key === "freeze" || key === "checked" ? key : key.startsWith("plan:") ? "plan" : null);
+
+// The digest a record without --settings reuses: the key's previous record, else the newest record of its family (every plan key
+// carries the planner's digest). The digest is the workflow's, and a hand edit changes no setting, so the old one stays exact.
+function inheritedSettings(data, key) {
+  const family = settingsFamily(key);
+  if (family === null) return null;
+  const own = data.keys[key]?.parts?.settings;
+  if (own) return { digest: own, source: "previous record" };
+  const sibling = Object.entries(data.keys)
+    .filter(([k, v]) => k !== key && settingsFamily(k) === family && v.parts?.settings)
+    .sort((a, b) => String(b[1].at).localeCompare(String(a[1].at)))[0];
+  return sibling ? { digest: sibling[1].parts.settings, source: `record of ${sibling[0]}` } : null;
+}
+
 export function recordRevision(g, phase, key, settings = null) {
+  const explicit = settings !== null;
+  const inherited = explicit ? null : inheritedSettings(readRevisions(phase), key);
+  if (inherited) settings = inherited.digest;
+  const warnings = [];
+  if (!explicit && !inherited && settingsFamily(key) !== null) warnings.push(`${key} recorded without a settings part: the workflow checks it with --settings, so its next run counts the record changed and plans it again; pass --settings <digest> (the settings part of another ${settingsFamily(key) === "plan" ? "plan:<id>" : key} record in revisions.json) or let the flow record it`);
   const { parts, files, skipped } = keyParts(g, phase, key, settings);
   const hash = hashOf(parts);
   const head = headOf(g.codeRoot);
@@ -147,7 +169,7 @@ export function recordRevision(g, phase, key, settings = null) {
     for (const id of Object.keys(data.lists)) if (!used.has(id)) delete data.lists[id];
     writeJsonAtomic(revisionsFile(phase), data);
   });
-  return { key, hash, files: files.length, skipped, head };
+  return { key, hash, files: files.length, skipped, head, settings: settings === null ? null : { digest: settings, source: explicit ? "argument" : inherited.source }, ...(warnings.length ? { warnings } : {}) };
 }
 
 export function checkRevision(g, phase, key, settings = null) {
@@ -160,7 +182,11 @@ export function checkRevision(g, phase, key, settings = null) {
 }
 
 export function revisionsVerb(g, sub, phase, key, settings = null) {
-  if (sub === "record") return done(recordRevision(g, phase, need(key), settings));
+  if (sub === "record") {
+    const r = recordRevision(g, phase, need(key), settings);
+    for (const w of r.warnings ?? []) g.err?.(`warning: ${w}`);
+    return done(r);
+  }
   if (sub === "hash") return done({ key: need(key), ...keyHash(g, phase, key, settings) });
   if (sub === "check") {
     const r = checkRevision(g, phase, need(key), settings);

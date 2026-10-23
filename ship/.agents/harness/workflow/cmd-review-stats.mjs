@@ -3,11 +3,14 @@
 // `ph review-stats outcome`. A change to the review rules or lenses is measured with it before it is called better.
 // The records, not `_workspace/review-metrics.jsonl`, are the source: a resumed run appends that line again.
 // `--stage skeleton|checker|plan|code` reports one review stage with its cost and escapes (kit feedback 64, review-stages.mjs).
+// The report ends with the hand fixes the orchestrator logged per cause category and phase (kit feedback 68, `ph gsd hand-edit`);
+// a category seen twice is printed as a kit defect candidate.
 import fs from "node:fs";
 import path from "node:path";
 import { UsageError } from "../lib/cli.mjs";
 import { sha256 } from "../lib/hash.mjs";
 import { readJsonIf, readText } from "../lib/io.mjs";
+import { handEditLines, projectEdits } from "../lib/hand-edit-log.mjs";
 import { runsDirOf } from "./journal.mjs";
 import { STAGES, readPrereviews, stageCosts, stageLines } from "./review-stages.mjs";
 
@@ -154,11 +157,13 @@ export async function reviewStatsCommand(ctx) {
     return 0;
   }
   if (reviews.length) for (const line of reviewLines(reviews, findings)) ctx.out(line);
+  const hand = projectEdits(ctx.root, ctx.opts.phase);
+  for (const line of handEditLines(hand.edits)) ctx.out(line);
   const byStage = ["skeleton", "checker", "plan"].map((s) => [s, pre.records.filter((r) => r.rec.stage === s).length]).filter(([, n]) => n);
   if (byStage.length) ctx.out(`pre-code review records: ${byStage.map(([s, n]) => `${s} ${n}`).join(", ")} (ph review-stats --stage ${STAGES.join("|")})`);
   const known = new Set(findingsOf(readReviews(ctx.root).reviews, new Map()).map((f) => fateKey(f.ref, f.fp)));
   const orphans = [...outcomes.fates.keys()].filter((k) => !known.has(k)).length;
-  const skipped = [bad && `${bad} unreadable records`, outcomes.bad && `${outcomes.bad} unreadable outcome lines`, outcomes.unbound && `${outcomes.unbound} outcomes with no finding fingerprint (not applied)`, orphans && `${orphans} outcomes of findings no record holds`].filter(Boolean);
+  const skipped = [bad && `${bad} unreadable records`, hand.bad && `${hand.bad} unreadable hand-edit entries`, outcomes.bad && `${outcomes.bad} unreadable outcome lines`, outcomes.unbound && `${outcomes.unbound} outcomes with no finding fingerprint (not applied)`, orphans && `${orphans} outcomes of findings no record holds`].filter(Boolean);
   ctx.out(`review-stats: ${reviews.length} review records from ${PHASES_REL}/*/review${ctx.opts.phase !== undefined ? ` (phase ${ctx.opts.phase})` : ""}${skipped.length ? `; skipped ${skipped.join(", ")}` : ""}`);
   return 0;
 }
