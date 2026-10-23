@@ -37,7 +37,7 @@ export async function planStructure(g, phase, plan) {
   const tasks = plan.tasks;
   if (!tasks.length) errors.push("No <task> elements found");
   else if (!tasks.some((t) => t.automated.length)) errors.push("No task has an <automated> verify obligation");
-  let decisionSeen = false;
+  let decisionBefore = false;
   for (const t of tasks) {
     const label = `Task ${t.index}${t.name ? ` (${t.name})` : ""}`;
     if (!t.name) errors.push(`Task ${t.index} missing <name>`);
@@ -51,12 +51,13 @@ export async function planStructure(g, phase, plan) {
       for (const tg of shape) if (!has(t.inner, tg)) errors.push(`${label}: ${t.type} missing <${tg}>`);
       if (fm.autonomous !== false) errors.push(`${label}: checkpoint task in a plan whose autonomous is not false`);
       if (t.type === "checkpoint:decision") {
-        decisionSeen = true;
         const ids = [...t.inner.matchAll(/<option\s+id="([^"]+)"/g)].map((m) => m[1]);
         if (t.autoSelect !== null && !ids.includes(t.autoSelect)) errors.push(`${label}: auto_select "${t.autoSelect}" names no option id`);
       }
     }
-    if (t.reversibility === "one-way" && !decisionSeen) warnings.push(`${label}: one-way reversibility without an earlier checkpoint:decision`);
+    // A one-way task is gated only by the checkpoint:decision right before it (planner-reversibility.md).
+    if (t.reversibility === "one-way" && !decisionBefore) warnings.push(`${label}: one-way reversibility without a checkpoint:decision immediately before it`);
+    decisionBefore = t.type === "checkpoint:decision";
   }
   if (Number(plan.wave) > 1 && !plan.dependsOn.length) warnings.push(`wave ${plan.wave} with empty depends_on`);
   const limit = g.cfg.gsd.plan_limits.tasks_per_plan;
