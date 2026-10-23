@@ -42,7 +42,7 @@ async function everyWorkflow(overlay) {
     runs.push(await runScript("gsd-new-project", { root: w.root, gsd: w.gsd, args: { stage: "roadmap" }, agent: () => ({ written: [] }) }));
   }
   {
-    const w = makeWorld({ overlay, files: { ".planning/ROADMAP.md": "# R\n" } });
+    const w = makeWorld({ overlay, files: { ".planning/ROADMAP.md": "# R\n", ".planning/owner-decisions.md": "<decisions>\n- **D-01:** keep it small\n</decisions>\n" } });
     const agent = (p, o) => {
       const plan = /Write ONE plan (\S+)/.exec(p)?.[1];
       if (plan) { w.write(plan, planText("q")); return { marker: "PLANNING COMPLETE" }; }
@@ -50,7 +50,7 @@ async function everyWorkflow(overlay) {
       if (o.label === "quick-exec") { w.write(/SUMMARY to exactly: (\S+)/.exec(p)[1], "done\n"); return { taskResults: [{ task: "1", status: "implemented" }] }; }
       return { issues: [] };
     };
-    runs.push(await runScript("gsd-quick", { root: w.root, gsd: w.gsd, args: { description: "fix a | b", full: true }, agent }));
+    runs.push(await runScript("gsd-quick", { root: w.root, gsd: w.gsd, args: { description: "fix a | b", full: true, contextPath: ".planning/owner-decisions.md" }, agent }));
   }
   {
     const w = makeWorld({ overlay });

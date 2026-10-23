@@ -10,8 +10,9 @@ const ID = "261023-001";
 const PLAN = `${Q}/${ID}-PLAN.md`;
 const RESEARCH = `${Q}/${ID}-RESEARCH.md`;
 const SUMMARY = `${Q}/${ID}-SUMMARY.md`;
+const CONTEXT = `${Q}/${ID}-CONTEXT.md`;
 
-const quickWorld = (files = {}) => makeWorld({ files: { ".planning/ROADMAP.md": "# Roadmap\n", ...files } });
+const quickWorld = (files = {}) => makeWorld({ files: { ".planning/ROADMAP.md": "# Roadmap\n", [CONTEXT]: "<decisions>\n- **D-01:** keep it small\n</decisions>\n", ...files } });
 // The planner, researcher and executor write their files as the real agents do.
 function writer(w, exec = { taskResults: [{ task: "1", status: "implemented" }] }) {
   return (p, o) => {
@@ -25,7 +26,7 @@ function writer(w, exec = { taskResults: [{ task: "1", status: "implemented" }] 
 test("G108 quick: a directory that already holds the plan or research stops before any agent runs and keeps the file", async () => {
   for (const [file, full] of [[PLAN, false], [RESEARCH, true]]) {
     const w = quickWorld({ [file]: "owner edited\n" });
-    const r = await runScript("gsd-quick", { root: w.root, gsd: w.gsd, args: { description: "fix", dir: Q, full }, agent: writer(w) });
+    const r = await runScript("gsd-quick", { root: w.root, gsd: w.gsd, args: { description: "fix", dir: Q, full, ...(full ? { contextPath: CONTEXT } : {}) }, agent: writer(w) });
     assert.equal(r.result.status, "needs-owner", file);
     assert.ok(r.result.reason.includes(file), r.result.reason);
     assert.equal(r.calls.length, 0, file);

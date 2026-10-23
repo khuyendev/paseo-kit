@@ -67,7 +67,7 @@ test("GSDF-09 new-project research: the synthesizer's inline document is self-he
 test("GSDF-61 quick: needs a ROADMAP, makes the dated directory, one plan and a SUMMARY; --full checker stops after 2 iterations", async () => {
   const none = makeWorld();
   assert.equal((await runScript("gsd-quick", { root: none.root, gsd: none.gsd, args: { description: "fix a | b" } })).result.status, "refused");
-  const w = makeWorld({ files: { ".planning/ROADMAP.md": "# R\n" } });
+  const w = makeWorld({ files: { ".planning/ROADMAP.md": "# R\n", ".planning/owner-decisions.md": "<decisions>\n- **D-01:** keep it small\n</decisions>\n" } });
   const agentFn = (full) => (p, o) => {
     const plan = /Write ONE plan (\S+)/.exec(p)?.[1];
     if (plan) { w.write(plan, planText("q")); return { marker: "PLANNING COMPLETE" }; }
@@ -81,7 +81,7 @@ test("GSDF-61 quick: needs a ROADMAP, makes the dated directory, one plan and a 
   assert.match(r.result.dir, /^\.planning\/quick\/\d{6}-001-fix-a-b$/);
   assert.ok(w.read(r.result.plan) && w.read(r.result.summary));
   assert.match(r.calls[0].prompt, /DATA_START\n {4}fix a \| b\nDATA_END/);
-  const f = await runScript("gsd-quick", { root: w.root, gsd: w.gsd, args: { description: "bigger", full: true }, agent: agentFn(true) });
+  const f = await runScript("gsd-quick", { root: w.root, gsd: w.gsd, args: { description: "bigger", full: true, contextPath: ".planning/owner-decisions.md" }, agent: agentFn(true) });
   assert.deepEqual([f.result.status, f.result.stage], ["needs-owner", "Check"]);
   assert.equal(f.calls.filter((c) => c.opts.label.startsWith("quick-check")).length, 2);
 });

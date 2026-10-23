@@ -9,7 +9,8 @@ import { makeWorld, planText } from "../gsd-flows/world.mjs";
 const Q = ".planning/quick/261020-001-fix";
 const ID = "261020-001";
 const RESEARCH = `${Q}/${ID}-RESEARCH.md`;
-const quickWorld = (files = {}) => makeWorld({ files: { ".planning/ROADMAP.md": "# Roadmap\n", ...files }, overlay: { gsd: { commit_policy: { docs: true, code: "per-wave" } } } });
+const CONTEXT = `${Q}/${ID}-CONTEXT.md`;
+const quickWorld = (files = {}) => makeWorld({ files: { ".planning/ROADMAP.md": "# Roadmap\n", [CONTEXT]: "<decisions>\n- **D-01:** keep it small\n</decisions>\n", ...files }, overlay: { gsd: { commit_policy: { docs: true, code: "per-wave" } } } });
 const writeResearch = (w) => { w.write(RESEARCH, "report\n"); return "researched"; };
 function quickAgent(w, research) {
   return (_prompt, opts) => {
@@ -25,7 +26,7 @@ function quickAgent(w, research) {
     return { status: "passed" };
   };
 }
-const quick = (w, args, research) => runScript("gsd-quick", { root: w.root, gsd: w.gsd, args: { dir: Q, description: "fix", ...args }, agent: quickAgent(w, research) });
+const quick = (w, args, research) => runScript("gsd-quick", { root: w.root, gsd: w.gsd, args: { dir: Q, description: "fix", contextPath: CONTEXT, ...args }, agent: quickAgent(w, research) });
 const labels = (r) => r.calls.map((c) => c.opts.label);
 
 test("G102 quick --full stops for the owner when research returns nothing, before any plan is written", async () => {

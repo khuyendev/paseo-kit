@@ -74,7 +74,8 @@ test("GSDF-03 CR-GSF-19 real engine cache misses after a reviewed PLAN or source
 
 const Q = ".planning/quick/261020-001-fix";
 const ID = "261020-001";
-function quickWorld() { return makeWorld({ files: { ".planning/ROADMAP.md": "# Roadmap\n" } }); }
+const CONTEXT = `${Q}/${ID}-CONTEXT.md`;
+function quickWorld() { return makeWorld({ files: { ".planning/ROADMAP.md": "# Roadmap\n", [CONTEXT]: "<decisions>\n- **D-01:** keep it small\n</decisions>\n" } }); }
 function quickAgent(w, override) {
   return (prompt, opts) => {
     const v = override?.(prompt, opts);
@@ -86,7 +87,7 @@ function quickAgent(w, override) {
     return { status: "passed" };
   };
 }
-const quick = (w, override) => runScript("gsd-quick", { root: w.root, gsd: w.gsd, args: { full: true, dir: Q, description: "fix" }, agent: quickAgent(w, override) });
+const quick = (w, override) => runScript("gsd-quick", { root: w.root, gsd: w.gsd, args: { full: true, dir: Q, description: "fix", contextPath: CONTEXT }, agent: quickAgent(w, override) });
 
 test("GSDF-61 CR-GSF-14 quick full rejects null checker, missing report and owner revision markers", async () => {
   const w = quickWorld();

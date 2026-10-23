@@ -1,6 +1,6 @@
 export const meta = {
   name: "gsd-quick",
-  description: "GSD quick task: one plan of 1-3 tasks in .planning/quick/, executed through the executor contract; --full adds research, a 2-iteration checker and a verifier",
+  description: "GSD quick task: one plan of 1-3 tasks in .planning/quick/, executed through the executor contract; --full needs a discussion (contextPath) and adds research, a 2-iteration checker and a verifier",
   phases: [{ title: "Plan" }, { title: "Check" }, { title: "Execute" }, { title: "Verify" }],
 };
 
@@ -78,6 +78,8 @@ const cfg = await loadCfg();
 const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
 const roadmap = (await flow(["exists", ".planning/ROADMAP.md"])).json?.exists?.[".planning/ROADMAP.md"];
 if (!roadmap) return { status: "refused", reason: "gsd-quick needs .planning/ROADMAP.md (run gsd-new-project first)" };
+// G104: --full plans on the owner's decisions; without an existing CONTEXT file it stops at discuss, as gsd-plan does.
+if (a.full && !(a.contextPath && (await flow(["exists", a.contextPath])).json?.exists?.[a.contextPath])) return needsOwner("Discuss", "no CONTEXT file for --full (contextPath missing or not found); run gsd-discuss first");
 // GSDF-64: quick writes the code root like plan and execute, so it takes the same writer lease once per run and holds it
 // to the end; a refusal here creates no quick directory or plan.
 const lease = await flow(["lock", "debug", runId, "gsd-quick"]);

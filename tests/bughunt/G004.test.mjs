@@ -58,9 +58,10 @@ test("G004 a probe warning that could not look does not stop the phase", async (
 
 const Q = ".planning/quick/261020-001-fix";
 const ID = "261020-001";
+const CONTEXT = `${Q}/${ID}-CONTEXT.md`;
 // quick-plan --full with a checker that answers round by round; the verifier writes a passed report.
 function quickRun(checks) {
-  const w = makeWorld({ files: { ".planning/ROADMAP.md": "# Roadmap\n" } });
+  const w = makeWorld({ files: { ".planning/ROADMAP.md": "# Roadmap\n", [CONTEXT]: "<decisions>\n- **D-01:** keep it small\n</decisions>\n" } });
   let n = 0;
   const agent = (p, o) => {
     if (o.label === "quick-research") { w.write(`${Q}/${ID}-RESEARCH.md`, "research\n"); return "researched"; }
@@ -75,7 +76,7 @@ function quickRun(checks) {
     }
     return null;
   };
-  return runScript("gsd-quick", { root: w.root, gsd: w.gsd, args: { full: true, dir: Q, description: "fix" }, agent });
+  return runScript("gsd-quick", { root: w.root, gsd: w.gsd, args: { full: true, dir: Q, description: "fix", contextPath: CONTEXT }, agent });
 }
 
 test("G004 quick: a warning-only check passes once, with no revision, and returns the warning", async () => {

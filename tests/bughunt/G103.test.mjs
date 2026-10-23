@@ -10,6 +10,7 @@ const PLAN = `${DIR}/260101-abc-PLAN.md`;
 const SUMMARY = `${DIR}/260101-abc-SUMMARY.md`;
 const VERIFY = `${DIR}/260101-abc-VERIFICATION.md`;
 const RESEARCH = `${DIR}/260101-abc-RESEARCH.md`;
+const CONTEXT = `${DIR}/260101-abc-CONTEXT.md`;
 const ERR = "Task 1 (t): missing <action>";
 
 // The planner writes the plan; a fixer turn rewrites it clean when `fixClean`; the checker reports one blocker
@@ -33,7 +34,7 @@ function agentFor(w, { fixClean = true } = {}) {
   };
 }
 const quickWorld = (structureErrors) => {
-  const w = makeWorld({ files: { ".planning/ROADMAP.md": "# R\n" } });
+  const w = makeWorld({ files: { ".planning/ROADMAP.md": "# R\n", [CONTEXT]: "<decisions>\n- **D-01:** keep it small\n</decisions>\n" } });
   w.structureErrors = { [PLAN]: structureErrors };
   return w;
 };
@@ -62,7 +63,7 @@ test("G103 non-full: a structure error the fixer cannot clear fails after exactl
 
 test("G103 full: a structure error after a checker revision is repaired and the checker runs again", async () => {
   const w = quickWorld([[], [ERR], []]);
-  const r = await run(w, agentFor(w), { full: true });
+  const r = await run(w, agentFor(w), { full: true, contextPath: CONTEXT });
   assert.equal(r.result.status, "done");
   assert.deepEqual(r.calls.map((c) => c.opts.label), ["quick-research", "quick-plan", "quick-check-1", "quick-revise-1", "quick-fix-1", "quick-check-2", "quick-exec", "quick-verify"]);
   assert.equal(r.calls.find((c) => c.opts.label === "quick-fix-1").opts.session, "planner:quick");
@@ -70,7 +71,7 @@ test("G103 full: a structure error after a checker revision is repaired and the 
 
 test("G103 full: a revision that stays structurally invalid after the one fixer turn fails with exactly one fixer prompt", async () => {
   const w = quickWorld([[], [ERR], [ERR]]);
-  const r = await run(w, agentFor(w, { fixClean: false }), { full: true });
+  const r = await run(w, agentFor(w, { fixClean: false }), { full: true, contextPath: CONTEXT });
   assert.equal(r.result.status, "failed");
   assert.match(r.result.reason, /still invalid/);
   assert.deepEqual(r.calls.map((c) => c.opts.label), ["quick-research", "quick-plan", "quick-check-1", "quick-revise-1", "quick-fix-1"]);
