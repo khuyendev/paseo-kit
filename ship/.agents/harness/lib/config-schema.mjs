@@ -133,7 +133,9 @@ export const SCHEMA = obj({
     attribution: nullable(str({ nonEmpty: true, repoPath: true })),
     worktree_setup: obj({ copy: strs(), link: strs() }),
     // Kit feedback 87 C1: the gate's check-weakening; null paths and regexes = the stack defaults of workflows/lib/flow-checks.mjs.
-    checks: obj({ enabled: bool(), paths: nullable(strs()), test_decl: nullable(strs()), assert: nullable(strs()), skip: nullable(strs()) }, ["enabled", "paths", "test_decl", "assert", "skip"]),
+    // Kit feedback 92: skip_guards, literal environment-guard expressions; absent from the defaults so the gate configuration
+    // hash a phase baseline recorded does not move on a kit update.
+    checks: obj({ enabled: bool(), paths: nullable(strs()), test_decl: nullable(strs()), assert: nullable(strs()), skip: nullable(strs()), skip_guards: arr(str({ nonEmpty: true })) }, ["enabled", "paths", "test_decl", "assert", "skip", "skip_guards"]),
   }, ["checks"]),
   gsd: obj({
     roles: map(obj({ model: str({ nonEmpty: true }), effort: effort(), reason: str() }, ["model", "effort", "reason"])),

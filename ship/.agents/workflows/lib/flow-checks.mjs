@@ -3,6 +3,8 @@
 // assertions, added skip markers, a changed gate file, and a gate configuration (adapter.commands, verify_vocabulary, checks)
 // that differs from the hash the phase baseline recorded. A weakening stands only when a plan of the phase declares its path in
 // a <check_changes> block or the owner answered `ph gsd allow`. flow-gate.mjs runs it in every gate, so no composition skips it.
+// Kit feedback 92: skip markers count only against a base the files had, a marker on a line holding one of
+// adapter.checks.skip_guards (an environment guard) is no skip, and an added-skips weakening names the line of each new marker.
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig, loadKitConfig, mergeOverlay, OVERLAY_REL } from "../../harness/config.mjs";
@@ -108,13 +110,16 @@ function declName(m, lines, i) {
 }
 
 const count = (line, list) => list.reduce((n, src) => n + (line.match(rx(src, "g"))?.length ?? 0), 0);
+const squeeze = (text) => text.replace(/\s+/g, "");
 
-/** The test declarations (names, null when unnamed), assertion and skip counts of one file's text. */
+/** The test declarations (names, null when unnamed), assertion and skip counts of one file's text, and the line (1-based) and
+ * text of each counted skip marker. A skip marker on a line holding one of rules.guards (whitespace ignored) is not counted. */
 export function analyze(text, rules) {
   const lines = codeLines(text, rules.comment);
+  const guards = (rules.guards ?? []).map(squeeze);
   const decls = [];
+  const markers = [];
   let asserts = 0;
-  let skips = 0;
   lines.forEach((line, i) => {
     if (!line.trim()) return;
     for (const src of rules.test_decl) {
@@ -122,13 +127,25 @@ export function analyze(text, rules) {
       if (m) { decls.push(declName(m, lines, i)); break; }
     }
     asserts += count(line, rules.assert);
-    skips += count(line, rules.skip);
+    const n = count(line, rules.skip);
+    if (n && !guards.some((g) => squeeze(line).includes(g))) for (let k = 0; k < n; k++) markers.push({ line: i + 1, text: line.trim().slice(0, 100) });
   });
-  return { decls, asserts, skips };
+  return { decls, asserts, skips: markers.length, markers };
 }
 
 const stackOf = (rel) => STACKS.find((s) => s.ext.includes(path.posix.extname(rel).toLowerCase())) ?? null;
 const rulesOf = (stack, checks) => ({ comment: stack.comment, ...Object.fromEntries(KINDS.map((k) => [k, checks[k] ?? stack[k]])) });
+
+// The skip guards that apply to a stack's files: a blank guard, or one that holds a skip marker itself, would hide real skips.
+function guardsOf(rules, stack, checks, notes) {
+  return (checks.skip_guards ?? []).filter((g) => {
+    const why = !squeeze(g) ? "" : count(g, rules.skip) ? ` for ${stack.name} files` : null;
+    if (why === null) return true;
+    const note = `adapter.checks.skip_guards ${JSON.stringify(g)} is ignored${why}: ${why ? "it holds a skip marker itself" : "it is blank"}`;
+    if (!notes.includes(note)) notes.push(note);
+    return false;
+  });
+}
 
 // A changed file is a check file when adapter.checks.paths (or, when null, its stack's paths) match it; a Rust file whose
 // base holds a test is one too (inline tests). With project paths, a file of no stack is a gate file: any change counts.
@@ -169,6 +186,16 @@ const tally = (names) => {
   return m;
 };
 const sum = (m) => [...m.values()].reduce((a, b) => a + b, 0);
+
+// The skip markers of a file now whose text the base did not have (as many times).
+function added(base, now) {
+  const left = tally(base.map((m) => m.text));
+  return now.filter((m) => {
+    if (!left.get(m.text)) return true;
+    left.set(m.text, left.get(m.text) - 1);
+    return false;
+  });
+}
 
 // Removed tests by name: a name kept in its file is no change; a name that leaves one file and appears new in another changed
 // file is a move (the two files are judged together); the rest pairs with new names of the same file (renames). What is left
@@ -217,8 +244,13 @@ function weakenings(entries) {
       if (!e.now && found.some((f) => f.path === e.rel)) continue;
       found.push({ path: e.rel, kind: e.now ? "asserts-removed" : "test-file-deleted", detail: `assertions ${e.base?.asserts ?? 0} -> ${e.now?.asserts ?? 0}${e.now ? "" : " (deleted)"}` });
     }
+    // A group no file of which existed at the base (new files, no test moved in from a base file) has no skips to weaken.
     const skips = (side) => group.reduce((n, e) => n + (e[side]?.skips ?? 0), 0);
-    if (skips("now") > skips("base")) for (const e of group.filter((x) => (x.now?.skips ?? 0) > (x.base?.skips ?? 0))) found.push({ path: e.rel, kind: "skips-added", detail: `skip markers ${e.base?.skips ?? 0} -> ${e.now.skips}` });
+    if (group.some((e) => e.base) && skips("now") > skips("base")) for (const e of group.filter((x) => (x.now?.skips ?? 0) > (x.base?.skips ?? 0))) {
+      const markers = added(e.base?.markers ?? [], e.now.markers);
+      const at = markers.slice(0, 5).map((m) => `line ${m.line}: ${m.text}`).join("; ");
+      found.push({ path: e.rel, kind: "skips-added", detail: `skip markers ${e.base?.skips ?? 0} -> ${e.now.skips} at ${at}${markers.length > 5 ? ` and ${markers.length - 5} more` : ""}`, markers });
+    }
   }
   return found;
 }
@@ -290,6 +322,7 @@ export function checkWeakening(root, phaseDir, { base = "HEAD", files } = {}) {
         continue;
       }
       const rules = rulesOf(kind.stack, checks);
+      rules.guards = guardsOf(rules, kind.stack, checks, notes);
       entries.push({ rel, base: was === null ? null : analyze(was, rules), now: now === null ? null : analyze(now, rules) });
     }
     found.push(...weakenings(entries));
