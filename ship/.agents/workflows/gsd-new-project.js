@@ -53,16 +53,18 @@ const DONE_SCHEMA = { type: "object", properties: { written: { type: "array", it
 const a = args ?? {};
 const stage = a.stage;
 if (!["research", "roadmap", "install"].includes(stage)) return { status: "failed", reason: "stage must be research, roadmap or install" };
+const cfg = await loadCfg();
+const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
 const ctx = "Project files: .planning/PROJECT.md (what and why), .planning/REQUIREMENTS.md when present, .planning/codebase/ when present.";
 
 if (stage === "research") {
   phase("Research");
   const jobs = Object.entries(DIMENSIONS);
-  const res = await parallel(jobs.map(([dim, file]) => () => call([`Research the ${dim} dimension for this project and write .planning/research/${file}.md.`, ctx, "Keep provenance on every claim. Do not commit. Return JSON {written: [paths]}."].join("\n\n"), { label: `researcher-${dim}`, agentType: "gsd-project-researcher", role: "project_researcher", schema: DONE_SCHEMA })));
+  const res = await parallel(jobs.map(([dim, file]) => () => call([`Research the ${dim} dimension for this project and write .planning/research/${file}.md.`, ctx, "Keep provenance on every claim. Do not commit. Return JSON {written: [paths]}."].join("\n\n"), { label: `researcher-${dim}`, agentType: agentFor("project_researcher", "gsd-project-researcher"), role: "project_researcher", schema: DONE_SCHEMA })));
   const bad = res.findIndex((r) => r && !r.result && fatal(r.reason));
   if (bad >= 0) return { status: "failed", reason: `project researcher ${jobs[bad][0]} failed: ${res[bad].reason}` };
   phase("Synthesize");
-  const syn = await call([`Synthesize .planning/research/{${Object.values(DIMENSIONS).join(",")}}.md into .planning/research/SUMMARY.md.`, ctx, "Do not commit. Reply with the full SUMMARY document as written."].join("\n\n"), { label: "synthesizer", agentType: "gsd-research-synthesizer", role: "synthesizer" });
+  const syn = await call([`Synthesize .planning/research/{${Object.values(DIMENSIONS).join(",")}}.md into .planning/research/SUMMARY.md.`, ctx, "Do not commit. Reply with the full SUMMARY document as written."].join("\n\n"), { label: "synthesizer", agentType: agentFor("synthesizer", "gsd-research-synthesizer"), role: "synthesizer" });
   // GSDF-09: a summary the worker could not write is written by the orchestrator from the reply.
   const heal = await flow(["summary-heal"], syn.result ?? "");
   if (heal.code !== 0) return { status: "failed", reason: heal.json?.error ?? "no research SUMMARY" };
@@ -80,7 +82,7 @@ if (stage === "roadmap") {
     "Never write .planning/ROADMAP.md, .planning/STATE.md or .planning/REQUIREMENTS.md: the orchestrator installs the draft after owner approval.",
     feedback,
     "Return JSON {written: [paths]}.",
-  ].filter(Boolean).join("\n\n"), { label: "roadmapper", agentType: "gsd-roadmapper", role: "roadmapper", schema: DONE_SCHEMA });
+  ].filter(Boolean).join("\n\n"), { label: "roadmapper", agentType: agentFor("roadmapper", "gsd-roadmapper"), role: "roadmapper", schema: DONE_SCHEMA });
   if (!r.result && fatal(r.reason)) return { status: "failed", reason: `roadmapper failed: ${r.reason}` };
   const check = await flow(["draft-check"]);
   if (check.code !== 0) return { status: "draft-invalid", reason: (check.json?.problems ?? [check.json?.error]).join("; "), unmapped: check.json?.unmapped ?? [] };

@@ -70,6 +70,8 @@ if (typeof phaseDir !== "string" || !PHASE_DIR_RE.test(phaseDir)) return { statu
 const plans = Array.isArray(a.plans) ? a.plans.filter((p) => /^\d+(\.\d+)?-\d+$/.test(p)) : [];
 if (!plans.length) return { status: "failed", reason: "plans must list the plan ids to review" };
 const cfg = await loadCfg();
+// The finder, verifier and judge have no generic agent type: they run the default tier unless the adapter maps one.
+const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
 const N = phaseNumber(phaseDir);
 const planPath = (id) => `${phaseDir}/${id}-PLAN.md`;
 const policy = policyBlock(a.researchPath ?? null);
@@ -97,14 +99,14 @@ for (let cycle = 1; cycle <= MAX_CYCLES; cycle++) {
   const digest = (await gsd(["revisions", "hash", phaseDir, "checked"])).json?.hash ?? "none";
   phase("Find");
   const pairs = plans.flatMap((p) => lenses.map((l) => ({ p, l })));
-  const found = await parallel(pairs.map(({ p, l }) => () => ask([`Review ${planPath(p)} read-only through one lens.`, `Lens ${l.name}: ${l.text}`, "Return JSON {issues: [{plan, severity (high|medium|low), actionable, description, evidence}]}.", policy, digestLine("checked", digest)].join("\n\n"), { label: `find-${p}-${l.name}`, readOnly: true, schema: FIND_SCHEMA, ...ro("plan_finder") }, `plan finder ${p} (${l.name})`)));
+  const found = await parallel(pairs.map(({ p, l }) => () => ask([`Review ${planPath(p)} read-only through one lens.`, `Lens ${l.name}: ${l.text}`, "Return JSON {issues: [{plan, severity (high|medium|low), actionable, description, evidence}]}.", policy, digestLine("checked", digest)].join("\n\n"), { label: `find-${p}-${l.name}`, agentType: agentFor("plan_finder"), readOnly: true, schema: FIND_SCHEMA, ...ro("plan_finder") }, `plan finder ${p} (${l.name})`)));
   for (const [i, r] of found.entries()) if (!r || r.fail) return r?.fail ?? { status: "failed", reason: `plan finder ${pairs[i].p} (${pairs[i].l.name}) failed to run` };
   const issues = found.flatMap((r, i) => (r.result.issues ?? []).map((x, k) => ({ ...x, plan: x.plan ?? pairs[i].p, id: `C${cycle}-${i + 1}-${k + 1}` })));
   phase("Judge");
   const verdicts = await parallel(plans.map((p) => async () => {
     const mine = issues.filter((x) => x.plan === p);
     if (!mine.length) return { result: { verdicts: [] } };
-    return ask([`Verify these plan-review issues of ${planPath(p)} against the plan and the code, read-only.`, `Issues (JSON): ${JSON.stringify(mine)}`, "Return JSON {verdicts: [{id, valid, evidence}]}.", policy, digestLine("checked", digest)].join("\n\n"), { label: `verify-${p}`, readOnly: true, schema: VERIFY_SCHEMA, ...ro("plan_verifier") }, `plan verifier ${p}`);
+    return ask([`Verify these plan-review issues of ${planPath(p)} against the plan and the code, read-only.`, `Issues (JSON): ${JSON.stringify(mine)}`, "Return JSON {verdicts: [{id, valid, evidence}]}.", policy, digestLine("checked", digest)].join("\n\n"), { label: `verify-${p}`, agentType: agentFor("plan_verifier"), readOnly: true, schema: VERIFY_SCHEMA, ...ro("plan_verifier") }, `plan verifier ${p}`);
   }));
   for (const [i, r] of verdicts.entries()) if (!r || r.fail) return r?.fail ?? { status: "failed", reason: `plan verifier ${plans[i]} failed to run` };
   const allVerdicts = verdicts.flatMap((r) => r.result.verdicts ?? []);
@@ -113,7 +115,7 @@ for (let cycle = 1; cycle <= MAX_CYCLES; cycle++) {
   const valid = issues.filter((x) => allVerdicts.find((v) => v.id === x.id)?.valid !== false);
   let kept = [];
   if (valid.length) {
-    const j = await ask(["Judge these verified plan-review issues across all plans: keep the real ones and merge cross-plan duplicates (duplicate_of names the kept id).", `Issues (JSON): ${JSON.stringify(valid)}`, "Return JSON {decisions: [{id, keep, duplicate_of}]}.", policy, digestLine("checked", digest)].join("\n\n"), { label: `judge-${cycle}`, readOnly: true, schema: JUDGE_SCHEMA, ...ro("plan_judge") }, "plan judge");
+    const j = await ask(["Judge these verified plan-review issues across all plans: keep the real ones and merge cross-plan duplicates (duplicate_of names the kept id).", `Issues (JSON): ${JSON.stringify(valid)}`, "Return JSON {decisions: [{id, keep, duplicate_of}]}.", policy, digestLine("checked", digest)].join("\n\n"), { label: `judge-${cycle}`, agentType: agentFor("plan_judge"), readOnly: true, schema: JUDGE_SCHEMA, ...ro("plan_judge") }, "plan judge");
     if (j.fail) return j.fail;
     const decisions = j.result.decisions ?? [];
     if (valid.some((x) => decisions.filter((d) => d.id === x.id && typeof d.keep === "boolean").length !== 1)) return { status: "failed", reason: "plan judge did not answer every issue exactly once", issues: valid };
@@ -126,7 +128,7 @@ for (let cycle = 1; cycle <= MAX_CYCLES; cycle++) {
   if (count >= prev) return { status: "needs-owner", reason: `plan review not converging: ${count} issues, not below ${prev}`, issues: kept };
   prev = count;
   phase("Edit");
-  const ed = await call([`Revise these plans in one pass so the issues below are resolved: ${plans.map(planPath).join(", ")}.`, `Issues (JSON): ${JSON.stringify(kept)}`, "Return JSON {marker: REVISION COMPLETE | REVISION_CONFLICT, conflict?}. Never ask the owner; never commit.", policy, digestLine("checked", digest)].join("\n\n"), { label: `editor-${cycle}`, agentType: "gsd-planner", schema: EDITOR_SCHEMA, ...ro("plan_editor") });
+  const ed = await call([`Revise these plans in one pass so the issues below are resolved: ${plans.map(planPath).join(", ")}.`, `Issues (JSON): ${JSON.stringify(kept)}`, "Return JSON {marker: REVISION COMPLETE | REVISION_CONFLICT, conflict?}. Never ask the owner; never commit.", policy, digestLine("checked", digest)].join("\n\n"), { label: `editor-${cycle}`, agentType: agentFor("plan_editor", "gsd-planner"), schema: EDITOR_SCHEMA, ...ro("plan_editor") });
   if (String(ed.result?.marker ?? "").includes("REVISION_CONFLICT")) return { status: "needs-owner", reason: "plan editor returned REVISION_CONFLICT", conflict: ed.result.conflict ?? null, issues: kept };
   if (!ed.result) return { status: "failed", reason: `plan editor returned nothing${ed.reason ? ` (${ed.reason})` : ""}` };
   // The warnings of this check are the plans' warnings now; gsd-plan replaces the earlier ones with them (G019).

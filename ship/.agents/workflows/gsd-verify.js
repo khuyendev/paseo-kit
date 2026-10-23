@@ -58,6 +58,8 @@ if (evidence.some((p) => typeof p !== "string" || !/^[\w./ -]+\.json$/.test(p) |
 const N = phaseNumber(phaseDir);
 const nn = phaseDir.split("/").pop().split("-")[0];
 const REPORT = `${phaseDir}/${nn}-VERIFICATION.md`;
+const cfg = await loadCfg();
+const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
 
 // ---- gate evidence (GSDF-55, ADPT-17): stale or invalid evidence is listed as stale, never as proof ----
 phase("Evidence");
@@ -124,7 +126,7 @@ if (!verdict) {
     `Return JSON {status, path: "${REPORT}"}.`,
     digestLine("verify", inputDigest),
   ].filter(Boolean).join("\n\n");
-  const { result, reason } = await call(prompt, { label: "verifier", agentType: "gsd-verifier", role: "verifier", schema: VERIFIER_SCHEMA });
+  const { result, reason } = await call(prompt, { label: "verifier", agentType: agentFor("verifier", "gsd-verifier"), role: "verifier", schema: VERIFIER_SCHEMA });
   if (!result && fatal(reason)) return { status: "failed", reason: `verifier failed: ${reason}` };
   verdict = await readback(result?.status ?? null);
 }

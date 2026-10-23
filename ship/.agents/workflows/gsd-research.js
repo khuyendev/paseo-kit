@@ -53,6 +53,8 @@ const phaseDir = a.phaseDir;
 if (typeof phaseDir !== "string" || !PHASE_DIR_RE.test(phaseDir)) return { status: "failed", reason: `phaseDir must match ${PHASE_DIR_RE.source}` };
 const nn = phaseDir.split("/").pop().split("-")[0];
 const report = `${phaseDir}/${nn}-RESEARCH.md`;
+const cfg = await loadCfg();
+const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
 
 phase("Preconditions");
 const status = await gsd(["research", "status", phaseDir]);
@@ -115,7 +117,7 @@ const prompt = [
   digestLine("research", inputDigest),
 ].join("\n\n");
 const schema = { type: "object", properties: { status: { type: "string", enum: ["complete", "blocked"] }, path: { type: "string" } }, required: ["status"] };
-const { reason } = await call(prompt, { label: "researcher", role: "research", agentType: "gsd-phase-researcher", schema });
+const { reason } = await call(prompt, { label: "researcher", role: "research", agentType: agentFor("research", "gsd-phase-researcher"), schema });
 
 phase("Readback");
 const decided = await decide();

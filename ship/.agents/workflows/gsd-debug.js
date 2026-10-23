@@ -62,6 +62,7 @@ const a = args ?? {};
 const slug = a.slug;
 if (typeof slug !== "string" || !/^[a-z0-9][a-z0-9-]{0,29}(-\d+)?$/.test(slug)) return { status: "failed", reason: "slug must be a debug session slug" };
 const cfg = await loadCfg();
+const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
 const limits = cfg.gsd.debug;
 const data = (text) => `DATA_START\n${String(text).split(/\r?\n/).map((l) => `    ${l}`).join("\n")}\nDATA_END`;
 
@@ -115,7 +116,7 @@ async function debugSession() {
       next,
       "Return JSON {status: continue|checkpoint|resolved|diagnosed, checkpoint?, verify?, summary}.",
     ].join("\n");
-    const d = await agent(prompt, { label: `debugger-${slug}`, session: `debugger:${slug}`, agentType: "gsd-debugger", role: "debugger", schema: TURN_SCHEMA, timeoutS: Math.max(60, Math.floor(now.minutes * 60)), detail: true });
+    const d = await agent(prompt, { label: `debugger-${slug}`, session: `debugger:${slug}`, agentType: agentFor("debugger", "gsd-debugger"), role: "debugger", schema: TURN_SCHEMA, timeoutS: Math.max(60, Math.floor(now.minutes * 60)), detail: true });
     await gsd(["debug", "budget", slug], { turns: 1, minutes: Math.ceil((d?.durationS ?? 0) / 60) });
     const indexAfter = (await shell(["git", "diff", "--cached", "--name-only"])).stdout + (await shell(["git", "stash", "list"])).stdout;
     if (indexAfter !== indexBefore) return { status: "failed", reason: "the debugger staged or stashed changes (git index or stash list changed)" };

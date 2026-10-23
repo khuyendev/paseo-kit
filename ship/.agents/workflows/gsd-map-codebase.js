@@ -61,6 +61,7 @@ const docs = a.docs ? String(a.docs).split(",").map((d) => d.trim().toUpperCase(
 const unknown = docs.filter((d) => !Object.values(FOCUS).flat().includes(d));
 if (unknown.length) return { status: "failed", reason: `unknown map docs ${unknown.join(", ")}` };
 const cfg = await loadCfg();
+const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
 
 phase("Map");
 const jobs = Object.entries(FOCUS).map(([focus, own]) => ({ focus, docs: own.filter((d) => docs.includes(d)) })).filter((j) => j.docs.length);
@@ -69,7 +70,7 @@ const replies = await parallel(jobs.map((j) => () => call([
   paths.length ? "Update only the sections the listed paths affect; keep the rest of each document." : "",
   "Do not write last_mapped_commit or last_mapped_at (the orchestrator stamps the map). Never copy secrets, keys or tokens into a document. Do not commit.",
   "Return only a confirmation JSON {focus, written: [paths]}, not the documents.",
-].filter(Boolean).join("\n\n"), { label: `mapper-${j.focus}`, agentType: "gsd-codebase-mapper", role: "mapper", schema: CONFIRM_SCHEMA })));
+].filter(Boolean).join("\n\n"), { label: `mapper-${j.focus}`, agentType: agentFor("mapper", "gsd-codebase-mapper"), role: "mapper", schema: CONFIRM_SCHEMA })));
 const failedJob = replies.findIndex((r) => r && !r.result && fatal(r.reason));
 if (failedJob >= 0) return { status: "failed", reason: `mapper ${jobs[failedJob].focus} failed: ${replies[failedJob].reason}` };
 

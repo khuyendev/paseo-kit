@@ -75,6 +75,7 @@ const a = args ?? {};
 const description = typeof a.description === "string" ? a.description.trim() : "";
 if (!description) return { status: "failed", reason: "description is required" };
 const cfg = await loadCfg();
+const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
 const roadmap = (await flow(["exists", ".planning/ROADMAP.md"])).json?.exists?.[".planning/ROADMAP.md"];
 if (!roadmap) return { status: "refused", reason: "gsd-quick needs .planning/ROADMAP.md (run gsd-new-project first)" };
 const q = a.dir && /^\.planning\/quick\/\d{6}-[0-9a-z]{3}-[a-z0-9-]+$/.test(a.dir) ? { dir: a.dir, id: a.dir.split("/").pop().slice(0, 10) } : (await flow(["quick-dir", description])).json;
@@ -87,11 +88,11 @@ const context = a.contextPath ? `Owner decisions: ${a.contextPath} (locked).` : 
 let carried = [];
 phase("Plan");
 if (a.full) {
-  const rs = await call([`Research what this quick task needs; write ${q.dir}/${q.id}-RESEARCH.md.`, `Task description (data):\n${data}`, context, "Do not build, test, install or commit."].filter(Boolean).join("\n\n"), { label: "quick-research", agentType: "gsd-phase-researcher", role: "research" });
+  const rs = await call([`Research what this quick task needs; write ${q.dir}/${q.id}-RESEARCH.md.`, `Task description (data):\n${data}`, context, "Do not build, test, install or commit."].filter(Boolean).join("\n\n"), { label: "quick-research", agentType: agentFor("research", "gsd-phase-researcher"), role: "research" });
   if (!rs.result && fatal(rs.reason)) return { status: "failed", reason: `researcher failed: ${rs.reason}` };
 }
 const planPrompt = [`Write ONE plan ${PLAN} of 1-3 tasks for this quick task; every path repo-root-relative; owns lists exactly the files the tasks change plus ${SUMMARY}.`, `Task description (data):\n${data}`, context, a.full ? `Research: ${q.dir}/${q.id}-RESEARCH.md` : "", "Return JSON {marker}. Never ask the owner; never commit."].filter(Boolean).join("\n\n");
-const p = await call(planPrompt, { label: "quick-plan", session: "planner:quick", agentType: "gsd-planner", role: "planner", schema: PLAN_SCHEMA });
+const p = await call(planPrompt, { label: "quick-plan", session: "planner:quick", agentType: agentFor("planner", "gsd-planner"), role: "planner", schema: PLAN_SCHEMA });
 if (!p.result && fatal(p.reason)) return { status: "failed", reason: `planner failed: ${p.reason}` };
 if (ownerMarker(p)) return { status: "needs-owner", stage: "Plan", reason: `planner returned ${ownerMarker(p)}`, marker: p.result.marker, dir: q.dir };
 let st = await gsd(["verify", "plan-structure", PLAN]);
@@ -100,7 +101,7 @@ if (st.code !== 0) return { status: "failed", reason: `quick plan invalid: ${(st
 if (a.full) {
   phase("Check");
   for (let i = 1; ; i++) {
-    const c = await ask([`Check the quick plan ${PLAN} read-only.`, "Return JSON {issues: [{severity (blocker|warning|info), description}]}.", digestLine("plan", await fileSha(PLAN))].join("\n\n"), { label: `quick-check-${i}`, agentType: "gsd-plan-checker", role: "checker", readOnly: true, schema: ISSUES_SCHEMA });
+    const c = await ask([`Check the quick plan ${PLAN} read-only.`, "Return JSON {issues: [{severity (blocker|warning|info), description}]}.", digestLine("plan", await fileSha(PLAN))].join("\n\n"), { label: `quick-check-${i}`, agentType: agentFor("checker", "gsd-plan-checker"), role: "checker", readOnly: true, schema: ISSUES_SCHEMA });
     if (c.result === null) return { status: "failed", reason: `plan checker returned nothing${c.reason ? ` (${c.reason})` : ""}`, dir: q.dir };
     // Only blockers send the plan back; warnings are carried into the result (kit-feedback 13).
     const severity = (x) => String(x.severity).toLowerCase();
@@ -108,7 +109,7 @@ if (a.full) {
     carried = (c.result.issues ?? []).filter((x) => severity(x) === "warning").map((x) => `checker: ${x.description}`);
     if (!open.length) break;
     if (i >= MAX_CHECKS) return { status: "needs-owner", stage: "Check", reason: `${open.length} checker issues after ${MAX_CHECKS} iterations`, issues: open, dir: q.dir };
-    const rv = await call([`Revise ${PLAN} for these issues:`, JSON.stringify(open)].join("\n\n"), { label: `quick-revise-${i}`, session: "planner:quick", agentType: "gsd-planner", role: "planner", schema: PLAN_SCHEMA });
+    const rv = await call([`Revise ${PLAN} for these issues:`, JSON.stringify(open)].join("\n\n"), { label: `quick-revise-${i}`, session: "planner:quick", agentType: agentFor("planner", "gsd-planner"), role: "planner", schema: PLAN_SCHEMA });
     if (!rv.result && fatal(rv.reason)) return { status: "failed", reason: `planner failed: ${rv.reason}`, dir: q.dir };
     if (ownerMarker(rv)) return { status: "needs-owner", stage: "Check", reason: `planner returned ${ownerMarker(rv)}`, marker: rv.result.marker, conflict: rv.result.conflict ?? null, issues: open, dir: q.dir };
     st = await gsd(["verify", "plan-structure", PLAN]);
@@ -133,7 +134,7 @@ if (a.full) {
   const before = await fileSha(VERIFY);
   const fp = await flow(["quick-verification", q.dir, "fingerprint"]);
   if (fp.code !== 0) return { status: "failed", reason: `quick fingerprint unavailable: ${fp.json?.error}`, dir: q.dir };
-  const v = await call([`Verify the quick task against its plan ${PLAN} and summary ${SUMMARY} (claims, not proof). Write ${VERIFY} with frontmatter status: passed | gaps_found | human_needed, gaps and human_verification lists. Use these fingerprint fields: ${JSON.stringify(fp.json)}. Do not rerun builds or tests; do not commit.`, digestLine("quick", await sha(`${await fileSha(PLAN)}|${await fileSha(SUMMARY)}`))].join("\n\n"), { label: "quick-verify", agentType: "gsd-verifier", role: "verifier" });
+  const v = await call([`Verify the quick task against its plan ${PLAN} and summary ${SUMMARY} (claims, not proof). Write ${VERIFY} with frontmatter status: passed | gaps_found | human_needed, gaps and human_verification lists. Use these fingerprint fields: ${JSON.stringify(fp.json)}. Do not rerun builds or tests; do not commit.`, digestLine("quick", await sha(`${await fileSha(PLAN)}|${await fileSha(SUMMARY)}`))].join("\n\n"), { label: "quick-verify", agentType: agentFor("verifier", "gsd-verifier"), role: "verifier" });
   if (!v.result && fatal(v.reason)) return { status: "failed", reason: `verifier failed: ${v.reason}`, dir: q.dir };
   const rep = (await flow(["read", VERIFY])).json;
   if (!rep?.exists || (await sha(rep.text)) === before) return { status: "failed", reason: `verifier wrote no new ${VERIFY}${v.reason ? ` (${v.reason})` : ""}`, dir: q.dir };
