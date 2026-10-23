@@ -300,6 +300,7 @@ const GOLDEN = {
     research: true,
     research_ahead: false,
     plan_review: false,
+    plan_flow: "staged",
     skeleton_lanes: [{ lens: "fidelity" }, { lens: "integration" }],
     max_skeleton_passes: 3,
     max_check_iterations: 3,

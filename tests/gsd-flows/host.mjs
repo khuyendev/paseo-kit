@@ -67,7 +67,6 @@ export async function runScript(name, opts) {
   const calls = [];
   const logs = [];
   const shells = [];
-  let depth = 0;
   let n = 0;
   const respond = opts.agent ?? (() => NULL("no responder"));
   const sessions = new Map();
@@ -133,7 +132,8 @@ export async function runScript(name, opts) {
       return prev;
     }));
   }
-  async function evaluate(scriptName, scriptArgs) {
+  // As the engine: each script knows its own depth, so nested workflows may run at the same time (gsd-plan streams, O65).
+  async function evaluate(scriptName, scriptArgs, depth = 0) {
     const body = loadScript(scriptName);
     const g = guardedGlobals();
     const globals = {
@@ -142,8 +142,7 @@ export async function runScript(name, opts) {
       budget: { total: null, spent: () => 0, remaining: () => Infinity },
       workflow: async (child, childArgs) => {
         if (depth >= 1) throw new Error("workflow() nesting is one level only");
-        depth++;
-        try { return JSON.parse(JSON.stringify((await evaluate(child, childArgs)) ?? null)); } finally { depth--; }
+        return JSON.parse(JSON.stringify((await evaluate(child, childArgs, depth + 1)) ?? null));
       },
       console: { log: (m) => logs.push(`log ${m}`), warn: (m) => logs.push(`log ${m}`), error: (m) => logs.push(`log ${m}`), info: (m) => logs.push(`log ${m}`) },
       Date: g.Date, Math: g.Math,

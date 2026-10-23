@@ -203,6 +203,7 @@ Paths in the adapter are repo-relative script paths (validated at load: no drive
 | `research` | bool | true |
 | `research_ahead` | bool (true: gsd-research of a phase whose earlier phases are not COMPLETE writes an ahead report: `ahead_of` in its frontmatter, every claim about the project's own code in `## Code APIs`, `[PENDING: phase <n>]` on claims resting on code those phases still build; research status reads it `provisional` until they are COMPLETE, then `code-stale`; a report whose only changed research inputs lie under `adapter.ownership.source_roots` is `code-stale`, not `stale`; `refresh: "code"` re-verifies only `## Code APIs`. false: today's research, one `stale` for any changed input) | false |
 | `plan_review` | bool (true: gsd-plan runs the plan-review stage; the built-in `source-grounding` lens always runs in plan review, see `review_lenses`) | false |
+| `plan_flow` | `staged\|streams` (kit feedback 65, 67). `staged`: every plan goes through Plans, Checker and Plan review together. `streams`: each plan gets its own review stream (find, verify, judge, edit of that plan only, then a resolution check of only its open high issues) as soon as its planner returns, all streams of a wave at once (bounded by `max_subagents`); the next wave's planners start once the wave's plans froze; the checker reads the frozen set once and sends each blocker back to only the plan it names (revision, then a resolution check of that plan's blockers, per-plan cap and stall as the loop); a revision that changes a frozen plan's declared interface (`must_haves.artifacts`, `must_haves.key_links`, `<interfaces>` blocks) gets every plan whose `depends_on` names it checked and, on a blocker, revised (stage Dependents). Gap mode ignores it. The per-run arg `planFlow` overrides it | `staged` |
 | `skeleton_lanes` | non-empty `[{lens, model?, effort?}]`; lens is `fidelity`, `integration` or an `adapter.review_lenses` entry of stage `skeleton` | `[{lens: "fidelity"}, {lens: "integration"}]` |
 | `max_skeleton_passes` | int 1..3 | 3 |
 | `max_check_iterations` | int 1..3 | 3 |
@@ -229,11 +230,11 @@ Each row is a role, the workflows that pass it, the agent type it starts (`adapt
 | `roadmapper` | gsd-new-project | `gsd-roadmapper` | `pro` | |
 | `outline` | gsd-plan | `gsd-planner` | `pro` | the phase outline, before the per-plan planners |
 | `planner` | gsd-plan, gsd-quick | `gsd-planner` | `pro` | per-plan planners; quick plan and its revisions |
-| `checker` | gsd-plan, gsd-quick | `gsd-plan-checker` | `pro` | |
+| `checker` | gsd-plan, gsd-quick | `gsd-plan-checker` | `pro` | with `gsd.plan_flow` `streams` also the per-plan resolution checks of the checker join (`recheck-*`) and the dependency checks of dependents (`depcheck-*`) |
 | `skeleton_lane` | gsd-plan | `gsd-skeleton-reviewer` | `pro` | each `skeletonLanes` entry may set its own model and effort |
 | `architect` | gsd-plan | none | `standard` | the wiring stage runs only when `adapter.agents.architect` names an agent |
 | `plan_finder` | gsd-plan-review | none | `standard` | one per plan and lens |
-| `plan_verifier` | gsd-plan-review | none | `standard` | |
+| `plan_verifier` | gsd-plan-review | none | `standard` | in a review stream (`stream: true`) also the resolution check of the plan's open high issues after an edit |
 | `plan_judge` | gsd-plan-review | none | `standard` | |
 | `plan_editor` | gsd-plan-review | `gsd-planner` | `pro` | one revision pass over the plans |
 | `executor` | gsd-execute, gsd-quick | `gsd-executor` | `standard` | |

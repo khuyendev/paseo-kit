@@ -94,12 +94,15 @@ const maxCheckIterations = a.maxCheckIterations ?? g.max_check_iterations;
 const lanesArg = a.skeletonLanes ?? g.skeleton_lanes;
 const wiringMode = a.wiring ?? "auto";
 const planReview = a.planReview ?? g.plan_review;
+// O65 (kit-feedback 65): `staged` runs every plan through each stage together; `streams` gives each plan its own review stream.
+const planFlow = a.planFlow ?? g.plan_flow ?? "staged";
 const roleOverrides = a.roles ?? {};
 if (!["plan", "gaps"].includes(mode)) return { status: "failed", reason: `mode must be plan or gaps, not ${mode}` };
 if (!isInt13(maxSkeletonPasses)) return { status: "failed", reason: `maxSkeletonPasses must be an integer 1..3, not ${maxSkeletonPasses}` };
 if (!isInt13(maxCheckIterations)) return { status: "failed", reason: `maxCheckIterations must be an integer 1..3, not ${maxCheckIterations}` };
 if (!Array.isArray(lanesArg) || !lanesArg.length || lanesArg.some((l) => typeof l?.lens !== "string" || !l.lens.trim())) return { status: "failed", reason: "skeletonLanes needs at least one lane with a non-empty lens" };
 if (!["auto", "always", "never"].includes(wiringMode)) return { status: "failed", reason: `wiring must be auto, always or never, not ${wiringMode}` };
+if (!["staged", "streams"].includes(planFlow)) return { status: "failed", reason: `planFlow must be staged or streams, not ${planFlow}` };
 if (a.forceProceed !== undefined && !String(a.forceProceed?.reason ?? "").trim()) return { status: "failed", reason: "forceProceed needs a non-empty reason" };
 if (a.reviewGuidance !== undefined && (typeof a.reviewGuidance !== "string" || !a.reviewGuidance.trim())) return { status: "failed", reason: "reviewGuidance needs non-empty text" };
 if (a.skipResearch && typeof a.researchSkipReason !== "string") return needsOwner("Research", "skipResearch needs a researchSkipReason");
@@ -133,7 +136,13 @@ const roleOpts = (role, extra = {}) => {
 const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
 const warnings = [];
 const advisories = [];
-const result = (status, extra = {}) => ({ status, phaseDir, mode, warnings, advisories, ...extra });
+// O65: the streams flow names itself and each plan's stream in every result; the staged flow adds nothing.
+let flowReport = null;
+// The streams flow's plan stage outcome; null in the staged flow and in gap mode, which keep the checker loop.
+let streamed = null;
+// O67: what the dependent streams did, returned with the streams flow's results.
+const dependents = [];
+const result = (status, extra = {}) => ({ status, phaseDir, mode, warnings, advisories, ...(flowReport ?? {}), ...extra });
 const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reason, ...extra });
 // G017: the effective settings each gated judgment reads, hashed into its revision key (`--settings`). A changed lane,
 // role or limit reruns the judgments it decides; each key takes only the settings its own judgments read. The inputs
@@ -517,7 +526,11 @@ const superseded = await gsd(["supersede", phaseDir, "--keep", planIds.join(",")
 for (const m of superseded.json?.moved ?? []) log(`superseded ${typeof m === "string" ? m : m.from ?? JSON.stringify(m)}`);
 const wiringText = (await flow(["read", WIRING])).json?.text ?? "";
 const wiringQuotes = (id) => wiringText.split(/\r?\n/).filter((l) => l.includes(id)).slice(0, 40);
-for (const ids of wavesOf(rows)) {
+// G039: the medium and low plan-review notes gsd-execute reads; the streams flow writes them once, at its join.
+const notesPath = `${phaseDir}/plan-review-notes.json`;
+streamed = planFlow === "streams" ? await planStreams() : null;
+if (streamed?.stop) return streamed.stop;
+if (!streamed) for (const ids of wavesOf(rows)) {
   const todo = [];
   for (const id of ids) {
     const same = (await gsd(["revisions", "check", phaseDir, `plan:${id}`, "--settings", settingsDigest.plan])).code === 0;
@@ -533,6 +546,147 @@ for (const ids of wavesOf(rows)) {
   const failed = outcomes.findIndex((o) => !o || o.stop);
   if (failed >= 0) return outcomes[failed]?.stop ?? failedCall(`planner ${todo[failed]}`, null);
   if (recorded) return recorded;
+}
+// O65 (kit-feedback 65): the planner waves keep their order (GSDF-24), but each plan is structure-checked and recorded on its own
+// and its review stream (gsd-plan-review with `stream`) starts as soon as its planner returns, never waiting for the other
+// plans of its wave. All streams of a wave run at once; the engine queues calls past max_subagents. O67 (kit-feedback 67): the
+// next wave's planners start only once every stream of this wave froze, so they are written on reviewed plans, and a frozen
+// plan whose interface its stream changed passes the change on to the plans on disk that depend on it.
+async function planStreams() {
+  const reviews = new Map();
+  const planned = new Set();
+  const shape = new Map();
+  const startReview = async (id) => {
+    if (!planReview) return;
+    shape.set(id, await planInterface(id));
+    reviews.set(id, workflow("gsd-plan-review", { phaseDir, plans: [id], stream: true, roles: roleOverrides, researchPath: approvedResearch, guidance: a.reviewGuidance ?? null, planSettings: settingsDigest.plan }).catch((e) => ({ status: "failed", plan: id, reason: `review stream ${id}: ${e?.message ?? e}` })));
+  };
+  if (planReview) await flow(["remove", notesPath]);
+  let stop = null;
+  for (const ids of wavesOf(rows)) {
+    const todo = [];
+    for (const id of ids) {
+      const same = (await gsd(["revisions", "check", phaseDir, `plan:${id}`, "--settings", settingsDigest.plan])).code === 0;
+      const st = !skeletonFresh && same ? await gsd(["verify", "plan-structure", planPath(id)]) : null;
+      if (st?.code === 0) {
+        setStructureWarnings(id, st.json?.warnings);
+        log(`plan ${id} kept: unchanged since recorded`);
+        await startReview(id);
+      } else todo.push(id);
+    }
+    const outcomes = await parallel(todo.map((id) => async () => {
+      const o = await planOne(id);
+      if (!o?.ok) return o;
+      const s = await structureFix(id, `planner:${id}`);
+      if (s) return { stop: s };
+      await gsd(["revisions", "record", phaseDir, `plan:${id}`, "--settings", settingsDigest.plan]);
+      planned.add(id);
+      await startReview(id);
+      return { ok: true };
+    }));
+    const failed = outcomes.findIndex((o) => !o || o.stop);
+    if (failed >= 0) { stop = outcomes[failed]?.stop ?? failedCall(`planner ${todo[failed]}`, null); break; }
+    if (!planReview) continue;
+    // The wave's join: a stream that did not converge stops the run below, before any later wave is planned.
+    const frozen = await Promise.all(ids.filter((id) => reviews.has(id)).map((id) => reviews.get(id)));
+    if (frozen.some((r) => r?.status !== "converged")) break;
+    const changed = new Map();
+    for (const id of ids) {
+      const now = await planInterface(id);
+      if (shape.has(id) && !sameInterface(shape.get(id), now)) changed.set(id, { before: shape.get(id), after: now });
+    }
+    const dep = await propagate(changed);
+    if (dep) { stop = dep; break; }
+  }
+  const ids = planIds.filter((id) => reviews.has(id));
+  const done = await Promise.all(ids.map((id) => reviews.get(id)));
+  const reviewOf = new Map(ids.map((id, i) => [id, done[i]]));
+  for (const [id, r] of reviewOf) log(`plan stream ${id}: review ${r?.status ?? "failed"}${r?.cycles ? ` after ${r.cycles} cycles` : ""}`);
+  flowReport = { planFlow: "streams", streams: planIds.map((id) => {
+    const r = reviewOf.get(id);
+    return { plan: id, planned: planned.has(id), review: r ? r.status ?? "failed" : planReview ? "not started" : "off", cycles: r?.cycles ?? 0, counts: r?.counts ?? [] };
+  }), dependents };
+  const bad = ids.map((id) => reviewOf.get(id)).find((r) => r?.status !== "converged");
+  if (stop && !bad) return { stop: { ...stop, ...flowReport } };
+  if (bad) {
+    const s = { stage: "Plan review", plan: bad.plan ?? null, reason: bad.reason ?? "plan review did not converge", issues: bad.issues ?? [], conflict: bad.conflict ?? null, counts: bad.counts ?? [] };
+    return { stop: bad.status === "needs-owner" ? result("needs-owner", { ...s, options: ["give reviewGuidance and rerun", "record the decision in CONTEXT and rerun", "disable plan review (planReview false) and rerun"] }) : result("failed", s) };
+  }
+  if (planReview) {
+    const notes = ids.flatMap((id) => reviewOf.get(id).issues ?? []);
+    await flow(["write", notesPath], JSON.stringify(notes.map(({ plan, severity, description }) => ({ plan, severity, description })), null, 2));
+    for (const r of done) for (const st of r.structure ?? []) setStructureWarnings(st.plan, st.warnings);
+    advisories.push(...notes.map((x) => ({ lane: "plan-review", plan: x.plan ?? null, severity: x.severity, description: x.description })));
+  }
+  return { ok: true };
+}
+// O67 (kit-feedback 67): the surface other plans build on: the artifacts and key_links of must_haves and the <interfaces> blocks.
+async function planInterface(id) {
+  const mh = (await gsd(["frontmatter", "get", planPath(id), "must_haves"])).json?.value ?? {};
+  const text = (await flow(["read", planPath(id)])).json?.text ?? "";
+  return { artifacts: mh.artifacts ?? [], key_links: mh.key_links ?? [], interfaces: [...text.matchAll(/<interfaces>([\s\S]*?)<\/interfaces>/g)].map((m) => m[1].trim()) };
+}
+function sameInterface(x, y) { return JSON.stringify(x) === JSON.stringify(y); }
+// O67: every plan on disk whose depends_on names a changed plan gets one dependent stream for all its changed providers, all
+// dependents at once (each plan edited only by its own stream); a dependent whose own interface changed passes it on. The
+// depends_on graph has no cycle, so the rounds end. Returns the first stop, or null.
+async function propagate(changed) {
+  while (changed.size) {
+    const index = (await gsd(["phase-plan-index", N])).json?.plans ?? [];
+    const providersOf = new Map();
+    for (const p of index) {
+      const from = (p.depends_on ?? []).filter((d) => changed.has(d));
+      if (from.length && planIds.includes(p.id)) providersOf.set(p.id, from);
+    }
+    if (!providersOf.size) return null;
+    log(`plan interfaces changed: ${[...changed.keys()].join(", ")}; checking ${[...providersOf.keys()].join(", ")}`);
+    const list = [...providersOf];
+    const outs = await parallel(list.map(([id, from]) => () => dependentStream(id, from.map((plan) => ({ plan, path: planPath(plan), ...changed.get(plan) })))));
+    const next = new Map();
+    for (const [i, o] of outs.entries()) {
+      if (!o || o.stop) return o?.stop ?? failedCall(`dependent stream ${list[i][0]}`, null);
+      if (o.changed) next.set(list[i][0], o.changed);
+    }
+    changed = next;
+  }
+  return null;
+}
+// O67: a read-only dependency check of one plan against its providers' interface before and after their revision; its
+// blockers go to the plan's own planner session, and the check runs again while its count falls (cap maxCheckIterations).
+async function dependentStream(id, providers) {
+  const before = await planInterface(id);
+  let prev = Infinity;
+  for (let round = 1; ; round++) {
+    const prompt = [
+      `Dependency check, read-only, of ${planPath(id)} after a revision of the plans it depends on: ${providers.map((p) => p.path).join(", ")}.`,
+      `Their declared interface before and after the revision (JSON): ${JSON.stringify(providers)}`,
+      "Read the providers as they are now. Return JSON {issues: [{plan, dimension, severity (blocker|warning|info), required_property, description, fix_hint}]}: one blocker for each place this plan still uses a name, signature, parameter, path or link the revision renamed, changed or removed; an empty list when it matches the providers as they are now.",
+      POLICY,
+      digestLine("freeze", freezeHash),
+      digestLine(`plan:${id}`, (await gsd(["revisions", "hash", phaseDir, `plan:${id}`])).json?.hash ?? "none"),
+    ].join("\n\n");
+    const opts = { label: `depcheck-${id}-${round}`, agentType: agentFor("checker", "gsd-plan-checker"), readOnly: true, schema: ISSUES_SCHEMA, judges: await plansJudges([id, ...providers.map((p) => p.plan)]), ...roleOpts("checker") };
+    let c = await call(prompt, opts);
+    if (c.result === null && !fatal(c.reason)) c = await call(prompt, opts);
+    if (c.result === null) return { stop: failedCall(`dependency check ${id}`, c.reason) };
+    const open = (c.result.issues ?? []).filter((i) => String(i.severity).toLowerCase() === "blocker").map((i) => ({ ...i, plan: id }));
+    const entry = { plan: id, providers: providers.map((p) => p.plan), rounds: round, revised: round > 1 };
+    if (!open.length) {
+      dependents.push(entry);
+      const after = await planInterface(id);
+      return { changed: sameInterface(before, after) ? null : { before, after } };
+    }
+    if (round >= maxCheckIterations || open.length >= prev) {
+      dependents.push({ ...entry, stuck: true });
+      return { stop: owner("Dependents", `${id} still uses the old interface of ${providers.map((p) => p.plan).join(", ")} after ${round - 1} revisions (${open.length} blockers)`, { plan: id, issues: open, options: ["give guidance and rerun", "revise the plan by hand, then rerun", "abandon"] }) };
+    }
+    prev = open.length;
+    const r = await plannerCall(`planner:${id}`, `deprevise-${id}-${round}`, [planningContext("revision"), revisionContext([planPath(id)], open)].join("\n\n"), "freeze", freezeHash, { judges: await plansJudges([id]) });
+    if (ownerMarker(r.result)) return { stop: ownerStop("Dependents", r.result) };
+    if (r.result === null) return { stop: failedCall(`dependent revision ${id}`, r.reason) };
+    const s = await recordEach([id], false);
+    if (s) return { stop: s };
+  }
 }
 async function planOne(id) {
   plansPlanned.add(id);
@@ -589,13 +743,13 @@ async function recordEach(ids, gapScoped) {
 
 // ---- checker loop (GSDF-26..28) ----
 phase("Checker");
-const checked = await checkerLoop(planIds, false);
+const checked = streamed ? await checkerJoin(planIds) : await checkerLoop(planIds, false);
 if (checked.stop) return checked.stop;
 if (!checked.skipped) await gsd(["revisions", "record", phaseDir, "checked", "--settings", settingsDigest.checked]);
 docPaths.push(...planIds.map(planPath));
 
 // ---- optional plan review (GSDF-37) ----
-if (planReview) {
+if (planReview && !streamed) {
   phase("Plan review");
   const pr = await workflow("gsd-plan-review", { phaseDir, plans: planIds, roles: roleOverrides, researchPath: approvedResearch, guidance: a.reviewGuidance ?? null, planSettings: settingsDigest.plan });
   if (pr?.status !== "converged") {
@@ -630,6 +784,41 @@ async function countProbes(scopeIds, gapScoped) {
   }
   return found;
 }
+// One fresh read-only checker over the plans `live` (GSDF-26), with the probe file and the still-open blockers `earlier`;
+// a null reply is retried once. In the streams flow the carried warnings are sorted, so the order in which the plan streams
+// finished does not change the prompt a resumed run replays.
+async function checkerCall(iter, live, scopeIds, gapScoped, probeFile, earlier) {
+  const carriedText = streamed ? [...warnings].sort() : warnings;
+  // The Files/plan thresholds grow with the phase's files, so the checker judges them against this phase's plans.
+  const filesPerPlan = (await gsd(["check", "owns", N])).json?.files_per_plan;
+  const prompt = [
+    `Check the plans of phase ${N} read-only: ${live.map(planPath).join(", ")}.`,
+    planningContext(gapScoped ? "gap_closure" : "standard"),
+    filesPerPlan ? `Files per plan: warning at ${filesPerPlan.warning}+, blocker at ${filesPerPlan.blocker}+ (use these for the Files/plan thresholds).` : "",
+    filesPerPlan && tracerExtraFiles ? `Tracer files per plan (a plan with a type="tracer" task): warning at ${filesPerPlan.warning + tracerExtraFiles}+, blocker at ${filesPerPlan.blocker + tracerExtraFiles}+.` : "",
+    `Deterministic probe results are in ${probeFile}: they are already counted; do not re-derive them, do not repeat them as issues.`,
+    carriedText.length ? `Carried warnings:\n${carriedText.map((w) => `- ${w}`).join("\n")}` : "",
+    earlier.length ? `Blockers from earlier checker iterations, still open? Judge each against the plans as they are now. Repeat it in issues (same plan, dimension and required_property) while it holds; list its id in resolved, with evidence, once it is fixed. An id you do not list stays open.\n${JSON.stringify(earlier.map(({ id, plan, dimension, required_property, description, fix_hint }) => ({ id, plan, dimension, required_property, description, fix_hint })))}` : "",
+    "Return JSON {issues: [{plan (null for phase-level), dimension, severity (blocker|warning|info), required_property (the invariant that must hold), description (the evidence it does not), fix_hint}], resolved: [{id, evidence}] (only ids of the still-open blockers above)}.",
+    POLICY,
+    digestLine("freeze", freezeHash),
+    // The checker judges PLAN contents, which the freeze key does not cover (CR-GSF-19).
+    digestLine("checked", (await gsd(["revisions", "hash", phaseDir, "checked", "--settings", settingsDigest.checked])).json?.hash ?? "none"),
+  ].filter(Boolean).join("\n\n");
+  const opts = { label: `checker-${iter}`, agentType: agentFor("checker", "gsd-plan-checker"), readOnly: true, schema: CHECKER_SCHEMA, judges: await plansJudges(scopeIds), ...roleOpts("checker") };
+  let c = await call(prompt, opts);
+  if (c.result === null && !fatal(c.reason)) c = await call(prompt, opts);
+  return c;
+}
+// A checker reply's non-info issues, severity warning or blocker (unknown = blocker); info goes to the advisories.
+function checkerFindings(c) {
+  const out = [];
+  for (const i of c.result.issues ?? []) {
+    if (String(i.severity).toLowerCase() === "info") advisories.push({ lane: "checker", plan: i.plan ?? null, description: i.description });
+    else out.push({ ...i, severity: String(i.severity).toLowerCase() === "warning" ? "warning" : "blocker" });
+  }
+  return out;
+}
 async function checkerLoop(scopeIds, gapScoped) {
   if (!gapScoped && !a.replan && (await gsd(["revisions", "check", phaseDir, "checked", "--settings", settingsDigest.checked])).code === 0) {
     log("checker skipped: plans unchanged since the last passing check");
@@ -652,33 +841,11 @@ async function checkerLoop(scopeIds, gapScoped) {
     const probeFile = `${phaseDir}/checker-probes.json`;
     await flow(["write", probeFile], JSON.stringify({ iteration: iter, probes: probeIssues }, null, 2));
     const earlier = pending.filter((i) => !stuck.has(keyOf(i))).map((i, n) => ({ ...i, id: `open-${n + 1}` }));
-    // The Files/plan thresholds grow with the phase's files, so the checker judges them against this phase's plans.
-    const filesPerPlan = (await gsd(["check", "owns", N])).json?.files_per_plan;
-    const prompt = [
-      `Check the plans of phase ${N} read-only: ${live.map(planPath).join(", ")}.`,
-      planningContext(gapScoped ? "gap_closure" : "standard"),
-      filesPerPlan ? `Files per plan: warning at ${filesPerPlan.warning}+, blocker at ${filesPerPlan.blocker}+ (use these for the Files/plan thresholds).` : "",
-      filesPerPlan && tracerExtraFiles ? `Tracer files per plan (a plan with a type="tracer" task): warning at ${filesPerPlan.warning + tracerExtraFiles}+, blocker at ${filesPerPlan.blocker + tracerExtraFiles}+.` : "",
-      `Deterministic probe results are in ${probeFile}: they are already counted; do not re-derive them, do not repeat them as issues.`,
-      warnings.length ? `Carried warnings:\n${warnings.map((w) => `- ${w}`).join("\n")}` : "",
-      earlier.length ? `Blockers from earlier checker iterations, still open? Judge each against the plans as they are now. Repeat it in issues (same plan, dimension and required_property) while it holds; list its id in resolved, with evidence, once it is fixed. An id you do not list stays open.\n${JSON.stringify(earlier.map(({ id, plan, dimension, required_property, description, fix_hint }) => ({ id, plan, dimension, required_property, description, fix_hint })))}` : "",
-      "Return JSON {issues: [{plan (null for phase-level), dimension, severity (blocker|warning|info), required_property (the invariant that must hold), description (the evidence it does not), fix_hint}], resolved: [{id, evidence}] (only ids of the still-open blockers above)}.",
-      POLICY,
-      digestLine("freeze", freezeHash),
-      // The checker judges PLAN contents, which the freeze key does not cover (CR-GSF-19).
-      digestLine("checked", (await gsd(["revisions", "hash", phaseDir, "checked", "--settings", settingsDigest.checked])).json?.hash ?? "none"),
-    ].filter(Boolean).join("\n\n");
-    const opts = { label: `checker-${iter}`, agentType: agentFor("checker", "gsd-plan-checker"), readOnly: true, schema: CHECKER_SCHEMA, judges: await plansJudges(scopeIds), ...roleOpts("checker") };
-    let c = await call(prompt, opts);
-    if (c.result === null && !fatal(c.reason)) c = await call(prompt, opts);
+    const c = await checkerCall(iter, live, scopeIds, gapScoped, probeFile, earlier);
     if (c.result === null) return { stop: failedCall("plan checker", c.reason) };
     const confirmed = new Set((c.result.resolved ?? []).map((r) => r.id));
     const kept = earlier.filter((i) => !confirmed.has(i.id));
-    const checkerIssues = [];
-    for (const i of c.result.issues ?? []) {
-      if (String(i.severity).toLowerCase() === "info") advisories.push({ lane: "checker", plan: i.plan ?? null, description: i.description });
-      else checkerIssues.push({ ...i, severity: String(i.severity).toLowerCase() === "warning" ? "warning" : "blocker" });
-    }
+    const checkerIssues = checkerFindings(c);
     // A still-open blocker the checker repeats is the same issue: the repeat replaces the carried copy, so it is counted once.
     const fresh = checkerIssues.filter((i) => i.severity === "blocker");
     pending = [...kept.filter((k) => !fresh.some((f) => sameIssue(k, f))), ...fresh];
@@ -739,6 +906,10 @@ async function checkerLoop(scopeIds, gapScoped) {
     if (conflict) return { stop: conflict };
   }
   for (const list of carriedBy.values()) warnings.push(...list);
+  return settleStuck(stuck, scopeIds);
+}
+// The end of a checker loop or join: passed, or the stuck plans as a needs-owner stop or a forceProceed override (GSDF-28).
+async function settleStuck(stuck, scopeIds) {
   if (!stuck.size) return { passed: true };
   const why = [...stuck.values()].map((s) => s.why).join("; ");
   const remaining = [...stuck.values()].flatMap((s) => s.issues);
@@ -756,6 +927,112 @@ async function checkerLoop(scopeIds, gapScoped) {
     return { passed: true, override };
   }
   return { stop: owner("Checker", why, { issues: remaining, options: ["force proceed (rerun with forceProceed {reason})", "give guidance and retry", "abandon"] }) };
+}
+
+// O65 (kit-feedback 65): the streams flow's one join point. The checker reads the frozen set once, with the probes; each plan
+// it names gets its blockers back in its own route stream (revision, structure check, record, then this plan's probes and a
+// resolution check of only its checker blockers), all plans at once and none waiting for another, under the loop's per-plan
+// cap and stall rule (kit-feedback 9). Phase-level blockers get the phase-level revision after the plan streams, so no plan
+// has two editors at once; a final probe pass over the whole set closes the join.
+async function checkerJoin(scopeIds) {
+  if (!a.replan && (await gsd(["revisions", "check", phaseDir, "checked", "--settings", settingsDigest.checked])).code === 0) {
+    log("checker skipped: plans unchanged since the last passing check");
+    return { skipped: true };
+  }
+  const probeFile = `${phaseDir}/checker-probes.json`;
+  const probes = await countProbes(scopeIds, false);
+  await flow(["write", probeFile], JSON.stringify({ iteration: 1, probes }, null, 2));
+  const c = await checkerCall(1, scopeIds, scopeIds, false, probeFile, []);
+  if (c.result === null) return { stop: failedCall("plan checker", c.reason) };
+  const checkerIssues = checkerFindings(c);
+  const keyOf = (i) => (i.plan && scopeIds.includes(i.plan) ? i.plan : null);
+  const blockerOf = (list, key) => list.filter((i) => i.severity === "blocker" && keyOf(i) === key);
+  const found = checkerIssues.filter((i) => i.severity === "blocker").map((i, n) => ({ ...i, id: `K${n + 1}` }));
+  const carried = [...checkerIssues, ...probes].filter((i) => i.severity === "warning");
+  const keys = [...new Set([...found, ...probes.filter((i) => i.severity === "blocker")].map(keyOf))];
+  log(`checker join: ${checkerIssues.length} checker + ${probes.length} probe issues, blockers for ${keys.length ? keys.map((k) => k ?? "phase").join(", ") : "no plan"}`);
+  const stuck = new Map();
+  const rounds = new Map();
+  // O67: each revised plan's interface before its first join revision, to pass a change on to its dependents.
+  const shapeBefore = new Map();
+  // One key's stream: `rounds` counts checker judgments of the key, the first one being the join's checker.
+  async function route(key) {
+    let open = [...blockerOf(found, key), ...blockerOf(probes, key)];
+    let prev = Infinity;
+    const name = key ?? "phase";
+    for (let round = 1; ; round++) {
+      rounds.set(name, round);
+      if (round >= maxCheckIterations || open.length >= prev) {
+        const why = round >= maxCheckIterations ? `checker cap ${maxCheckIterations} reached with ${open.length} issues` : `stalled: ${open.length} issues, not below ${prev}`;
+        log(`checker: ${name} left the join: ${why}`);
+        return { stuck: { why: `${name}: ${why}`, issues: open } };
+      }
+      prev = open.length;
+      const scope = key ? [key] : scopeIds;
+      for (const id of scope) if (!shapeBefore.has(id)) shapeBefore.set(id, await planInterface(id));
+      const r = await plannerCall(key ? `planner:${key}` : "planner:outline", `revise-${name}-${round}`, [planningContext("revision"), revisionContext(scope.map(planPath), open)].join("\n\n"), "freeze", freezeHash, { judges: await plansJudges(scope) });
+      if (ownerMarker(r.result)) return { conflict: ownerStop("Checker", r.result) };
+      if (r.result === null) return { stop: failedCall(`planner revision ${name} (checker join round ${round})`, r.reason) };
+      const s = await recordEach(scope, false);
+      if (s) return { stop: s };
+      const asked = open.filter((i) => !i.probe);
+      let still = [];
+      if (asked.length) {
+        const prompt = [
+          `Resolution check, read-only, of plan checker blockers after a revision of ${scope.map(planPath).join(", ")}.`,
+          `Blockers (JSON): ${JSON.stringify(asked.map(({ id, plan, dimension, required_property, description, fix_hint }) => ({ id, plan, dimension, required_property, description, fix_hint })))}`,
+          "Return JSON {resolved: [{id, evidence}]} listing only the ids the plans now resolve, each with evidence. Do not raise new issues; an id you do not list stays open.",
+          POLICY,
+          digestLine("freeze", freezeHash),
+          digestLine(key ? `plan:${key}` : "checked", (await gsd(["revisions", "hash", phaseDir, key ? `plan:${key}` : "checked"])).json?.hash ?? "none"),
+        ].join("\n\n");
+        const opts = { label: `recheck-${name}-${round}`, agentType: agentFor("checker", "gsd-plan-checker"), readOnly: true, schema: RESOLUTION_SCHEMA, judges: await plansJudges(scope), ...roleOpts("checker") };
+        let v = await call(prompt, opts);
+        if (v.result === null && !fatal(v.reason)) v = await call(prompt, opts);
+        if (v.result === null) return { stop: failedCall(`plan checker resolution ${name}`, v.reason) };
+        const resolved = new Set((v.result.resolved ?? []).map((x) => x.id));
+        still = asked.filter((i) => !resolved.has(i.id));
+      }
+      open = [...still, ...blockerOf(await countProbes(scopeIds, false), key)];
+      log(`checker join: ${name} round ${round}: ${open.length} blockers open`);
+      if (!open.length) return { passed: true };
+    }
+  }
+  const perPlan = keys.filter((k) => k !== null);
+  const routed = await parallel(perPlan.map((id) => () => route(id)));
+  for (const [i, r] of routed.entries()) if (r?.stuck) stuck.set(perPlan[i], r.stuck);
+  // As the loop (kit-feedback 37): a REVISION_CONFLICT on one plan still lets the phase-level blockers get their revision.
+  const conflict = routed.find((r) => r?.conflict)?.conflict ?? null;
+  const missed = routed.findIndex((r) => !r || r.stop);
+  if (!conflict && missed !== -1) return { stop: routed[missed]?.stop ?? failedCall(`checker join stream ${perPlan[missed]}`, null) };
+  if (keys.includes(null)) {
+    if (scopeIds.every((id) => stuck.has(id))) stuck.set(null, { why: "phase: no plan left to revise", issues: [...blockerOf(found, null), ...blockerOf(probes, null)] });
+    else {
+      const r = await route(null);
+      if (r.conflict || r.stop) return { stop: conflict ?? r.conflict ?? r.stop };
+      if (r.stuck) stuck.set(null, r.stuck);
+    }
+  }
+  if (conflict) return { stop: conflict };
+  const changed = new Map();
+  for (const [id, before] of shapeBefore) {
+    const after = await planInterface(id);
+    if (!sameInterface(before, after)) changed.set(id, { before, after });
+  }
+  const dep = await propagate(changed);
+  if (dep) return { stop: dep };
+  // The final probe pass sees every revision together; a probe blocker left over is stuck with its plan.
+  const last = await countProbes(scopeIds, false);
+  await flow(["write", probeFile], JSON.stringify({ iteration: "final", probes: last }, null, 2));
+  for (const i of last.filter((x) => x.severity === "blocker")) {
+    const k = keyOf(i);
+    const s = stuck.get(k) ?? { why: `${k ?? "phase"}: probe blockers left after the routed revisions`, issues: [] };
+    if (!s.issues.some((x) => x.probe === i.probe && x.description === i.description)) s.issues.push(i);
+    stuck.set(k, s);
+  }
+  for (const w of [...carried, ...last.filter((x) => x.severity === "warning" && !carried.some((y) => y.probe === x.probe && y.description === x.description))]) warnings.push(`checker${w.plan ? ` (${w.plan})` : ""}: ${w.description}`);
+  if (flowReport) flowReport.streams = flowReport.streams.map((st) => ({ ...st, checkerRounds: rounds.get(st.plan) ?? 0, checker: stuck.has(st.plan) ? "stuck" : rounds.has(st.plan) ? "resolved" : "clean" }));
+  return settleStuck(stuck, scopeIds);
 }
 
 async function handoffStage(ids, docs, override, handoffArgs = [], gap = null) {

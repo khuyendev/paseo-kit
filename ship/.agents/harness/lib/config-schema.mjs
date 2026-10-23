@@ -146,6 +146,7 @@ export const SCHEMA = obj({
     research: bool(),
     research_ahead: bool(),
     plan_review: bool(),
+    plan_flow: str({ oneOf: ["staged", "streams"] }),
     skeleton_lanes: arr(obj({ lens: str({ nonEmpty: true }), model: str({ nonEmpty: true }), effort: effort() }, ["model", "effort"]), 1),
     max_skeleton_passes: int(1, 3),
     max_check_iterations: int(1, 3),
