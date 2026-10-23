@@ -192,6 +192,7 @@ Paths in the adapter are repo-relative script paths (validated at load: no drive
 | `plan_limits` | `{tasks_per_plan, plans_per_phase, waves_per_phase}` ints >= 1 | `{3, 12, 4}` |
 | `tracer_extra_files` | int >= 0: files a plan with a `type="tracer"` task may list above the checker's Files/plan lines (the `Tracer files per plan` line of the checker run context); 0 = the same lines | `0` |
 | `execution_mode` | `per-wave\|batch` | `per-wave` |
+| `execute_schedule` | `waves\|graph` (kit-feedback 66; `per-wave` only, gsd-execute refuses `graph` with `batch`): `waves` runs each handoff wave to its commit before the next; `graph` starts each plan as soon as the plans it waits for are committed (its `depends_on`, earlier plans whose owns or `files_modified` overlap, the tracers of earlier waves), runs the plan's obligations, review, fix and resolution on that plan alone, and commits plans one batch at a time after the repo-wide suite (adapter gates, build, test) is green | `waves` |
 | `batch_review` | bool | true |
 | `isolation` | `shared\|worktree` | `worktree` |
 | `fixer_verifies_itself` | bool | true |

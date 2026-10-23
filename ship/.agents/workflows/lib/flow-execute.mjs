@@ -7,7 +7,8 @@ import { loadConfig } from "../../harness/config.mjs";
 import { sha256 } from "../../harness/lib/hash.mjs";
 import { isInside, resolveInside, samePath, toSlash } from "../../harness/lib/paths.mjs";
 import { git, gitLines, head, status } from "./flow-git.mjs";
-import { contentHash, keyFiles, owned, ownsPrefixes, specificOwners } from "./flow-owns.mjs";
+import { contentHash, keyFiles, owned, ownsPath, ownsPrefixes, specificOwners } from "./flow-owns.mjs";
+import { overlaps } from "../../harness/gsd/adapter-hooks.mjs";
 import { matchesGlob } from "../../harness/adapter/contract.mjs";
 import { readWorktreeSeed } from "../../harness/runtime/worktree-seed.mjs";
 import { runGit } from "../../harness/runtime/worktrees.mjs";
@@ -125,6 +126,46 @@ const trailerPlans = (root, sha) => {
 export function smokeDue({ files = [], globs = [] }) {
   const matched = [...new Set(files)].filter((f) => globs.some((g) => matchesGlob(f, g)));
   return { due: matched.length > 0, matched };
+}
+
+// kit-feedback 66: the start order of gsd.execute_schedule graph over the handoff plans, in handoff order
+// ({plans: [{id, wave, depends_on[], owns[], files_modified[], tracer}]}). A plan waits for the commit of the plans it
+// depends on, of every earlier plan whose owns or files_modified overlap its own (the ownership hand-off across waves:
+// two writers of one file never run at once), and of the tracer plans of earlier execution waves (a red tracer starts
+// nothing after it). A cycle (a depends_on naming a later plan that waits for this one) is refused.
+export function scheduleGraph(root, { plans = [] }) {
+  const prefixes = ownsPrefixes(root);
+  const ids = new Set(plans.map((p) => p.id));
+  const owns = (p) => (p.owns ?? []).map((o) => ownsPath(o, prefixes)).filter((o) => o && !o.startsWith(".planning/"));
+  const deps = Object.fromEntries(plans.map((p) => [p.id, []]));
+  const reasons = Object.fromEntries(plans.map((p) => [p.id, []]));
+  plans.forEach((p, i) => {
+    const add = (on, why) => {
+      if (on === p.id) return;
+      if (!deps[p.id].includes(on)) deps[p.id].push(on);
+      reasons[p.id].push({ on, why });
+    };
+    for (const d of p.depends_on ?? []) if (ids.has(d)) add(d, "depends_on");
+    const mine = owns(p);
+    const files = new Set(p.files_modified ?? []);
+    for (const q of plans.slice(0, i)) {
+      if (q.tracer && q.wave < p.wave) add(q.id, "tracer");
+      if (owns(q).some((x) => mine.some((y) => overlaps(x, y)))) add(q.id, "owns overlap");
+      else if ((q.files_modified ?? []).some((f) => files.has(f))) add(q.id, "files_modified overlap");
+    }
+  });
+  // Depth-first search; the first cycle found is named in order.
+  const state = {};
+  let cycle = null;
+  const visit = (id, trail) => {
+    if (cycle || state[id] === "done") return;
+    if (state[id] === "open") { cycle = [...trail.slice(trail.indexOf(id)), id]; return; }
+    state[id] = "open";
+    for (const d of deps[id] ?? []) visit(d, [...trail, id]);
+    state[id] = "done";
+  };
+  for (const p of plans) visit(p.id, []);
+  return { deps, reasons, cycle, code: cycle ? 1 : 0 };
 }
 
 // input: {plans: [{id, owns[], summary, complete}], integration?: [path]} — the plans of the phase with their SUMMARY

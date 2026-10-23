@@ -116,6 +116,51 @@ const ev = (e) => { events.push(e); log(`event ${e}`); };
 const result = (status, extra = {}) => ({ status, phaseDir, mode: execMode, isolation: g.isolation, waves: waveResults, sharedChanges, ...(Object.keys(pendingRequests).length ? { requests: pendingRequests } : {}), ...(skipped.length ? { skipped } : {}), events, ...extra });
 const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reason, ...extra });
 const digestOf = async (input) => (await flow(["digest"], input)).json?.hash ?? "none";
+// kit-feedback 66: gsd.execute_schedule graph starts each plan when the plans it waits for are committed (per-wave only).
+const schedule = g.execute_schedule ?? "waves";
+if (schedule === "graph" && execMode !== "per-wave") return result("refused", { reason: `gsd.execute_schedule graph needs gsd.execution_mode per-wave (it is ${execMode})` });
+
+// Calls run one at a time, in order; a failed call does not stop the next.
+const serialize = () => {
+  let last = Promise.resolve();
+  return (fn) => {
+    const run = last.then(() => fn());
+    last = run.catch(() => {});
+    return run;
+  };
+};
+// At most n calls at once; the others wait in order.
+function slots(n) {
+  let free = n;
+  const waiting = [];
+  return async (fn) => {
+    if (free > 0) free--;
+    else await new Promise((go) => waiting.push(go));
+    try { return await fn(); } finally { const next = waiting.shift(); if (next) next(); else free++; }
+  };
+}
+// kit-feedback 66: the main tree has writers (shared-tree executors, transfers, main-tree fixers), which share it, and
+// exclusive users (gates, stray and resume checks, smoke builds, a commit with its suite), which run alone. A waiting
+// request is served before later ones, so neither kind starves. In the waves schedule nothing contends, so nothing waits.
+const tree = { kind: null, n: 0, queue: [] };
+function pumpTree() {
+  while (tree.queue.length && (tree.n === 0 || (tree.kind === "write" && tree.queue[0].kind === "write"))) {
+    const next = tree.queue.shift();
+    tree.kind = next.kind;
+    tree.n++;
+    next.go();
+  }
+}
+async function onTree(kind, fn) {
+  if (tree.queue.length || (tree.n && !(tree.kind === "write" && kind === "write"))) await new Promise((go) => tree.queue.push({ kind, go }));
+  else { tree.kind = kind; tree.n++; }
+  try { return await fn(); } finally {
+    if (--tree.n === 0) tree.kind = null;
+    pumpTree();
+  }
+}
+const writeTree = (fn) => onTree("write", fn);
+const aloneOnTree = (fn) => onTree("alone", fn);
 
 // Bounded pool: at most `limit` executors at a time (GSDF-93); never above max_subagents.
 async function pool(items, n, fn) {
@@ -168,7 +213,9 @@ const progressRead = await flow(["read", PROGRESS]);
 const progress = progressRead.json?.exists ? JSON.parse(progressRead.json.text) : { plans: {} };
 const tracked = (id) => progress.plans[id]?.tracked === true;
 const committedOnly = (id) => progress.plans[id]?.commit !== undefined && !tracked(id);
-const saveProgress = async () => (await flow(["write", PROGRESS], JSON.stringify(progress, null, 2))).code === 0;
+// One write at a time, each of the state at its own turn: a slower earlier write never lands over a newer one.
+const progressWrite = serialize();
+const saveProgress = () => progressWrite(async () => (await flow(["write", PROGRESS], JSON.stringify(progress, null, 2))).code === 0);
 pendingRequests = progress.requests ??= {};
 sharedChanges = progress.shared ??= [];
 // kit-feedback 53: a granted file is integration output from the start of the run (the resume gate and the wave commit).
@@ -243,10 +290,13 @@ async function warnProtected() {
 // ---- execute baseline and safe-resume gate (GSDF-38) ----
 phase("Baseline");
 const allTasks = handoff.flatMap((w) => w.tasks);
-const gatePlans = () => allTasks.map((t) => ({ id: t.plan, owns: t.owns ?? [], summary: t.summary, complete: Boolean(planInfo(t.plan).has_summary) }));
+// kit-feedback 66: plans this run has dispatched and not committed yet (graph schedule); their changes are the run's own.
+const inFlight = new Set();
+const gatePlans = () => allTasks.map((t) => ({ id: t.plan, owns: t.owns ?? [], summary: t.summary, complete: Boolean(planInfo(t.plan).has_summary) || inFlight.has(t.plan) }));
 const base = await flow(["baseline", phaseDir]);
 if (base.code !== 0) return result("failed", { reason: `execute baseline could not be recorded: ${base.json?.error ?? base.code}` });
-async function resumeGate() {
+const resumeGate = () => aloneOnTree(resumeGateNow);
+async function resumeGateNow() {
   idx = await index();
   const rg = await flow(["resume-gate", phaseDir], { plans: gatePlans(), integration: progress.integration ?? [] });
   if (rg.json?.status === "error") return result("failed", { reason: `safe-resume gate could not look: ${rg.json.error}` });
@@ -328,6 +378,10 @@ async function halt(id, why) {
   return { plan: id, halted: true, reason: why, ...(pendingRequests[id]?.length ? { requests: pendingRequests[id] } : {}) };
 }
 async function headNow(cwd) { return (await shell(["git", "rev-parse", "HEAD"], cwd ? { cwd } : {})).stdout.trim(); }
+// The orchestrator's own commits of this run: in the graph schedule a commit of one plan lands while another plan's
+// executor runs, and a worktree may start from it (kit-feedback 66).
+const ownCommits = new Set();
+const movedBy = (now, before) => now !== before && !ownCommits.has(now);
 const slashPath = (p) => String(p).trim().replace(/\\/g, "/").replace(/^\.\//, "");
 // G072: a request goes to the plan owning its path most specifically (adapter owns forms, path boundaries). G089: a
 // path no open plan of the phase owns (no plan, or one already committed) is a shared change, applied before the next
@@ -368,12 +422,13 @@ async function dispatch(t, waveId) {
     reqs.length ? `Change requests from other plans for files you own (JSON): ${JSON.stringify(reqs)}. Make them inside your owns and list each request path you resolved in resolvedRequests.` : "",
     digestLine(`plan:${t.plan}`, t.planHash ?? "none"),
   ].filter(Boolean).join("\n\n");
-  const d = await agent(prompt, { ...execOpts(t, `exec-${t.plan}`), detail: true });
+  const run = () => agent(prompt, { ...execOpts(t, `exec-${t.plan}`), detail: true });
+  const d = await (worktreeMode ? run() : writeTree(run));
   const res = d?.result ?? null;
   const wt = d?.worktree ?? null;
   ev(`code ${waveId} ${t.plan}`);
   // GSDF-42: workers never commit; a moved HEAD (main or the agent worktree) fails the plan.
-  if ((await headNow()) !== before || (wt && (await headNow(wt)) !== before)) return { ...(await halt(t.plan, "executor committed (HEAD moved)")), failed: true };
+  if (movedBy(await headNow(), before) || (wt && movedBy(await headNow(wt), before))) return { ...(await halt(t.plan, "executor committed (HEAD moved)")), failed: true };
   const summaryAt = wt ? `${wt}/${t.summary}` : t.summary;
   const hasSummary = Boolean((await flow(["exists", summaryAt])).json?.exists?.[summaryAt]);
   if (!res) {
@@ -394,7 +449,8 @@ async function dispatch(t, waveId) {
   if (!hasSummary) return { ...(await halt(t.plan, `no SUMMARY at ${t.summary}`)), failed: true };
   return { plan: t.plan, ok: true, wt };
 }
-async function integrate(outcomes, tasks) {
+const integrate = (outcomes, tasks) => writeTree(() => integrateNow(outcomes, tasks));
+async function integrateNow(outcomes, tasks) {
   for (const t of tasks) {
     const o = outcomes.find((x) => x?.plan === t.plan);
     if (!o?.ok) continue;
@@ -425,8 +481,11 @@ if (cmds.test) {
   const nt = (await gsd(["normalize-test-command", joined])).json?.command;
   testArgv = nt && nt !== joined && nt.startsWith(joined) ? [...cmds.test, ...nt.slice(joined.length).trim().split(/\s+/)] : cmds.test;
 }
-async function runGate(waveId, tasks) {
-  const r = await flow(["gate", phaseDir], { waveId, plans: tasks.map((t) => ({ id: t.plan, owns: t.owns ?? [], verify: t.verify ?? [] })), testArgv });
+// extra (graph schedule): {suite: false} runs only the plans' obligations; obligations, a Set of plan ids, runs only those
+// plans' obligations with the suite; context names other open plans, so a failure in their files is theirs.
+const runGate = (waveId, tasks, extra) => aloneOnTree(() => gateNow(waveId, tasks, extra));
+async function gateNow(waveId, tasks, { suite = true, obligations = null, context = [] } = {}) {
+  const r = await flow(["gate", phaseDir], { waveId, plans: tasks.map((t) => ({ id: t.plan, owns: t.owns ?? [], verify: !obligations || obligations.has(t.plan) ? t.verify ?? [] : [] })), testArgv, ...(suite ? {} : { suite: false }), ...(context.length ? { context: context.map((t) => ({ id: t.plan, owns: t.owns ?? [] })) } : {}) });
   if (!r.json || r.json.status === "error") return { green: false, failureCount: 1, failures: [{ step: "gate", excerpt: r.json?.error ?? "gate failed to run" }], byPlan: {}, unplaced: [], blockedBy: {} };
   for (const n of r.json.notes ?? []) log(`gate: ${n}`);
   for (const tline of r.json.timedOut ?? []) log(`gate timeout: ${tline}`);
@@ -436,8 +495,9 @@ async function runGate(waveId, tasks) {
 // F57 (kit-feedback 57): the first wave that changes a file matching adapter.smoke_triggers builds adapter.commands.smoke_builds
 // once per phase, before its gate, so a toolchain gap stops that wave instead of the end of the phase. A passed build is kept in
 // execute-progress.json, so a resumed run does not build again; a failed one stops needs-owner and is built again on the rerun.
-async function smokeStop(tasks, waveId, label) {
-  if (!cmds.smoke_builds?.length || progress.smoke) return null;
+const smokeStop = (tasks, waveId, label) => (!cmds.smoke_builds?.length || progress.smoke ? null : aloneOnTree(() => smokeStopNow(tasks, waveId, label)));
+async function smokeStopNow(tasks, waveId, label) {
+  if (progress.smoke) return null;
   const pf = await planFiles(tasks);
   if (pf.stop) return pf.stop;
   const changed = [...Object.values(pf.files), ...Object.values(pf.removed), pf.integration].flat();
@@ -464,7 +524,8 @@ const FIXER_EFFORT = "high";
 const fixerOpts = (label, extra = {}) => ({ label, agentType: agentFor("fixer", "gsd-code-fixer"), role: "fixer", ...(cfg.gsd.roles?.fixer?.effort ? {} : { effort: FIXER_EFFORT }), schema: FIXER_SCHEMA, ...extra });
 // Main-tree edits outside every plan's owns stop the run before the gate and the review are paid for, not at Commit
 // (G070, kit-feedback 35).
-async function strayStop(tasks, stage) {
+const strayStop = (tasks, stage) => aloneOnTree(() => strayStopNow(tasks, stage));
+async function strayStopNow(tasks, stage) {
   const pf = await planFiles(tasks);
   if (pf.stop) return pf.stop;
   if (!pf.unowned.length) return null;
@@ -473,7 +534,9 @@ async function strayStop(tasks, stage) {
 // G089, G083: shared changes (requests no open plan owns; the plans' <shared_changes> of this execution wave) are made
 // by one integration fixer owning exactly their paths, before the gate; its files join the wave commit and
 // commits.json, and the resume gate knows them from execute-progress.json.
-async function applyShared(waveId, label) {
+const sharedTurn = serialize();
+const applyShared = (waveId, label) => sharedTurn(() => applySharedNow(waveId, label));
+async function applySharedNow(waveId, label) {
   const open = sharedChanges.filter((s) => !s.applied);
   if (!open.length) return null;
   const nameless = open.filter((s) => !s.path);
@@ -483,7 +546,8 @@ async function applyShared(waveId, label) {
   progress.integration = [...integrationFiles];
   if (!(await saveProgress())) return result("failed", { reason: `${PROGRESS} could not be written before the shared changes` });
   const brief = open.map(({ from, path, change, reason }) => ({ from, path, change, reason }));
-  const r = await call([`Shared changes for ${label}: no open plan of the phase owns these paths, so you make them. You own exactly these files: ${JSON.stringify(files)}. Make each change below and nothing else; never commit.`, `Changes (JSON): ${JSON.stringify(brief)}`, "Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence}.", digestLine(`shared:${waveId}`, await digestOf({ files }))].join("\n\n"), fixerOpts(`shared-${waveId}`));
+  const prompt = [`Shared changes for ${label}: no open plan of the phase owns these paths, so you make them. You own exactly these files: ${JSON.stringify(files)}. Make each change below and nothing else; never commit.`, `Changes (JSON): ${JSON.stringify(brief)}`, "Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence}.", digestLine(`shared:${waveId}`, await digestOf({ files }))].join("\n\n");
+  const r = await writeTree(() => call(prompt, fixerOpts(`shared-${waveId}`)));
   if (r.result === null) return owner("Integration", `the shared-change fixer of ${label} returned nothing${r.reason ? ` (${r.reason})` : ""}`, { sharedChanges: open, ...(fatal(r.reason) ? { failure: classify(r.reason) } : {}) });
   if (r.result.status !== "fixed") return owner("Integration", `shared changes of ${label} unresolved${r.result.evidence ? `: ${r.result.evidence}` : ""}`, { sharedChanges: open });
   for (const s of open) s.applied = true;
@@ -495,12 +559,13 @@ async function applyShared(waveId, label) {
 // at once; a fixer that answers unresolved, or a fix call that returned nothing, is judged on a fresh gate (G066, G088,
 // kit-feedback 28/30): the round stops red only while that fixer's own failures remain. An owner decision of a fixer
 // (kit-feedback 51) waits for the transfer of every fixer's owned changes and the rerun, and stops the round only while
-// its plan still fails.
-async function fixRounds(waveId, tasks, first, label, tail) {
+// its plan still fails. opts (graph schedule): gate() reruns the gate (default: the gate of these plans), done(gate) ends
+// the rounds early (default: green).
+async function fixRounds(waveId, tasks, first, label, tail, { gate = () => runGate(waveId, tasks), done = (x) => x.green } = {}) {
   let cur = first;
   let prev = first.failureCount;
   let noDrop = 0;
-  for (let round = 1; !cur.green && round <= g.max_verify_rounds; round++) {
+  for (let round = 1; !done(cur) && round <= g.max_verify_rounds; round++) {
     const red = (why, extra = {}) => ({ stop: owner("Gate", `${label} is red after fix round ${round}: ${why}${tail}`, { failures: cur.failures, evidence: cur.evidence, blockedBy: cur.blockedBy, ...extra }) });
     const placed = (cur.unplaced ?? []).filter((f) => (f.files ?? []).length);
     const fileless = (cur.unplaced ?? []).filter((f) => !(f.files ?? []).length);
@@ -511,16 +576,20 @@ async function fixRounds(waveId, tasks, first, label, tail) {
       const dg = digestLine(`fix:${id}`, await digestOf({ owns: t.owns ?? [] }));
       // A plan resumed without its worktree is repaired in the main tree: a new worktree would start from HEAD,
       // without the plan's integrated output.
-      if (worktreeMode && !worktrees[id]) return { id, kind: "fixer", ...(await call([fixerText(t.owns ?? [], [], list), reqs.length ? `Change requests from other plans of this wave (JSON): ${JSON.stringify(reqs)}` : "", dg].filter(Boolean).join("\n\n"), fixerOpts(`fix-${id}-${round}`))) };
+      if (worktreeMode && !worktrees[id]) return { id, kind: "fixer", ...(await writeTree(() => call([fixerText(t.owns ?? [], [], list), reqs.length ? `Change requests from other plans of this wave (JSON): ${JSON.stringify(reqs)}` : "", dg].filter(Boolean).join("\n\n"), fixerOpts(`fix-${id}-${round}`)))) };
       const prompt = [`Fix round ${round} for plan ${id}: the gate failed on your owned files. Fix only inside your owns; do not run the build or the tests.`, failureText(list), reqs.length ? `Change requests from other plans of this wave (JSON): ${JSON.stringify(reqs)}` : "", `Evidence: ${cur.evidence}`, "Return the same JSON as before, with resolvedRequests listing only request paths you actually resolved.", dg].filter(Boolean).join("\n\n");
-      return { id, kind: "executor", t, ...(await call(prompt, execOpts(t, `fix-${id}-${round}`))) };
+      const fix = () => call(prompt, execOpts(t, `fix-${id}-${round}`));
+      return { id, kind: "executor", t, ...(await (worktreeMode ? fix() : writeTree(fix))) };
     });
     // G064: an integration fixer owns exactly the files its failures name; a failure naming no file has no owner.
     if (placed.length) {
       const files = [...new Set(placed.flatMap((f) => f.files ?? []))];
       for (const f of files) integrationFiles.add(f);
       progress.integration = [...integrationFiles];
-      fixes.push(async () => ({ id: null, kind: "integration", ...(await call([`Integration fix: these gate failures belong to no plan. You own exactly these files: ${JSON.stringify(files)}.`, failureText(placed), "Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence}.", digestLine("fix:integration", await digestOf({ files })) ].join("\n\n"), fixerOpts(`integration-fix-${round}`))) }));
+      fixes.push(async () => {
+        const prompt = [`Integration fix: these gate failures belong to no plan. You own exactly these files: ${JSON.stringify(files)}.`, failureText(placed), "Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence}.", digestLine("fix:integration", await digestOf({ files }))].join("\n\n");
+        return { id: null, kind: "integration", ...(await writeTree(() => call(prompt, fixerOpts(`integration-fix-${round}`)))) };
+      });
     }
     if (!fixes.length && !sharedChanges.some((s) => !s.applied)) return red(fileless.length ? `${fileless.length} gate failure(s) name no file of any plan, so no fixer can own them` : "no fixer owns the failing files");
     const results = await parallel(fixes);
@@ -554,17 +623,17 @@ async function fixRounds(waveId, tasks, first, label, tail) {
     const sh = await applyShared(waveId, label);
     if (sh) return { stop: sh };
     ev(`fix ${waveId} round ${round}`);
-    cur = await runGate(waveId, tasks);
+    cur = await gate();
     // kit-feedback 51: a fixer's decision stops the round only while its plan still fails after the transfers and the rerun;
     // otherwise its failures were another fixer's to fix, and the answer is logged.
     const stuck = decisions.filter((d) => (cur.byPlan?.[d.id] ?? []).length > 0);
     for (const d of decisions.filter((x) => !stuck.includes(x))) log(`fix of ${d.id} reported "${d.decision.note ?? d.decision.evidence ?? d.decision.status}", but its failures are gone after the transfer and the rerun; not an owner decision`);
     if (stuck.length) return { stop: owner("Gate", stuck.map((d) => `owner decision needed in the fix of ${d.id}: ${d.decision.note ?? d.decision.evidence ?? d.decision.status}`).join("; "), { decision: stuck[0].decision, evidence: cur.evidence }) };
     const still = soft.filter((s) => (s.id ? (cur.byPlan?.[s.id] ?? []).length > 0 : (cur.unplaced ?? []).some((f) => (f.files ?? []).length)));
-    if (!cur.green && still.length) return red(still.map((s) => s.why).join("; "));
+    if (!done(cur) && still.length) return red(still.map((s) => s.why).join("; "));
     noDrop = cur.failureCount >= prev ? noDrop + 1 : 0;
     prev = cur.failureCount;
-    if (!cur.green && noDrop >= 2) return { stop: owner("Gate", `verify-fix stalled: ${cur.failureCount} failures did not drop over 2 rounds`, { failures: cur.failures, evidence: cur.evidence }) };
+    if (!done(cur) && noDrop >= 2) return { stop: owner("Gate", `verify-fix stalled: ${cur.failureCount} failures did not drop over 2 rounds`, { failures: cur.failures, evidence: cur.evidence }) };
   }
   return { gate: cur };
 }
@@ -653,7 +722,8 @@ const confirmedOf = (record) => record.findings.filter((f) => f.verdict === "con
 const resolvedIds = (record) => new Set((record.resolution ?? []).filter((x) => x.resolved === true).map((x) => x.id));
 const unresolvedOf = (record) => confirmedOf(record).filter((f) => !resolvedIds(record).has(f.id));
 const asReview = (record, replay = null) => ({ record, replay, confirmed: confirmedOf(record), unverified: record.findings.filter((f) => f.verdict === "unverified" || f.verdict === "uncertain") });
-async function reviewPlan(t, waveId, codeOnly, scopeOverride) {
+// built (graph schedule): what the reviewer is told about the build state instead of the wave's green gate.
+async function reviewPlan(t, waveId, codeOnly, scopeOverride, built = "The wave is built and its tests are green.") {
   const evScope = scopeOverride ? null : await gsd(["check", "evaluation-scope", "--plan", t.plan]);
   const sc = (await flow(["review-scope", phaseDir], { plan: t.plan, files: scopeOverride ?? a.files, filterExplicit: Boolean(scopeOverride), summary: t.summary, evaluation: evScope?.json?.files ?? [] })).json ?? { scope: [] };
   for (const l of sc.log ?? []) log(`review scope ${t.plan}: ${l}`);
@@ -687,7 +757,7 @@ async function reviewPlan(t, waveId, codeOnly, scopeOverride) {
     const prompt = [
       `Review plan ${t.plan} (${planPath(t.plan)}) at depth ${g.review_depth}. Review only these files: ${record.scope.join(", ")}.`,
       `Lines this plan changed:\n${record.scope.map((p) => `- ${p}: ${rangeText(changed[p])}`).join("\n")}`,
-      codeOnly ? "This code is not built yet (code-only review)." : "The wave is built and its tests are green.",
+      codeOnly ? "This code is not built yet (code-only review)." : built,
       `Lenses:\n${lenses.map((l) => `- ${l.name}: ${l.text}`).join("\n")}`,
       "Every finding carries trigger (the concrete input or sequence that makes it fail), likelihood (likely|possible|theoretical), confidence 0-100, impact, file and line.",
       "Set introduced true when this plan's change causes the defect, also on an unchanged line (a caller broken by a changed signature); false when the defect was there before the change. A defect outside the changed lines that the change did not cause is recorded as pre-existing and does not block.",
@@ -774,7 +844,7 @@ const grantOption = (rq) => `ph gsd grant ${N} --path ${rq.path}${rq.plan ? ` --
 async function fixer(label, findings, failures, owns) {
   const fixOwns = [...owns, ...(await grantedFiles())];
   const prompt = [fixerText(fixOwns, findings, failures), digestLine(`fix:${label}`, await digestOf({ owns: fixOwns, files: findingFiles(findings) }))].join("\n\n");
-  const r = await call(prompt, fixerOpts(label, { timeoutS: (g.fixer.minutes + 5) * 60 }));
+  const r = await writeTree(() => call(prompt, fixerOpts(label, { timeoutS: (g.fixer.minutes + 5) * 60 })));
   ev(`fixer ${label}`);
   // kit-feedback 55: an edit that no build or test run followed is named in the stop, so the owner runs the failing tests before any hand fix.
   const lastEdit = r.result ? r.result.lastEdit ?? "unverified" : null;
@@ -871,6 +941,7 @@ async function commitOne(subject, ids, wave, pf, withIntegration) {
   if (!c.json?.committed) {
     return { stop: owner("Commit", `code commit of ${ids.join(",")} failed: ${c.json?.error ?? c.json?.reason ?? `exit ${c.code}`}; nothing tracked`, { recovery, options: ["fix the cause (hook, identity, index) and rerun with the same args", "stop"] }) };
   }
+  ownCommits.add(c.json.hash);
   const entry = { sha: c.json.hash, phase: N, wave, plans: Object.fromEntries(ids.map((id) => [id, [...(pf.files[id] ?? []), ...(pf.removed[id] ?? [])]])) };
   if (withIntegration && pf.integration.length) entry.integration = pf.integration;
   const jp = await flow(["json-push", `${phaseDir}/commits.json`], entry);
@@ -999,6 +1070,280 @@ const finish = (extra = {}) => {
   return result("executed", { ...extra, ...(skipped.length ? { reason: `executed except ${skipped.map((s) => `${s.plan} (${s.why})`).join(", ")}`, next: `answer the halts (ph gsd halt clear ${N} --plan <id> --reason <answer>) and rerun with the same args` } : {}) });
 };
 
+// kit-feedback 58: one gate over every plan of the run, after the last commit. A wave's gate goes stale once a later
+// wave edits the same files, so verify reads only this evidence. A red phase gate stops the run; its plans stay tracked.
+async function phaseGate(extra = {}) {
+  const phaseTasks = wanted.filter((t) => !skipped.some((s) => s.plan === t.plan));
+  if (!phaseTasks.length) return finish({ evidence: [], ...extra });
+  phase("Gate");
+  const pg = await runGate(`${prefix}batch`, phaseTasks);
+  if (!pg.green) return owner("Gate", `the phase gate is red over ${phaseTasks.length} plans; the waves are committed and tracked`, { failures: pg.failures, evidence: pg.evidence, ...extra });
+  return finish({ evidence: [pg.evidence], ...extra });
+}
+
+// ---- graph schedule (kit-feedback 66): a plan starts when the plans it waits for are committed ----
+// Each plan is its own stream: executor and transfer, its own obligations with fix rounds, its review, fix and
+// resolution check. Then it joins the commit queue: one batch at a time runs the repo-wide suite (adapter gates, build,
+// tests) and commits on green. A stop settles its plan and the plans waiting for it; the others run on to their commit.
+const BUILT = "The plan's own verify obligations are green; the repo-wide build and tests run before its commit.";
+async function graphRun() {
+  phase("Wave");
+  idx = await index();
+  const waveOf = new Map(handoff.flatMap((w) => w.tasks.map((t) => [t.plan, w])));
+  const sg = await flow(["schedule-graph"], { plans: allTasks.map((t) => ({ id: t.plan, wave: waveOf.get(t.plan).k, depends_on: planInfo(t.plan).depends_on ?? [], owns: t.owns ?? [], files_modified: planInfo(t.plan).files_modified ?? [], tracer: t.tracer === true || t.tracer?.is === true })) });
+  if (!sg.json?.deps) return { stop: result("failed", { reason: `the execution graph could not be built: ${sg.json?.error ?? `exit ${sg.code}`}` }) };
+  if (sg.json.cycle) return { stop: result("refused", { reason: `the plans wait for each other in a cycle (${sg.json.cycle.join(" -> ")}); fix depends_on and regenerate the handoff with gsd-plan`, cycle: sg.json.cycle }) };
+  const deps = sg.json.deps;
+  // Plans committed by an earlier run but not tracked are only tracked (CR-GSF-02).
+  for (const w of waves) {
+    const committed = w.tasks.filter(selectedTask).filter((t) => committedOnly(t.plan));
+    if (!committed.length) continue;
+    const p0 = progress.plans[committed[0].plan];
+    const tr = await track(w, committed, p0.verify ?? "green", p0.evidence ?? null);
+    if (tr.stop) return tr;
+  }
+  const units = waves.flatMap((w) => w.tasks.filter(selectedTask).filter((t) => !tracked(t.plan)));
+  const inRun = new Set(units.map((t) => t.plan));
+  const isCommitted = (id) => progress.plans[id]?.commit !== undefined;
+  const execSlot = slots(limit);
+  const reviewSlot = slots(reviewLimit);
+  const order = [];
+  const stops = [];
+  let draining = null;
+  // A settled plan is committed, stopped, skipped or interrupted (the run drained before it got there).
+  const settled = new Map();
+  const waiters = new Map();
+  let pokes = 0;
+  let kick = null;
+  const poke = () => { pokes++; const k = kick; kick = null; k?.(); };
+  const settledOf = (id) => settled.get(id) ?? (isCommitted(id) ? { state: "committed" } : null);
+  const settle = (id, outcome) => {
+    if (settled.has(id)) return;
+    settled.set(id, outcome);
+    for (const go of waiters.get(id) ?? []) go(outcome);
+    waiters.delete(id);
+    poke();
+  };
+  const whenSettled = (id) => (settledOf(id) ? Promise.resolve(settledOf(id)) : new Promise((go) => waiters.set(id, [...(waiters.get(id) ?? []), go])));
+  // A stop that is no owner decision about one plan (a quota, a call that cannot run, a failed or refused step, a resume
+  // gate problem) drains the run: nothing new starts, and the plans not committed yet are interrupted.
+  const stopPlans = (ids, stop, drain = false) => {
+    stops.push({ plans: ids, stop });
+    if (drain || stop.status !== "needs-owner" || stop.failure) draining ??= `${ids.join(", ")}: ${stop.reason}`;
+    for (const id of ids) settle(id, { state: "stopped", stop });
+  };
+  const skip = (t, why) => {
+    if (!skipped.some((s) => s.plan === t.plan)) skipped.push({ plan: t.plan, wave: waveOf.get(t.plan).k, why });
+    log(`warning: plan ${t.plan} skipped (${why}); answer a halt with ph gsd halt clear ${N} --plan <id> --reason <answer>`);
+    settle(t.plan, { state: "skipped", why });
+  };
+  const interrupt = (t) => settle(t.plan, { state: "interrupted" });
+  // A gate red in the given plans' own files (or in files of no open plan), not only in files of other open plans.
+  const ownRed = (x, ids) => !x.green && ((x.unplaced ?? []).length > 0 || !Object.keys(x.byPlan ?? {}).length || ids.some((id) => (x.byPlan[id] ?? []).length > 0));
+  const othersOpen = (ids) => units.filter((x) => !ids.includes(x.plan) && inFlight.has(x.plan) && !isCommitted(x.plan));
+  // Plans whose obligations failed only in files of other open plans: the suite of their commit runs those obligations too.
+  const recheck = new Set();
+  const queue = [];
+
+  async function unit(t) {
+    const w = waveOf.get(t.plan);
+    const label = `plan ${t.plan}`;
+    const missing = deps[t.plan].filter((d) => !inRun.has(d) && !isCommitted(d));
+    if (missing.length) return skip(t, `waits for ${missing.join(", ")}, which is not committed and not in this run`);
+    const before = await Promise.all(deps[t.plan].map(whenSettled));
+    const blocked = deps[t.plan].filter((d, i) => ["stopped", "skipped"].includes(before[i].state));
+    if (blocked.length) return skip(t, `blocked by ${blocked.join(", ")}`);
+    if (draining || before.some((o) => o.state !== "committed")) return interrupt(t);
+    idx = await index();
+    const p = planInfo(t.plan);
+    if (p.has_summary && p.halted) return stopPlans([t.plan], owner("Execute", `plans with a SUMMARY and a halt record: ${t.plan}; resolve the halt first (ph gsd halt clear ${N} --plan <id> --reason <answer>)`, { halted: [t.plan] }));
+    if (!p.has_summary && (p.halted || p.error)) return skip(t, p.halted ? "halted" : `frontmatter ${p.error}`);
+    const partial = ((await flow(["pending-transfers", phaseDir])).json?.pending ?? []).filter((x) => x.plan === t.plan);
+    if (partial.length) return stopPlans([t.plan], owner("Execute", `the transfer of ${t.plan} did not finish: the main tree holds part of it (the worktree ${partial[0].worktree} is kept)`, { partial, options: ["copy the rest from the worktree by hand and delete the transfers-pending record", "revert the copied paths, delete the SUMMARY and the record, then rerun to re-execute"] }));
+    order.push(`start ${t.plan}`);
+    if (p.has_summary) {
+      inFlight.add(t.plan);
+      log(`plan ${t.plan}: SUMMARY present but not committed; it rejoins its checks, review and commit`);
+    } else {
+      if (worktreeMode) {
+        const dirty = await flow(["dirty-owned", phaseDir], { plans: [{ id: t.plan, owns: t.owns ?? [] }] });
+        if (dirty.code !== 0) return stopPlans([t.plan], owner("Execute", dirty.json?.dirty ? `owned files edited before the execute baseline are not in an executor worktree (it starts from HEAD): ${dirty.json.dirty.map((d) => `${d.path} (${d.plan})`).join(", ")}` : `owned-file check failed: ${dirty.json?.error}`, { dirty: dirty.json?.dirty ?? [], options: ["commit or stash those edits, then rerun with the same args", "set gsd.isolation shared"] }));
+      }
+      const gateStop = await resumeGate();
+      if (gateStop) return stopPlans([t.plan], gateStop, true);
+      const o = await execSlot(async () => {
+        if (draining) return null;
+        inFlight.add(t.plan);
+        return dispatch(t, w.waveId);
+      });
+      if (!o) return interrupt(t);
+      if (o.wt) worktrees[t.plan] = o.wt;
+      await integrate([o], [t]);
+      if (!(await saveProgress())) return stopPlans([t.plan], result("failed", { reason: "could not persist pending change requests" }));
+      const hs = haltStop([o], "Execute");
+      if (hs) return stopPlans([t.plan], hs);
+      if (!worktreeMode) {
+        const stray = await strayStop([t], "Execute");
+        if (stray) return stopPlans([t.plan], stray);
+      }
+    }
+    if (draining) return interrupt(t);
+    // G083: the plan's <shared_changes> are made once its own code is in the main tree.
+    for (const s of (w.sharedChanges ?? []).filter((x) => x.source === t.plan)) {
+      const key = `${w.waveId}:${s.source}:${s.text}`;
+      if (sharedChanges.some((x) => x.key === key)) continue;
+      for (const at of s.paths?.length ? s.paths : [null]) sharedChanges.push({ key, from: s.source, path: at, change: s.text, reason: "declared in the plan's <shared_changes>", applied: false });
+    }
+    const sh = await applyShared(w.waveId, label);
+    if (sh) return stopPlans([t.plan], sh);
+    // The plan's own obligations; a failure only in files of other open plans is left to the suite of the commit queue.
+    const checkId = `${w.waveId}-${t.plan}`;
+    const check = async () => {
+      if (!(t.verify ?? []).length) return { green: true, evidence: null, failures: [], failureCount: 0, byPlan: {}, unplaced: [] };
+      const x = await runGate(checkId, [t], { suite: false, context: othersOpen([t.plan]) });
+      if (x.green || ownRed(x, [t.plan])) {
+        recheck.delete(t.plan);
+        return x;
+      }
+      recheck.add(t.plan);
+      return { ...x, green: true, foreign: Object.keys(x.byPlan) };
+    };
+    phase("Gate");
+    let cur = await check();
+    if (!cur.green) {
+      const fr = await fixRounds(checkId, [t], cur, label, "", { gate: check });
+      if (fr.stop) return stopPlans([t.plan], fr.stop);
+      if (!fr.gate.green) return stopPlans([t.plan], owner("Gate", `${label} is red after ${g.max_verify_rounds} fix rounds`, { failures: fr.gate.failures, evidence: fr.gate.evidence, blockedBy: fr.gate.blockedBy }));
+      cur = fr.gate;
+    }
+    if (cur.foreign) log(`plan ${t.plan}: its obligations fail only in files of open plans ${cur.foreign.join(", ")}; the suite of the commit queue judges them together`);
+    if (draining) return interrupt(t);
+    phase("Review");
+    const rv = await reviewSlot(() => (draining ? null : reviewPlan(t, w.waveId, false, undefined, BUILT)));
+    if (!rv) return interrupt(t);
+    if (rv.stop) return stopPlans([t.plan], rv.stop);
+    if (rv.unverified.length) return stopPlans([t.plan], owner("Review", `${rv.unverified.length} blocking findings of ${t.plan} could not be verified`, { findings: rv.unverified.map((f) => ({ ...findingBrief(f), verdict: f.verdict, evidence: f.verdictEvidence ?? "" })) }));
+    if (unresolvedOf(rv.record).length) {
+      const fx = await fixAndResolve(w.waveId, [rv], { label: `fix-review-${checkId}`, owns: t.owns ?? [], tasks: [t], what: label, gate: check });
+      await metricsLine(checkId);
+      if (fx.stop) return stopPlans([t.plan], fx.stop);
+    } else await metricsLine(checkId);
+    if (draining) return interrupt(t);
+    queue.push(t);
+    poke();
+    await whenSettled(t.plan);
+  }
+
+  // The commit of a batch whose suite is green: the plans' commits, commits.json and the STATE wave log, per handoff wave.
+  async function commitNow(batch, evidence) {
+    const groups = waves.map((w) => ({ w, tasks: batch.filter((t) => waveOf.get(t.plan) === w) })).filter((x) => x.tasks.length);
+    const cm = await commitWaves(groups, "green", evidence);
+    if (cm.stop) return cm;
+    for (const x of groups) {
+      const tr = await track(x.w, x.tasks, "green", evidence);
+      if (tr.stop) return tr;
+    }
+    order.push(`commit ${batch.map((t) => t.plan).join(",")}`);
+    return { committed: true };
+  }
+  // One batch of the commit queue: the smoke build when due, then the repo-wide suite and the commit in one turn of the main
+  // tree. Failures of the batch (or of no open plan) go to fix rounds over the batch; failures only in files of other open
+  // plans make the batch wait for them ({wait: [ids]}).
+  async function commitBatch(batch) {
+    const ids = batch.map((t) => t.plan);
+    const label = `the commit of ${ids.join(", ")}`;
+    const joinId = `${prefix}join`;
+    const sm = await smokeStop(batch, joinId, label);
+    if (sm) return { stop: sm };
+    phase("Commit");
+    const obligations = new Set(ids.filter((id) => recheck.has(id)));
+    const suite = () => runGate(joinId, batch, { obligations, context: othersOpen(ids) });
+    const foreignOf = (x) => Object.keys(x.byPlan ?? {}).filter((id) => !ids.includes(id));
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const c = await aloneOnTree(async () => {
+        const x = await gateNow(joinId, batch, { obligations, context: othersOpen(ids) });
+        return x.green ? { gate: x, ...(await commitNow(batch, x.evidence)) } : { gate: x };
+      });
+      if (c.stop || c.committed) return c;
+      if (!ownRed(c.gate, ids)) return { wait: foreignOf(c.gate), gate: c.gate };
+      const fr = await fixRounds(joinId, batch, c.gate, `the suite before ${label}`, "", { gate: suite, done: (x) => !ownRed(x, ids) });
+      if (fr.stop) return fr;
+      if (ownRed(fr.gate, ids)) return { stop: owner("Gate", `the suite before ${label} is red after ${g.max_verify_rounds} fix rounds`, { failures: fr.gate.failures, evidence: fr.gate.evidence, blockedBy: fr.gate.blockedBy }) };
+      if (!fr.gate.green) return { wait: foreignOf(fr.gate), gate: fr.gate };
+      // The green suite of the last fix round is reused while its inputs are unchanged.
+      const again = await aloneOnTree(async () => {
+        const ec = await flow(["evidence-check", fr.gate.evidence], { plans: batch.map((t) => ({ id: t.plan, owns: t.owns ?? [], verify: obligations.has(t.plan) ? t.verify ?? [] : [] })) });
+        return ec.json?.status === "current" ? commitNow(batch, fr.gate.evidence) : {};
+      });
+      if (again.stop || again.committed) return again;
+    }
+    return { stop: owner("Gate", `the suite before ${label} turned red again after its fix rounds`, { options: ["rerun with the same args", "stop"] }) };
+  }
+  // A plan the batch waits for can still help while it runs, or when it will start without the batch; a stopped plan, or
+  // one that waits for the batch itself, never can.
+  const waitsForBatch = (id, ids, seen = new Set()) => !inFlight.has(id) && deps[id].some((d) => ids.includes(d) || (!settledOf(d) && !seen.has(d) && (seen.add(d), waitsForBatch(d, ids, seen))));
+  async function committer() {
+    let seen = -1;
+    let waitOn = null;
+    for (;;) {
+      if (seen === pokes) await new Promise((go) => { kick = go; });
+      seen = pokes;
+      if (!queue.length) {
+        if (units.every((t) => settledOf(t.plan))) return;
+        continue;
+      }
+      if (draining) {
+        for (const t of queue.splice(0)) interrupt(t);
+        continue;
+      }
+      if (waitOn && !waitOn.some((id) => queue.some((x) => x.plan === id) || settledOf(id))) continue;
+      waitOn = null;
+      const batch = queue.splice(0);
+      const ids = batch.map((t) => t.plan);
+      const r = await commitBatch(batch);
+      if (r.committed) {
+        for (const id of ids) { inFlight.delete(id); settle(id, { state: "committed" }); }
+        continue;
+      }
+      if (r.stop) {
+        stopPlans(ids, r.stop);
+        continue;
+      }
+      const lost = r.wait.filter((id) => (settledOf(id) && settledOf(id).state !== "committed") || waitsForBatch(id, ids));
+      if (!r.wait.length || lost.length === r.wait.length) {
+        stopPlans(ids, owner("Gate", `the suite before the commit of ${ids.join(", ")} fails only in files of ${r.wait.join(", ")}, which stopped or wait for this commit`, { failures: r.gate.failures, evidence: r.gate.evidence, blockedBy: r.gate.blockedBy, options: ["resolve the stop of those plans, then rerun with the same args", "stop"] }));
+        continue;
+      }
+      log(`commit queue: the suite fails only in files of open plans ${r.wait.join(", ")}; ${ids.join(", ")} wait for them to join the queue`);
+      queue.unshift(...batch);
+      waitOn = r.wait;
+    }
+  }
+
+  await parallel([
+    async () => {
+      try { await committer(); } catch (e) {
+        stopPlans(queue.splice(0).map((t) => t.plan), result("failed", { reason: `commit queue: ${e.message}` }));
+      }
+    },
+    ...units.map((t) => async () => {
+      try { await unit(t); } catch (e) {
+        stopPlans([t.plan], result("failed", { reason: `plan ${t.plan}: ${e.message}` }));
+      }
+    }),
+  ]);
+  const by = (state) => units.filter((t) => settled.get(t.plan)?.state === state).map((t) => t.plan);
+  const info = { schedule: "graph", order, committed: by("committed"), ...(by("interrupted").length ? { interrupted: by("interrupted") } : {}) };
+  if (!stops.length) return { info };
+  return { stop: { ...stops[0].stop, ...info, stopped: stops.map(({ plans, stop }) => ({ plans, status: stop.status, stage: stop.stage ?? null, reason: stop.reason })), ...(skipped.length ? { skipped } : {}) } };
+}
+
+if (schedule === "graph") {
+  const gr = await graphRun();
+  if (gr.stop) return gr.stop;
+  return phaseGate(gr.info);
+}
+
 if (execMode === "per-wave") {
   for (const w of waves) {
     const cw = await codeWave(w);
@@ -1031,14 +1376,7 @@ if (execMode === "per-wave") {
     const tr = await track(w, cw.tasks, "green", evidence);
     if (tr.stop) return tr.stop;
   }
-  // kit-feedback 58: one gate over every plan of the run, after the last wave is committed. A wave's gate goes stale once a
-  // later wave edits the same files, so verify reads only this evidence. A red phase gate stops the run; its waves stay tracked.
-  const phaseTasks = wanted.filter((t) => !skipped.some((s) => s.plan === t.plan));
-  if (!phaseTasks.length) return finish({ evidence: [] });
-  phase("Gate");
-  const pg = await runGate(`${prefix}batch`, phaseTasks);
-  if (!pg.green) return owner("Gate", `the phase gate is red over ${phaseTasks.length} plans; the waves are committed and tracked`, { failures: pg.failures, evidence: pg.evidence });
-  return finish({ evidence: [pg.evidence] });
+  return phaseGate();
 }
 
 // ---- batch mode (GSDF-49, D-63): code-only waves, one phase review, one final gate, one fixer ----

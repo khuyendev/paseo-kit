@@ -135,6 +135,8 @@ export const SCHEMA = obj({
     plan_limits: obj({ tasks_per_plan: int(1), plans_per_phase: int(1), waves_per_phase: int(1) }),
     tracer_extra_files: int(0),
     execution_mode: str({ oneOf: ["per-wave", "batch"] }),
+    // kit-feedback 66: graph starts each plan when the plans it depends on are committed (per-wave execution only).
+    execute_schedule: str({ oneOf: ["waves", "graph"] }),
     batch_review: bool(),
     isolation: str({ oneOf: ["shared", "worktree"] }),
     fixer_verifies_itself: bool(),

@@ -183,7 +183,10 @@ function noRun(root, logDir, name, outcome, text, extra = {}) {
   return { name, argv: [], outcome, exitCode: null, executed: { ...NOT_RUN }, log: toSlash(path.relative(root, log)), text, ...extra };
 }
 
-// input: {waveId, plans: [{id, owns, verify: [{task, kind, command, target}]}], testArgv?, skipObligations?}
+// input: {waveId, plans: [{id, owns, verify: [{task, kind, command, target}]}], testArgv?, skipObligations?, suite?, context?}
+// kit-feedback 66 (gsd.execute_schedule graph): `suite: false` runs only the plans' obligations (the adapter gates, the build
+// and the tests are the repo-wide suite, run once before a commit); `context` [{id, owns}] are other open plans of the run:
+// a failure in their files is attributed to them, though they add no scope and no obligation to this gate.
 export async function gate(root, phaseDir, input) {
   const cfg = loadConfig(root);
   const cmds = cfg.adapter.commands;
@@ -209,16 +212,19 @@ export async function gate(root, phaseDir, input) {
   // ADPT-10: the same machine-wide lock as every other adapter.mutex user.
   await withMutex(cfg.adapter.mutex, async () => {
     let gateRed = false;
-    for (const g of cmds.gates ?? []) {
-      const s = await run(gateStepName(g.name), g.argv, cmds.build_timeout_s);
-      steps.push(s);
-      checkpoint();
-      if (s.outcome !== "passed") gateRed = true;
+    if (input.suite === false) notes.push("obligations only: the adapter gates, the build and the tests run before the commit");
+    else {
+      for (const g of cmds.gates ?? []) {
+        const s = await run(gateStepName(g.name), g.argv, cmds.build_timeout_s);
+        steps.push(s);
+        checkpoint();
+        if (s.outcome !== "passed") gateRed = true;
+      }
+      if (cmds.build) { steps.push(await run("build", cmds.build, cmds.build_timeout_s)); checkpoint(); }
+      else { notes.push("build not configured (adapter.commands.build)"); steps.push(noRun(root, logDir, "build", "not_configured", notes.at(-1))); }
+      if (cmds.test) { steps.push(await run("test", input.testArgv ?? cmds.test, cmds.test_timeout_s)); checkpoint(); }
+      else { notes.push("tests not configured (adapter.commands.test)"); steps.push(noRun(root, logDir, "test", "not_configured", notes.at(-1))); }
     }
-    if (cmds.build) { steps.push(await run("build", cmds.build, cmds.build_timeout_s)); checkpoint(); }
-    else { notes.push("build not configured (adapter.commands.build)"); steps.push(noRun(root, logDir, "build", "not_configured", notes.at(-1))); }
-    if (cmds.test) { steps.push(await run("test", input.testArgv ?? cmds.test, cmds.test_timeout_s)); checkpoint(); }
-    else { notes.push("tests not configured (adapter.commands.test)"); steps.push(noRun(root, logDir, "test", "not_configured", notes.at(-1))); }
     for (const p of input.plans ?? []) for (const ob of p.verify ?? []) {
       const name = obligationStepName(p.id, ob.task, ob.kind);
       const meta = { plan: p.id, task: ob.task, kind: ob.kind };
@@ -246,11 +252,11 @@ export async function gate(root, phaseDir, input) {
   if (after.head !== inputs.head) moved.unshift("HEAD");
   if (after.config !== inputs.config) moved.unshift("adapter configuration");
   if (moved.length) steps.push(noRun(root, logDir, "inputs-stable", "failed", `inputs changed while the gate ran: ${moved.slice(0, 10).join(", ")}`));
-  const evidence = { v: 1, waveId: input.waveId, at: new Date().toISOString(), inputs, steps: steps.map(({ text, ...s }) => s) };
+  const evidence = { v: 1, waveId: input.waveId, at: new Date().toISOString(), inputs, ...(input.suite === false ? { suite: false } : {}), steps: steps.map(({ text, ...s }) => s) };
   writeJsonAtomic(evidenceFile, evidence);
   const visible = visibleFiles(root);
   const failures = steps.filter((s) => s.outcome !== "passed").map((s) => ({ step: s.name, plan: s.plan ?? null, outcome: s.outcome, excerpt: excerpt(s.text), log: s.log, files: mentionedFiles(root, s.text, visible) }));
-  const attribution = await attribute(root, cfg, input.plans ?? [], failures, prefixes);
+  const attribution = await attribute(root, cfg, [...(input.plans ?? []), ...(input.context ?? []).map(({ id, owns }) => ({ id, owns: owns ?? [] }))], failures, prefixes);
   if (attribution.attributionError) notes.push(`attribution hook failed: ${attribution.attributionError}; its failures stay unplaced`);
   const timedOut = steps.filter((s) => s.outcome === "timeout").map((s) => `${s.name} timed out after its limit (exit ${TIMEOUT_CODE})`);
   return { green: failures.length === 0, evidence: toSlash(path.relative(root, evidenceFile)), notes, timedOut, failures, failureCount: failures.length, ...attribution };
