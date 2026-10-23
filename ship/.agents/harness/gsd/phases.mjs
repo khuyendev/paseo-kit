@@ -6,7 +6,7 @@ import { renameWithRetry, writeJsonAtomic, writeTextAtomic } from "../lib/io.mjs
 import { samePath } from "../lib/paths.mjs";
 import { textDigest } from "../lib/hash.mjs";
 import { done, fail, idList, isFile, lf, nowIso, readIf, rel, today } from "./common.mjs";
-import { comparePhase, findPhase, haltIds, listFiles, padPhase, phasesDir, planIds, readPlans, sharedFile, summaryIds, summaryPath } from "./planning.mjs";
+import { comparePhase, findPhase, haltIds, listFiles, padPhase, phaseFile, phasesDir, planIds, readPlans, sharedFile, summaryIds, summaryPath } from "./planning.mjs";
 import { duplicateIds, loadRequirements, requirementView, setComplete } from "./requirements.mjs";
 import { annotateSection, insertPhase, loadRoadmap, parseRoadmap, phaseJson, removePhaseText, renumberText, roadmapPhase, setChecklist, setProgressRow, slugify } from "./roadmap.mjs";
 import { advanceState, initStateLocked, parseState, writeShared } from "./state.mjs";
@@ -343,20 +343,52 @@ export function requirementsVerb(g, sub, args) {
 
 // --- uat-passed (GSDC-16) ---
 
-// The `### N. Name` tests plus every other `###` heading under `## Tests` (malformed: never silently dropped).
+// The `### N. Name` tests plus every other `###` heading under the exact `## Tests` section (malformed: never silently
+// dropped). A heading outside that section, or under a differently named `## Tests (3)`, is no test (G095).
 export function parseUat(text) {
   const tests = [];
   const re = /^###\s+(\d+)\.\s*(.+?)\s*$/gm;
   const body = String(text ?? "").replace(/\r\n?/g, "\n");
-  const heads = [...body.matchAll(re)];
+  const found = /^##\s+Tests\s*$([\s\S]*?)(?=^#{1,2}\s|(?![\s\S]))/m.exec(body);
+  const section = found?.[1] ?? "";
+  const heads = [...section.matchAll(re)];
   heads.forEach((m, i) => {
-    const chunk = body.slice(m.index, heads[i + 1]?.index ?? body.length).split(/^##\s/m)[0];
+    const chunk = section.slice(m.index, heads[i + 1]?.index ?? section.length);
     const result = /^result:\s*\[?([a-z_]+)\]?/m.exec(chunk)?.[1] ?? "pending";
     tests.push({ number: Number(m[1]), name: m[2], result, blocked_by: /^blocked_by:\s*(.+)$/m.exec(chunk)?.[1]?.trim() ?? null });
   });
-  const section = /^##\s+Tests\s*$([\s\S]*?)(?=^##\s|(?![\s\S]))/m.exec(body)?.[1] ?? "";
   const malformed = section.split("\n").filter((l) => /^###/.test(l) && !/^###\s+\d+\.\s*\S/.test(l)).map((l) => l.trim());
-  return { tests, malformed };
+  return { tests, malformed, found: found !== null };
+}
+
+// G095: the passed UAT is the human verification. Its report becomes passed: the status is set, the human items are
+// dropped (the checker rejects passed with any left) and the behavior count is zero. Other keys are kept as written.
+const HUMAN_KEYS = new Set(["human_verification", "behavior_unverified", "behavior_unverified_items"]);
+export function canonicalVerification(text) {
+  const body = lf(text);
+  const m = /^---\n([\s\S]*?\n)---/.exec(body);
+  if (!m) return body;
+  const out = [];
+  let dropping = false;
+  for (const line of m[1].split("\n").slice(0, -1)) {
+    const key = /^([\w-]+):/.exec(line)?.[1];
+    if (key !== undefined) dropping = HUMAN_KEYS.has(key);
+    if (key === "status") out.push("status: passed");
+    else if (key === "behavior_unverified") out.push("behavior_unverified: 0");
+    else if (!dropping) out.push(line);
+  }
+  return `---\n${out.map((l) => `${l}\n`).join("")}---${body.slice(m[0].length)}`;
+}
+
+// Writes the canonical report only when it reads back as passed; otherwise the report stays as it was.
+function canonicalizeVerification(codeRoot, phase) {
+  const file = phaseFile(phase, "VERIFICATION.md");
+  const text = readIf(file);
+  if (text === null || readVerification(codeRoot, phase).status !== "human_needed") return false;
+  writeTextAtomic(file, canonicalVerification(text));
+  if (readVerification(codeRoot, phase).status === "passed") return true;
+  writeTextAtomic(file, text);
+  return false;
 }
 
 export function uatPassed(g, phase, { requireVerification, uatOnly }) {
@@ -364,9 +396,10 @@ export function uatPassed(g, phase, { requireVerification, uatOnly }) {
   const blockers = [];
   const checks = [];
   for (const name of uatFiles) {
-    const { tests, malformed } = parseUat(readIf(path.join(phase.dir, name)));
+    const { tests, malformed, found } = parseUat(readIf(path.join(phase.dir, name)));
     // GSDC-16: an empty, draft or malformed UAT is no passed human verification.
-    if (!tests.length) blockers.push({ file: name, reason: "no recognized test (### N. Name)" });
+    if (!found) blockers.push({ file: name, reason: "no ## Tests section" });
+    else if (!tests.length) blockers.push({ file: name, reason: "no recognized test (### N. Name)" });
     for (const h of malformed) blockers.push({ file: name, reason: `unrecognized test heading: ${h}` });
     for (const t of tests) {
       checks.push({ file: name, ...t });
@@ -375,12 +408,14 @@ export function uatPassed(g, phase, { requireVerification, uatOnly }) {
   }
   if (!uatFiles.length) blockers.push({ reason: "no UAT file" });
   const verificationFiles = listFiles(phase, "verification");
+  let canonicalized = false;
   if (requireVerification && !uatOnly) {
+    if (!blockers.length) canonicalized = canonicalizeVerification(g.codeRoot, phase);
     const v = readVerification(g.codeRoot, phase);
     if (v.status !== "passed") blockers.push({ reason: `verification status ${v.status}` });
   }
   const passed = blockers.length === 0;
-  return done({ passed, uat_files: uatFiles, verification_files: verificationFiles, checks, blockers }, passed ? 0 : 1);
+  return done({ passed, uat_files: uatFiles, verification_files: verificationFiles, checks, blockers, canonicalized }, passed ? 0 : 1);
 }
 
 // --- phase-plan-index (GSDC-36) ---
