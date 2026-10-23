@@ -5,6 +5,8 @@ import path from "node:path";
 import { loadConfig } from "../../harness/config.mjs";
 import { resolveInside } from "../../harness/lib/paths.mjs";
 import { fingerprint, readVerification } from "../../harness/gsd/status.mjs";
+import { filesUnder, ownsPath } from "../../harness/gsd/adapter-hooks.mjs";
+import { readPlan } from "../../harness/gsd/planning.mjs";
 import { readJsonIf, readText, writeTextAtomic } from "../../harness/lib/io.mjs";
 import { validateDraft, v1RequirementIds } from "../../harness/gsd/draft.mjs";
 export { v1RequirementIds };
@@ -49,12 +51,20 @@ export function summaryHeal(root, reply, { stale = false } = {}) {
   return { ok: false, healed: false, path: SUMMARY, error: why, code: 1 };
 }
 
+// The code a quick task may change: the files its plan owns, a directory entry standing for the files under it.
+// Planning files are not code; a file the run deleted is not listed (G107).
+function quickOwnedFiles(root, phase) {
+  const forms = loadConfig(root).adapter.ownership.owns_forms;
+  const owns = readPlan(phase, phase.padded)?.owns ?? [];
+  return owns.map((entry) => ownsPath(entry, forms)).filter((p) => p !== null && !p.startsWith(".planning/")).flatMap((p) => filesUnder(root, p));
+}
+
 // Quick reports use the same status/fingerprint contract as phase verification (GSDF-61).
 export function quickVerification(root, dir, action) {
   if (!/^\.planning\/quick\/\d{6}-[0-9a-z]{3}-[a-z0-9-]+$/.test(dir)) throw new Error("invalid quick directory");
   const id = dir.split("/").pop().slice(0, 10);
   const phase = { dir: resolveInside(root, dir), padded: id };
-  if (action === "fingerprint") return fingerprint(root, phase, [`${dir}/${id}-PLAN.md`, `${dir}/${id}-SUMMARY.md`]);
+  if (action === "fingerprint") return fingerprint(root, phase, [`${dir}/${id}-PLAN.md`, `${dir}/${id}-SUMMARY.md`, ...quickOwnedFiles(root, phase)]);
   const v = readVerification(root, phase);
   return { ...v, code: v.valid && !v.stale ? 0 : 1 };
 }

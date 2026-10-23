@@ -177,7 +177,7 @@ if (a.full) {
   const readback = await flow(["quick-verification", q.dir, "status"]);
   if (readback.code !== 0) return { status: "failed", reason: `${VERIFY} is ${readback.json?.status ?? "invalid"}: ${(readback.json?.problems ?? []).join("; ")}`, dir: q.dir };
   const vstatus = readback.json.status;
-  if (vstatus === "gaps_found" || vstatus === "human_needed") return { status: "needs-owner", stage: "Verify", reason: `quick verification ${vstatus}`, verification: VERIFY, dir: q.dir };
+  if (vstatus === "gaps_found" || vstatus === "human_needed") return { status: "needs-owner", stage: "Verify", reason: `quick verification ${vstatus}`, verification: VERIFY, dir: q.dir, gaps: readback.json.gaps, human_verification: readback.json.human_verification, behavior_unverified: readback.json.behavior_unverified };
   if (vstatus !== "passed") return { status: "failed", reason: `${VERIFY} has no valid status (${vstatus ?? "none"})`, dir: q.dir };
 }
 if (cfg.gsd.commit_policy.docs) {
