@@ -69,7 +69,8 @@ test("FLOW-24 transport loss on call 1: later calls null at once, no further cre
 test("FLOW-26 null reasons appear exactly in the journal and the agent done line", async () => {
   const big = "x".repeat(2000);
   const s = setup({
-    overlay: { wait_timeout_s: 5, max_prompt_bytes: 1500 },
+    // No stop limit: an armed watchdog waits for its stop instead of wait_timeout_s (G144), and this test pins the cap.
+    overlay: { wait_timeout_s: 5, max_prompt_bytes: 1500, agent_stop_s: 0 },
     responder: (a, text) => (text.includes("@hang@") ? [{ hang: true }] : text.includes("@err@") ? [{ error: "quota exceeded" }] : text.includes("@perm@") ? [{ permission: { name: "Bash" } }] : [{ reply: "" }]),
   });
   s.project.write("wf.js", `${meta()}for (const p of ["@empty@", "@hang@", "@err@", "@perm@", "${big}"]) await agent(p); await agent("t", { agentType: "nope" });`);

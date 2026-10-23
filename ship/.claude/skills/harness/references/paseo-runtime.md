@@ -95,7 +95,7 @@ worker provider `circle-agent`).
 | `max_subagents` | `20` | most agents of this caller running at once (spawn refuses beyond it; workflows queue beyond it) |
 | `max_live_subagents` | `40` | most live (running or idle, not archived) subagents of this caller; archive idle agents to free slots |
 | `max_agents_per_workflow` | `1000` | runaway-loop backstop for one workflow run including nested workflows |
-| `wait_timeout_s` | `3600` | longest single agent turn before the wait counts as failed |
+| `wait_timeout_s` | `3600` | longest single wait for an agent turn before it counts as failed; a workflow `agent()` with no `timeoutS` waits past it while the watchdog stop is armed (see Watchdog below) |
 | `schema_retries` | `2` | extra attempts in the same agent when its JSON does not match the schema |
 | `prime_role` | `off` | `two-turn`: workflow agents with a type get the role block alone as their first message (reply READY), then the task (section 4) |
 | `warmup` / `warmup_s` / `warmup_timeout_s` | `false` / `8` / `90` | the first agent of a run × type × model starts alone; the rest wait for its role turn (or `warmup_s`), at most `warmup_timeout_s` |
@@ -285,7 +285,10 @@ specific message each per prompt: the same tool with the same input `watchdog_re
 file read `watchdog_same_file_reads` (6) times (`reread`), `watchdog_reads_without_write` (40) reads or searches
 without a write (`piecemeal`). After `agent_nudge_s` (2700) of model time the agent gets one steering message to
 finish (`log watchdog: ... nudged`); after `agent_stop_s` (5400) it is archived and its `agent()` returns `null`
-with reason `watchdog stopped the agent after <N> s`. Read the agent's activity before resuming: a stopped agent
+with reason `watchdog stopped the agent after <N> s`. A workflow `agent()` with no `timeoutS` waits for that stop (or
+for the turn to end) in `wait_timeout_s` slices, so a turn of long tool calls is not cut at `wait_timeout_s`, and a
+nudge does not end the wait. With the stop off (`agent_stop_s` 0, or the watchdog off) `wait_timeout_s` caps the turn;
+an explicit `timeoutS` ends the call at its own value. Read the agent's activity before resuming: a stopped agent
 usually needs a smaller task or a script, not a rerun. A single tool call that runs longer than
 `agent_file_tool_stuck_s` (180, file tools) or `agent_tool_stuck_s` (900, shell and other tools) is interrupted
 once with a retry message; a second hung call stops the agent. A loop count resets after every write

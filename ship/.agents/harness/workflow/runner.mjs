@@ -145,8 +145,11 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
     const deadline = opts.timeoutS !== undefined ? t0 + opts.timeoutS * 1000 : null;
     const expired = () => deadline !== null && clock.now() >= deadline;
     const late = () => new Error(`no reply within ${opts.timeoutS} s`);
+    // G144: with the watchdog's stop armed, a call without timeoutS waits for its turn or for that stop (tool time is not
+    // model time, FLOW-29), so wait_timeout_s is only the length of each slice; unarmed, it caps the turn as before.
     const waitOpts = (before) => {
-      if (deadline === null) return { turnsBefore: before };
+      const armed = wd !== null && cfg.agent_stop_s > 0;
+      if (deadline === null) return { turnsBefore: before, ...(armed ? { keepWaiting: () => !wd.stopped } : {}) };
       const left = Math.ceil((deadline - clock.now()) / 1000);
       if (left <= 0) throw late();
       // The absolute deadline also bounds waitTurn's provider-retry pauses and continue prompts (CR-WFL-05).

@@ -135,7 +135,9 @@ export class Session {
 
   // PCLI-12..14: one finished turn, provider errors continued in the same agent, questions denied.
   // `deadline` (ms on session.clock) bounds every wait, retry pause and continuation; timeoutS bounds each wait.
-  async waitTurn(agentId, { timeoutS = this.cfg.wait_timeout_s, turnsBefore, deadline = null } = {}) {
+  // `keepWaiting()` (G144): a slice that ends with the agent still in its turn (a timeout, or a message that settled
+  // the wait as running) waits again while it returns true; the caller makes it false to end the wait.
+  async waitTurn(agentId, { timeoutS = this.cfg.wait_timeout_s, turnsBefore, deadline = null, keepWaiting = null } = {}) {
     let retries = 0;
     let questions = 0;
     let base = turnsBefore ?? this.turnsOf(agentId);
@@ -153,6 +155,7 @@ export class Session {
       if (waitMs <= 0) throw timedOut();
       const st = await this.client.waitForFinish(agentId, waitMs);
       if (leftMs() <= 0) throw timedOut();
+      if (keepWaiting && (st.status === "timeout" || st.status === "running") && keepWaiting()) continue;
       if (st.status === "idle") {
         await this.usage.settleTurn(agentId, base, st.final?.lastUsage, deadline ?? Infinity);
         if (leftMs() <= 0) throw timedOut();

@@ -126,7 +126,7 @@ Merge column: `entry` = one-level per-entry merge; `replace` = whole value repla
 | `max_subagents` | integer >= 1 | 20 | replace | M5, M6 |
 | `max_live_subagents` | integer >= 1, >= `max_subagents` | 40 | replace | M5, M6 |
 | `max_agents_per_workflow` | integer >= 1 | 1000 | replace | M6 |
-| `wait_timeout_s` | integer >= 1 | 3600 | replace | M4, M5, M6 |
+| `wait_timeout_s` | integer >= 1 (length of each wait slice; the turn cap where the wait is unarmed, see the note below the table) | 3600 | replace | M4, M5, M6 |
 | `schema_retries` | integer >= 0 | 2 | replace | M6 |
 | `prime_role` | `two-turn` or `off` | `off` | replace | M6 |
 | `warmup` | boolean | false | replace | M6 |
@@ -134,7 +134,7 @@ Merge column: `entry` = one-level per-entry merge; `replace` = whole value repla
 | `warmup_timeout_s` | integer >= 0 | 90 | replace | M6 |
 | `max_prompt_bytes` | integer >= 1 | 262144 | replace | M4 (size check) |
 | `agent_nudge_s` | integer >= 0 (0 disables) | 2700 | replace | M6 watchdog |
-| `agent_stop_s` | integer >= 0 (0 disables) | 5400 | replace | M6 |
+| `agent_stop_s` | integer >= 0 (0 disables; while armed it ends a workflow call's default wait, see the note below the table) | 5400 | replace | M6 |
 | `agent_tool_stuck_s` | integer >= 0 | 900 | replace | M6 |
 | `agent_file_tool_stuck_s` | integer >= 0 | 180 | replace | M6 |
 | `watchdog_repeat_calls` | integer >= 0 | 3 | replace | M6 |
@@ -152,6 +152,8 @@ Merge column: `entry` = one-level per-entry merge; `replace` = whole value repla
 | `platform_notes` | map platform -> string | `{win32: <PowerShell re-encoding note>}` | entry | M5 |
 | `adapter` | object, keys below | neutral adapter (ADPT-16) | entry | M8, M9, M10, M11 |
 | `gsd` | object, keys below | ADPT-13 defaults | entry | M9, M10 |
+
+Wait policy (G144, `wait_timeout_s` and `agent_stop_s`): a workflow `agent()` with no `timeoutS` waits for its turn in slices of `wait_timeout_s`. While the watchdog is armed (`watchdog_enabled` true and `agent_stop_s` above 0), the wait goes on past `wait_timeout_s` until the turn ends or the watchdog stops the agent after `agent_stop_s` of model time (tool time is not counted, FLOW-29); a nudge that settles a slice as running does not end it. Unarmed (watchdog off, or `agent_stop_s` 0), `wait_timeout_s` caps the turn as before. An explicit `timeoutS` on the call bounds the whole call at that value. The waits of `cmd-start.mjs`, `cmd-agents.mjs` and `compact.mjs` keep `wait_timeout_s` as their cap.
 
 Thinking levels (`THINKING_LEVELS`): `off, low, medium, high, xhigh, max`.
 
@@ -292,7 +294,7 @@ const session = await connect({ env, root, cfg, clock });   // or ctx.paseo() in
 | `requireCaller()` | returns the caller id or throws `UsageError("PASEO_AGENT_ID is not set: run ph from an agent inside Paseo, so every agent is created as its subagent")` (PCLI-06). |
 | `createAgent(spec)` | see below; returns the agent snapshot. |
 | `sendPrompt(agentId, text)` | size check (PCLI-05) then deliver. |
-| `waitTurn(agentId, {timeoutS = cfg.wait_timeout_s, turnsBefore, deadline = null} = {})` | `{text, usage, agent}` on a finished turn; throws `finished without a reply`, `no reply within <N> s`, `agent status <s>`, `agent error: <first line, 300 chars>`, `agent stopped: permission <name> was not granted` (PCLI-12..14). Transient errors are continued in the same agent after 30, 60, 120, 240, 300 s (`session.clock.sleep`), never quota/credit/billing/auth/permission errors; AskUserQuestion denied with `NO_OWNER_REPLY` up to 3 times. |
+| `waitTurn(agentId, {timeoutS = cfg.wait_timeout_s, turnsBefore, deadline = null, keepWaiting = null} = {})` | `{text, usage, agent}` on a finished turn; `keepWaiting()` (G144): a slice that ends with the agent still in its turn (`timeout`, or a message that settled it as `running`) waits again while it returns true. Throws `finished without a reply`, `no reply within <N> s`, `agent status <s>`, `agent error: <first line, 300 chars>`, `agent stopped: permission <name> was not granted` (PCLI-12..14). Transient errors are continued in the same agent after 30, 60, 120, 240, 300 s (`session.clock.sleep`), never quota/credit/billing/auth/permission errors; AskUserQuestion denied with `NO_OWNER_REPLY` up to 3 times. |
 | `waitForFinish(agentId, timeoutMs)` | raw `{status: idle\|error\|permission\|timeout\|<other>, final: snapshot\|null, error, lastMessage}`, no retry (for `send`, `watch`, compact watcher). |
 | `turnsOf(agentId)` | turns tracked so far (baseline before sending; PCLI-11). |
 | `replyText(agentId, lastMessage = null)` | the final reply text (structured response resolved by the CLI helper). |

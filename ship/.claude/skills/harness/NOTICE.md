@@ -123,9 +123,12 @@ Region inventory (source line ranges of the carried file; each region is replace
 - `references/team-examples.md` lines 132-133 -> 2 line(s): (c)
 - `references/team-examples.md` lines 135-135 -> 1 line(s): (c)
 - `references/team-examples.md` lines 146-147 -> 2 line(s): (a)
-- `references/paseo-runtime.md` lines 1-432 -> 425 line(s): (c) (d) (f)
+- `references/paseo-runtime.md` lines 1-432 -> 428 line(s): (c) (d) (f)
 
 `references/paseo-runtime.md` is rewritten as a whole for the new `ph` (category c, with d and f); it keeps the section
 numbering the method text refers to. Kit-authored update (2026-10-23, bug-hunt fix G145, FIX1-BRIEF): section 6-6 and
 the resume bullet of section 10 state the resume cache key as it now is (effective read-only mode and prompt-note digest
 in, raw model spelling out; skill files not keyed). The region inventory above records the new line count.
+Kit-authored update (2026-10-23, bug-hunt fix G144, feedback 0): the `wait_timeout_s` row of section 3 and the watchdog
+paragraph of section 6-4 state the wait policy of a workflow `agent()` without `timeoutS` (slices of `wait_timeout_s`
+until the watchdog stop, while the watchdog is armed; a cap otherwise).
