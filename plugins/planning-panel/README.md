@@ -7,8 +7,8 @@ tasks, must-haves, completion from the SUMMARY), a file tree with a Markdown rea
 
 Surfaces: a sidebar surface with a project picker (main checkout first, worktrees in a switcher), a workspace panel,
 and the command-center item `Open Planning`. `.planning/` is read with `node:fs` only, so the panel works under a
-daemon whose PATH has no node or npm. Agents, labels and titles are not shown here; the swarm map shows the agents
-`ph` spawns.
+daemon whose PATH has no node or npm. Agents, labels and titles are not shown here; the office plugin shows the agents
+of this host.
 
 ## Operator steps
 
