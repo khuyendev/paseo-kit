@@ -62,16 +62,20 @@ export function createJournal(journalPath) {
   };
 }
 
-// Journal records of a run directory, unparsable lines skipped (run-stats, watch tools).
+// Journal records of a run directory, unparsable lines skipped (run-stats, watch tools). A line that parses to a
+// non-object (`null`, a number) is no record either: every reader dereferences the entries it gets.
 export function readJournal(journalPath) {
   const out = [];
   for (const line of readText(journalPath).split("\n")) {
     if (!line.trim()) continue;
+    let e;
     try {
-      out.push(JSON.parse(line));
+      e = JSON.parse(line);
     } catch {
       // A torn last line of a killed runner.
+      continue;
     }
+    if (e !== null && typeof e === "object") out.push(e);
   }
   return out;
 }
