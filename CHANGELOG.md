@@ -6,6 +6,17 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Live model switch (kit feedback 45, owner 2026-10-23: "đổi được hẳn model khi nó đang chạy giữa session"). While a
+  workflow runs, its live agents follow their tier: the runner checks `.agents/harness.config.json` every 5 s and,
+  when a tier resolves to another model of the same provider, switches each live agent of it through the daemon's
+  `set_agent_model` (the Claude Code session keeps running; its next requests use the new model), plus the thinking
+  level when the tier names one; it logs `retier <label> <agent>: <old> -> <new>` and the journal entry lists the
+  switch. A tier moved to another provider leaves the running agent on its model (logged); a tier without a thinking
+  level keeps the agent's thinking. New verb `ph model <agentId|runId> <tier|provider/model> [--thinking LEVEL]`
+  switches one kit agent or every live agent of a run. Cost of a switched call is still priced at its start model.
+  Prompt text: ph skill, kit-adapter.md section 7. Measured check: tests/fb2/F45B.test.mjs on the fake daemon; not run
+  against the live daemon.
+
 - Kit feedback 37-56 from the Flutter port (owner 2026-10-23: "check và sửa bug luôn"; one Haiku agent per item on
   main, merged by the main session). Plan: `gsd.tracer_extra_files` (default 0) raises the tracer plan's file line;
   phase-level checker issues get their revision before a per-plan REVISION_CONFLICT stops the run (37); a checker

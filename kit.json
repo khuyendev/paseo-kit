@@ -391,6 +391,7 @@
     ".agents/harness/workflow/engine.mjs",
     ".agents/harness/workflow/journal.mjs",
     ".agents/harness/workflow/metrics.mjs",
+    ".agents/harness/workflow/retier.mjs",
     ".agents/harness/workflow/runner.mjs",
     ".agents/harness/workflow/runtime-bridge.mjs",
     ".agents/harness/workflow/schema.mjs",
