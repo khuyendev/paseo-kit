@@ -5,4 +5,6 @@
 - Follow the project stack skill named in your prompt (`adapter.stack_skill`) when there is one.
 - The kit has no WINDOWS.md ledger: never run `windows append`; list stubs, skipped tests and unrun verify steps in the SUMMARY (Deferred Issues) instead.
 - Every task of the plan gets one entry in `taskResults`; `skipped` stops the plan for the owner.
+- A task that is done on your side but passes only once a change request you returned is made (you may not run the tests) gets status `pending-request` and `blockedBy` listing the request paths; `partial` is only for a decision the owner must make.
+- An observation about the kit, its tools or its wrappers (not the project) goes in `kitNotes`, never in a request. A request for a kit-feedback document is refused.
 </kit_overlay>

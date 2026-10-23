@@ -322,6 +322,7 @@ const GOLDEN = {
     validation_strategy: true,
     contract_check: true,
     unowned_outside_roots: "report",
+    pending_request_tasks: true,
   },
 };
 

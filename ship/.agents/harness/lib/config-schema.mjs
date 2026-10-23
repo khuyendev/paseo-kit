@@ -178,6 +178,8 @@ export const SCHEMA = obj({
     contract_check: bool(),
     // Kit feedback 77: report = an unowned path outside adapter.ownership.source_roots is reported and left out of the wave commit; stop = every unowned path stops the run.
     unowned_outside_roots: str({ oneOf: ["report", "stop"] }),
+    // Kit feedback 79: executor task status pending-request; a partial task that waits only for requests the run routed is no owner decision.
+    pending_request_tasks: bool(),
   }),
 });
 

@@ -62,8 +62,9 @@ const SEVERITIES = ["critical", "high", "medium", "low", "info"];
 const EXEC_SCHEMA = {
   type: "object",
   properties: {
-    taskResults: { type: "array", items: { type: "object", properties: { task: { type: "string" }, status: { type: "string", enum: ["implemented", "partial", "blocked", "skipped"] }, evidence: { type: "string" } }, required: ["task", "status"] } },
+    taskResults: { type: "array", items: { type: "object", properties: { task: { type: "string" }, status: { type: "string", enum: ["implemented", "partial", "blocked", "skipped"] }, evidence: { type: "string" }, blockedBy: { type: "array", items: { type: "string" } } }, required: ["task", "status"] } },
     deviations: { type: "array" },
+    kitNotes: { type: "array", items: { type: "string" } },
     resolvedRequests: { type: "array", items: { type: "string" } },
     requests: { type: "array", items: { type: "object", properties: { path: { type: "string" }, change: { type: "string" }, reason: { type: "string" } }, required: ["path", "change"] } },
   },
@@ -110,6 +111,9 @@ let pendingRequests = {};
 const skipped = [];
 const events = [];
 const worktrees = {};
+// Kit feedback 79: tasks accepted as done because a request the run routed is pending, and what executors observed about the kit.
+const pendingTasks = [];
+const kitNotes = [];
 // Kit feedback 75: executor worktrees are removed after their plan's commit (discardLanded) and when a cleared halt is dispatched
 // again; the result lists what went and what stays.
 const discarded = [];
@@ -126,7 +130,7 @@ const treeReport = () => {
   const left = Object.entries(worktrees).filter(([plan]) => !discarded.includes(plan)).map(([plan, path]) => ({ plan, path, ...(keptTrees[plan] ? { why: keptTrees[plan] } : {}) }));
   return discarded.length || left.length ? { discarded, kept: left } : null;
 };
-const result = (status, extra = {}) => ({ status, phaseDir, mode: execMode, isolation: g.isolation, waves: waveResults, sharedChanges, ...(Object.keys(pendingRequests).length ? { requests: pendingRequests } : {}), ...(skipped.length ? { skipped } : {}), ...(treeReport() ? { worktrees: treeReport() } : {}), ...(handEdits ? { handEdits } : {}), ...(reported.outsideRoots.size ? { outsideRoots: [...reported.outsideRoots] } : {}), ...(reported.eolOnly.size ? { eolOnly: [...reported.eolOnly] } : {}), events, ...extra });
+const result = (status, extra = {}) => ({ status, phaseDir, mode: execMode, isolation: g.isolation, waves: waveResults, sharedChanges, ...(Object.keys(pendingRequests).length ? { requests: pendingRequests } : {}), ...(skipped.length ? { skipped } : {}), ...(treeReport() ? { worktrees: treeReport() } : {}), ...(handEdits ? { handEdits } : {}), ...(reported.outsideRoots.size ? { outsideRoots: [...reported.outsideRoots] } : {}), ...(reported.eolOnly.size ? { eolOnly: [...reported.eolOnly] } : {}), ...(pendingTasks.length ? { pendingRequestTasks: pendingTasks } : {}), ...(kitNotes.length ? { kitNotes } : {}), events, ...extra });
 const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reason, ...extra });
 const digestOf = async (input) => (await flow(["digest"], input)).json?.hash ?? "none";
 
@@ -138,7 +142,10 @@ const metricsOn = g.review_metrics;
 const PLAN_DEFECT_KINDS = ["wrong-api", "owns-reach", "missing-dependency", "other"];
 const PLAN_DEFECTS_SCHEMA = { type: "array", items: { type: "object", properties: { kind: { type: "string", enum: PLAN_DEFECT_KINDS }, evidence: { type: "string" } }, required: ["kind"] } };
 const withDefects = (schema) => (metricsOn ? { ...schema, properties: { ...schema.properties, plan_defects: PLAN_DEFECTS_SCHEMA } } : schema);
-const execSchema = withDefects(EXEC_SCHEMA);
+// Kit feedback 79 (gsd.pending_request_tasks): a task done on the executor's side that passes only once a routed request is made.
+const pendingOn = g.pending_request_tasks !== false;
+const execBase = pendingOn ? { ...EXEC_SCHEMA, properties: { ...EXEC_SCHEMA.properties, taskResults: { ...EXEC_SCHEMA.properties.taskResults, items: { ...EXEC_SCHEMA.properties.taskResults.items, properties: { ...EXEC_SCHEMA.properties.taskResults.items.properties, status: { type: "string", enum: ["implemented", "pending-request", "partial", "blocked", "skipped"] } } } } } } : EXEC_SCHEMA;
+const execSchema = withDefects(execBase);
 const fixerSchema = withDefects(FIXER_SCHEMA);
 const verdictItems = VERDICT_SCHEMA.properties.verdicts.items;
 const verdictSchema = metricsOn ? { ...VERDICT_SCHEMA, properties: { verdicts: { ...VERDICT_SCHEMA.properties.verdicts, items: { ...verdictItems, properties: { ...verdictItems.properties, plan_catchable: { type: "string", enum: ["yes", "no"] }, catch_reason: { type: "string" } } } } } } : VERDICT_SCHEMA;
@@ -149,7 +156,7 @@ let defectWrites = Promise.resolve();
 // The plan defects a reply names, plus one owns-reach defect per request for a file outside the agent's owns.
 const defectsOf = (res) => [
   ...(Array.isArray(res?.plan_defects) ? res.plan_defects : []).filter((d) => PLAN_DEFECT_KINDS.includes(d?.kind)).map((d) => ({ kind: d.kind, evidence: String(d.evidence ?? "").slice(0, 300) })),
-  ...(Array.isArray(res?.requests) ? res.requests : []).filter((rq) => typeof rq?.path === "string" && rq.path.trim()).map((rq) => ({ kind: "owns-reach", evidence: `request for ${rq.path.trim().replace(/\\/g, "/")}` })),
+  ...(Array.isArray(res?.requests) ? res.requests : []).filter((rq) => typeof rq?.path === "string" && rq.path.trim() && !isKitDoc(rq.path)).map((rq) => ({ kind: "owns-reach", evidence: `request for ${rq.path.trim().replace(/\\/g, "/")}` })),
 ];
 // A resumed run keeps the first run's id and skips what it already committed, so it starts from that run's record: the events
 // of skipped work stay, and a replayed event replaces its earlier copy. An event is known by its kind, wave, round, plan, fixer,
@@ -422,10 +429,12 @@ const execRuntime = (t) => [
   "- Rule 3 never covers package installs: a needed install, or one that fails, returns a blocking human checkpoint (task status blocked, deviation {rule: 3, kind: checkpoint}).",
   "- Rule 4 (architectural change): stop the task and return status partial with the decision needed in the deviation notes ({rule: 4, note}).",
   "- A change needed in a file you do not own: do not edit it; return it in requests [{path, change, reason}].",
+  pendingOn ? "- A task that is done on your side but whose test or check passes only once a request you returned is made (you may not run the tests): status pending-request with blockedBy [the request paths], not partial. partial is only for a decision the owner must make." : null,
+  "- Observations about the kit, its tools or its wrappers (not about the project) go in kitNotes [string]; never in a request: a request for a kit-feedback document is refused.",
   "- Before you return, delete every file you created outside owns (your SUMMARY excepted): scratch files are cleanup, not a Rule-4 decision.",
   "- Never commit, stage or stash; never write STATE, ROADMAP or REQUIREMENTS.",
   "- The orchestrator's gate runs the build and the tests after the wave: do not run them yourself.",
-  "Return JSON {taskResults: [{task, status: implemented|partial|blocked|skipped, evidence}], deviations: [{rule, kind, note}], requests: [{path, change, reason}]}.",
+  `Return JSON {taskResults: [{task, status: implemented|${pendingOn ? "pending-request|" : ""}partial|blocked|skipped, evidence${pendingOn ? ", blockedBy" : ""}}], deviations: [{rule, kind, note}], requests: [{path, change, reason}], kitNotes: [string]}.`,
   metricsOn ? DEFECT_NOTE : null,
   "</kit_executor_runtime>",
 ].filter(Boolean).join("\n");
@@ -448,9 +457,10 @@ const classify = (reason) => {
   return { class: "unknown" };
 };
 // `defects`: the plan defects behind the halt (kit feedback 64), recorded as a halt event.
-async function halt(id, why, defects = []) {
-  // The halted plan's worktree stays until the halt is cleared and the plan is dispatched again (kit feedback 75).
-  await flow(["write", haltPath(id)], JSON.stringify({ plan: id, reason: why, runId, ...(worktrees[id] ? { worktree: worktrees[id] } : {}) }, null, 2));
+async function halt(id, why, defects = [], extra = {}) {
+  // The halted plan's worktree stays until the halt is cleared and the plan is dispatched again (kit feedback 75). `finished`
+  // (kit feedback 79): the tree holds a complete executor result, so `ph gsd halt clear --resume` may transfer it.
+  await flow(["write", haltPath(id)], JSON.stringify({ plan: id, reason: why, runId, ...(worktrees[id] ? { worktree: worktrees[id] } : {}), ...extra }, null, 2));
   await defectEvent("halt", { plan: id, reason: String(why).slice(0, 300) }, defects);
   return { plan: id, halted: true, reason: why, ...(pendingRequests[id]?.length ? { requests: pendingRequests[id] } : {}) };
 }
@@ -460,11 +470,24 @@ async function headNow(cwd) { return (await shell(["git", "rev-parse", "HEAD"], 
 const ownCommits = new Set();
 const movedBy = (now, before) => now !== before && !ownCommits.has(now);
 const slashPath = (p) => String(p).trim().replace(/\\/g, "/").replace(/^\.\//, "");
+// Kit feedback 79: the project's kit-feedback document is the orchestrator's; a request against it is an observation about the kit.
+function isKitDoc(p) { return /(^|\/)kit-feedback\.md$/i.test(String(p).trim().replace(/\\/g, "/")); }
+// What an agent observed about the kit: logged, returned in the result, never a change to a project file.
+function noteKit(plan, res) {
+  const asked = (res?.requests ?? []).filter((rq) => rq && typeof rq.path === "string" && isKitDoc(rq.path));
+  const notes = [...(Array.isArray(res?.kitNotes) ? res.kitNotes.filter((n) => typeof n === "string" && n.trim()).map((n) => ({ plan, note: n.trim() })) : []), ...asked.map((rq) => ({ plan, note: String(rq.change ?? rq.reason ?? "").trim(), from: "request", path: slashPath(rq.path) }))];
+  for (const n of notes) {
+    if (kitNotes.some((k) => k.plan === n.plan && k.note === n.note)) continue;
+    kitNotes.push(n);
+    log(`kit note ${plan}${n.from ? ` (a request for ${n.path} was refused)` : ""}: ${n.note}`);
+  }
+}
 // G072: a request goes to the plan owning its path most specifically (adapter owns forms, path boundaries). G089: a
 // path no open plan of the phase owns (no plan, or one already committed) is a shared change, applied before the next
 // gate by the integration fixer and committed with the wave.
 async function routeRequests(t, res) {
-  const list = (res.requests ?? []).filter((rq) => rq && typeof rq.path === "string" && rq.path.trim()).map((rq) => ({ ...rq, path: slashPath(rq.path) }));
+  noteKit(t.plan, res);
+  const list = (res.requests ?? []).filter((rq) => rq && typeof rq.path === "string" && rq.path.trim() && !isKitDoc(rq.path)).map((rq) => ({ ...rq, path: slashPath(rq.path) }));
   if (!list.length) return;
   const others = allTasks.filter((x) => x.plan !== t.plan).map((x) => ({ id: x.plan, owns: x.owns ?? [], summary: x.summary }));
   const owners = (await flow(["owners"], { paths: list.map((rq) => rq.path), plans: others })).json?.owners ?? {};
@@ -474,7 +497,39 @@ async function routeRequests(t, res) {
     else sharedChanges.push({ from: t.plan, ...rq, applied: false });
   }
 }
-const ownerDecision = (res) => (res.deviations ?? []).find((x) => Number(x.rule) === 4 || x.kind === "checkpoint") ?? (res.taskResults ?? []).find((x) => x.status === "partial" || x.status === "blocked") ?? null;
+// Kit feedback 79 (gsd.pending_request_tasks): the request paths the run holds for `plan` (queued for another plan's owner, or for
+// the shared-change fixer), which are applied before the gate.
+const routedBy = (plan) => new Set([...Object.values(pendingRequests).flat(), ...sharedChanges].filter((q) => q.from === plan && q.path).map((q) => slashPath(q.path)));
+const PATH_TOKEN = /[\w.@-]+(?:\/[\w.@-]+)+/g;
+// A task that waits only for requests the run routed: it names them in blockedBy, or (partial) its evidence names at least one of
+// them and no other path. Returns the request paths, or null.
+function waitsOnRouted(x, routed) {
+  if (!pendingOn || !routed.size) return null;
+  const named = (Array.isArray(x.blockedBy) ? x.blockedBy : []).map(slashPath).filter(Boolean);
+  if (named.length) return named.every((p) => routed.has(p)) ? named : null;
+  if (x.status !== "partial") return null;
+  const text = slashPath(String(x.evidence ?? ""));
+  const hit = [...routed].filter((p) => text.includes(p) || text.includes(p.split("/").pop()));
+  if (!hit.length) return null;
+  const others = (text.match(PATH_TOKEN) ?? []).filter((tok) => ![...routed].some((p) => p.endsWith(tok) || tok.endsWith(p)));
+  return others.length ? null : hit;
+}
+// `plan`: whose routed requests excuse a partial task. The tasks accepted that way are kept in `pendingTasks`.
+const ownerDecision = (res, plan = null) => {
+  const dev = (res.deviations ?? []).find((x) => Number(x.rule) === 4 || x.kind === "checkpoint");
+  if (dev) return dev;
+  const routed = plan ? routedBy(plan) : new Set();
+  for (const x of res.taskResults ?? []) {
+    if (x.status !== "partial" && x.status !== "blocked" && x.status !== "pending-request") continue;
+    const on = x.status === "blocked" ? null : waitsOnRouted(x, routed);
+    if (on) {
+      if (!pendingTasks.some((p) => p.plan === plan && p.task === x.task)) { pendingTasks.push({ plan, task: x.task, blockedBy: on, via: Array.isArray(x.blockedBy) && x.blockedBy.length ? "blockedBy" : "evidence" }); ev(`pending-request ${plan} ${x.task}`); }
+      continue;
+    }
+    return x.status === "pending-request" ? { ...x, note: `task ${x.task} is pending-request but names no request this plan routed` } : x;
+  }
+  return null;
+};
 const clearResolved = (id, res) => { if (pendingRequests[id]) pendingRequests[id] = pendingRequests[id].filter((q) => !(res?.resolvedRequests ?? []).map(slashPath).includes(slashPath(q.path))); };
 // The owner's answers to earlier halts of a plan (ph gsd halt clear), handed to its next executor (G055).
 async function haltAnswers(id) {
@@ -498,7 +553,32 @@ async function discardHalted(id) {
     log(`plan ${id}: worktree of the cleared halt ${tree}: ${r.json?.removed ? "discarded" : r.json?.gone ? "already gone" : `kept (${r.json?.why ?? r.json?.error ?? `exit ${r.code}`})`}`);
   }
 }
+// Kit feedback 79: `ph gsd halt clear --resume` marks the latest answer of a plan: the halted executor's finished worktree is
+// transferred as it is. Returns that worktree, or null (no such answer, or the tree is gone: the plan is dispatched again).
+async function resumableTree(t) {
+  if (!worktreeMode) return null;
+  const r = await flow(["read", `${phaseDir}/halt-answers.json`]);
+  let last = null;
+  try { last = r.json?.exists ? JSON.parse(r.json.text).filter((x) => x.plan === t.plan).at(-1) ?? null : null; } catch { last = null; }
+  if (!last?.resume || !last.haltWorktree) return null;
+  const wt = slashPath(last.haltWorktree);
+  const dir = slashPath(cfg.worktree_dir);
+  const summaryAt = `${wt}/${t.summary}`;
+  if (!(`/${wt}`.includes(`/${dir}/`)) || wt.includes("..") || !(await flow(["exists", summaryAt])).json?.exists?.[summaryAt]) {
+    log(`plan ${t.plan}: the worktree ${wt} of the cleared halt (--resume) is gone or holds no SUMMARY; the plan is dispatched again`);
+    return null;
+  }
+  return wt;
+}
 async function dispatch(t, waveId) {
+  const kept = await resumableTree(t);
+  if (kept) {
+    await flow(["remove", haltPath(t.plan)]);
+    worktrees[t.plan] = kept;
+    ev(`resume ${waveId} ${t.plan}`);
+    log(`plan ${t.plan}: halt cleared with --resume; the finished worktree ${kept} is transferred, no executor runs`);
+    return { plan: t.plan, ok: true, wt: kept, resumed: true };
+  }
   await discardHalted(t.plan);
   await flow(["remove", haltPath(t.plan)]);
   const before = await headNow();
@@ -529,14 +609,14 @@ async function dispatch(t, waveId) {
   }
   await routeRequests(t, res);
   clearResolved(t.plan, res);
-  const decision = ownerDecision(res);
-  if (decision) return { ...(await halt(t.plan, `owner decision needed: ${decision.note ?? decision.evidence ?? decision.status}`, defectsOf(res))), decision };
+  const decision = ownerDecision(res, t.plan);
+  if (decision) return { ...(await halt(t.plan, `owner decision needed: ${decision.note ?? decision.evidence ?? decision.status}`, defectsOf(res), { finished: hasSummary })), decision };
   // G058: one result per plan task; an empty list or a skipped task is no finished plan.
   const want = planInfo(t.plan).task_count;
   const got = (res.taskResults ?? []).length;
   if (!got || (Number.isInteger(want) && got < want)) return { ...(await halt(t.plan, `executor reported ${got} task result(s)${Number.isInteger(want) ? ` for ${want} task(s)` : ""}`, defectsOf(res))), failed: true };
   const skippedTask = res.taskResults.find((x) => x.status === "skipped");
-  if (skippedTask) return { ...(await halt(t.plan, `owner decision needed: task ${skippedTask.task} was skipped${skippedTask.evidence ? ` (${skippedTask.evidence})` : ""}`, defectsOf(res))), decision: skippedTask };
+  if (skippedTask) return { ...(await halt(t.plan, `owner decision needed: task ${skippedTask.task} was skipped${skippedTask.evidence ? ` (${skippedTask.evidence})` : ""}`, defectsOf(res), { finished: hasSummary })), decision: skippedTask };
   if (!hasSummary) return { ...(await halt(t.plan, `no SUMMARY at ${t.summary}`, defectsOf(res))), failed: true };
   return { plan: t.plan, ok: true, wt };
 }
@@ -716,7 +796,7 @@ async function fixRounds(waveId, tasks, first, label, tail, { gate = () => runGa
       await routeRequests(r.t ?? { plan: r.id ?? "integration" }, r.result);
       if (!(await saveProgress())) return red("could not persist pending change requests");
       if (r.kind === "executor") {
-        const decision = ownerDecision(r.result);
+        const decision = ownerDecision(r.result, r.id);
         if (decision) decisions.push({ id: r.id, decision });
       } else if (r.result.status !== "fixed") soft.push({ id: r.id, why: `${who} unresolved (${r.result.remaining_failures ?? "?"} failures remain)${r.result.evidence ? `: ${r.result.evidence}` : ""}` });
       if (r.id) clearResolved(r.id, r.result);
@@ -951,7 +1031,7 @@ async function grantedFiles() {
 }
 // The plans of the phase owning the files a fixer asked for (plan null: no plan owns the file).
 async function askedOwners(requests) {
-  const list = (requests ?? []).filter((rq) => rq && typeof rq.path === "string" && rq.path.trim()).map((rq) => ({ ...rq, path: slashPath(rq.path) }));
+  const list = (requests ?? []).filter((rq) => rq && typeof rq.path === "string" && rq.path.trim() && !isKitDoc(rq.path)).map((rq) => ({ ...rq, path: slashPath(rq.path) }));
   if (!list.length) return [];
   const plans = allTasks.map((x) => ({ id: x.plan, owns: x.owns ?? [], summary: x.summary }));
   const owners = (await flow(["owners"], { paths: list.map((rq) => rq.path), plans })).json?.owners ?? {};
