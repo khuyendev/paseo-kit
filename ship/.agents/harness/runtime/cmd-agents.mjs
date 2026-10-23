@@ -8,7 +8,7 @@ import { readJsonIf, writeJsonAtomic } from "../lib/io.mjs";
 import { id8, isInside, resolveInside } from "../lib/paths.mjs";
 import { pidAlive } from "../lib/proc.mjs";
 import { resultJson } from "./result.mjs";
-import { readJournal } from "../workflow/journal.mjs";
+import { RUN_FILES, readJournal } from "../workflow/journal.mjs";
 import { appendRecords, readLedger, runRecord } from "../workflow/metrics.mjs";
 import { readPrompt, waitHint } from "./start.mjs";
 
@@ -187,10 +187,18 @@ async function runAgents(ctx, session, own) {
   // run.json and, with the run, into the metrics ledger at once; a killed runner never records itself.
   const finish = () => {
     if (info.status !== "running") return;
-    const stopped = { ...info, status: "stopped", endedAt: new Date(ctx.clock.now()).toISOString(), stopReason: stopReasonOf(ctx.opts.reason) };
-    writeJsonAtomic(file, stopped);
+    // The runner can end the run after the read above (G143): the kill then fails or finds nothing, and the run keeps the
+    // status, stats and ledger line it ended with. Only a run still running is marked stopped.
+    const fresh = readJsonIf(file);
+    if (!fresh) return;
+    const ended = fresh.status !== "running";
+    const run = ended ? fresh : { ...fresh, status: "stopped", endedAt: new Date(ctx.clock.now()).toISOString(), stopReason: stopReasonOf(ctx.opts.reason) };
+    if (!ended) writeJsonAtomic(file, run);
     try {
-      if (!readLedger(ctx.root).records.some((r) => r.runId === runId)) appendRecords(ctx.root, [runRecord(runId, stopped, readJournalIf(path.join(path.dirname(file), "journal.jsonl")), null)]);
+      if (!readLedger(ctx.root).records.some((r) => r.runId === runId)) {
+        const dir = path.dirname(file);
+        appendRecords(ctx.root, [runRecord(runId, run, readJournalIf(path.join(dir, RUN_FILES.journal)), ended ? readJsonIf(path.join(dir, RUN_FILES.result)) : null)]);
+      }
     } catch (e) {
       ctx.out(`run metrics not recorded: ${errText(e)}`);
     }
