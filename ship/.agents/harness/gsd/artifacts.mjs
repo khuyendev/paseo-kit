@@ -50,6 +50,9 @@ export function verifyKeyLinks(g, plans, allPlans) {
   if (!items.length) throw none("no must_haves.key_links in scope");
   const results = items.map((k) => {
     const base = { plan: k.plan, from: k.from, to: k.to, via: k.via ?? null, pattern: k.pattern ?? null };
+    // A link needs a source and something to look for: a missing `to` would otherwise match every source (G093).
+    const given = (v) => String(v ?? "").trim() !== "";
+    if (!given(k.from) || !(given(k.to) || given(k.pattern))) return { ...base, status: "invalid_entry", verified: false, detail: "key link needs a from and a to or a pattern" };
     const from = inRoot(g.codeRoot, k.from);
     if (!from) return { ...base, status: "path_rejected", verified: false, detail: "source path rejected: outside the code root" };
     if (k.to && /[/\\.]/.test(String(k.to)) && !inRoot(g.codeRoot, k.to)) return { ...base, status: "path_rejected", verified: false, detail: "target path rejected: outside the code root" };
@@ -74,7 +77,8 @@ export function verifyKeyLinks(g, plans, allPlans) {
     const ok = src.includes(String(k.to ?? ""));
     return { ...base, status: ok ? "verified" : "not_found", verified: ok, detail: ok ? "Target referenced in source" : "Target not referenced in source" };
   });
-  const hard = results.filter((r) => !["verified", "pending", "pattern_neutralized"].includes(r.status));
+  // Pending is nonblocking (a later wave writes the source); a neutralized pattern never verifies, so it fails (G093).
+  const hard = results.filter((r) => !["verified", "pending"].includes(r.status));
   const allVerified = results.length > 0 && hard.length === 0 && results.every((r) => r.verified);
   return done({ all_verified: allVerified, verified: results.filter((r) => r.verified).length, total: results.length, results, links: results }, hard.length ? 1 : 0);
 }
