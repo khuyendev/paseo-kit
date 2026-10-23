@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { writeJsonAtomic, writeTextAtomic } from "../lib/io.mjs";
 import { samePath } from "../lib/paths.mjs";
+import { textDigest } from "../lib/hash.mjs";
 import { done, fail, idList, isFile, lf, nowIso, readIf, rel, today } from "./common.mjs";
 import { comparePhase, findPhase, haltIds, listFiles, padPhase, phasesDir, planIds, readPlans, sharedFile, summaryIds, summaryPath } from "./planning.mjs";
 import { loadRequirements, requirementView, setComplete } from "./requirements.mjs";
@@ -348,10 +349,12 @@ export function planIndex(g, phase) {
   const warnings = [];
   const rows = plans.map((p) => {
     for (const d of p.dependsOn) if (!ids.has(d)) warnings.push(`${p.id}: depends_on ${d} does not resolve to a plan`);
+    // G057: a plan whose frontmatter did not parse has defaulted wave, owns and dependencies; it is never runnable.
+    if (p.error) warnings.push(`${p.id}: frontmatter ${p.error}; not runnable until it parses`);
     const blockedBy = p.dependsOn.filter((d) => ids.has(d) && (halts.has(d) || !summaries.has(d)));
     const hasSummary = summaries.has(p.id);
     const halted = halts.has(p.id);
-    return { id: p.id, wave: p.wave, depends_on: p.dependsOn, files_modified: p.filesModified, has_summary: hasSummary, halted, blocked_by: blockedBy, ready: !hasSummary && !halted && blockedBy.length === 0, gap_closure: p.fm.gap_closure === true };
+    return { id: p.id, wave: p.wave, depends_on: p.dependsOn, files_modified: p.filesModified, has_summary: hasSummary, halted, blocked_by: blockedBy, ready: !hasSummary && !halted && !p.error && blockedBy.length === 0, gap_closure: p.fm.gap_closure === true, task_count: p.tasks.length, plan_hash: textDigest(p.text).slice(0, 12), ...(p.error ? { error: p.error } : {}) };
   });
   const waves = [...new Set(rows.map((r) => r.wave))].sort((a, b) => a - b).map((w) => ({ wave: w, plans: rows.filter((r) => r.wave === w).map((r) => r.id) }));
   return done({ phase: phase.number, plans: rows, waves, incomplete: rows.filter((r) => !r.has_summary).map((r) => r.id), runnable: rows.filter((r) => r.ready).map((r) => r.id), warnings });

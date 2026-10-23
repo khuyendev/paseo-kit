@@ -45,7 +45,16 @@ const RESPONSES = {
     if (r.assignments.length !== req.failures.length) return `${r.assignments.length} assignment(s) for ${req.failures.length} failure(s)`;
     const ids = req.plans.map((p) => p?.id);
     const badAt = r.assignments.findIndex((a) => !isObj(a) || extraKey(a, ["failure", "plan"]) || !("failure" in a) || !(a.plan === null || (isStr(a.plan) && ids.includes(a.plan))));
-    return badAt >= 0 ? `assignments[${badAt}] needs exactly failure and plan (a requested plan id or null)` : null;
+    if (badAt >= 0) return `assignments[${badAt}] needs exactly failure and plan (a requested plan id or null)`;
+    // G077: `failure` names the failure it answers, by its request id (or, from an older script, by echoing the text
+    // of the failure at the same position); every failure is answered once.
+    const fids = req.failures.map((f) => f?.id).filter((id) => id !== undefined);
+    const keyOf = (a, i) => (fids.includes(a.failure) ? a.failure : a.failure === req.failures[i]?.text ? fids[i] ?? `#${i}` : null);
+    const keys = r.assignments.map(keyOf);
+    const unknownAt = keys.findIndex((k) => k === null);
+    if (unknownAt >= 0) return `assignments[${unknownAt}].failure ${JSON.stringify(r.assignments[unknownAt].failure)} is not a requested failure id`;
+    const dup = keys.find((k, i) => keys.indexOf(k) !== i);
+    return dup !== undefined ? `failure ${dup} is answered more than once` : null;
   },
 };
 

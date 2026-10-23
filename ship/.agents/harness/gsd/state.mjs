@@ -248,7 +248,14 @@ export function stateVerb(g, sub, opts) {
     },
     wave: (s) => {
       if (!opts.phase || !opts.wave) throw fail("state wave needs --phase and --wave");
-      appendEntry(s, "Wave log", `${today()} phase ${opts.phase} wave ${opts.wave}: ${text()}`);
+      const body = text();
+      // G092: a resumed run tracking the same wave and plans again replaces that line (newer verify and evidence);
+      // a recovery that tracks other plans of the wave still adds its own line.
+      const key = `phase ${opts.phase} wave ${opts.wave}: ${lf(body).split("\n")[0].split("; ")[0]}`;
+      const lines = s.sections.get("Wave log") ?? [];
+      const at = lines.findIndex((l) => /^- \d{4}-\d{2}-\d{2} /.test(l) && l.slice(13).split("; ")[0] === key);
+      if (at >= 0 && !lf(body).trim().includes("\n")) lines[at] = `- ${today()} phase ${opts.phase} wave ${opts.wave}: ${body.trim()}`;
+      else appendEntry(s, "Wave log", `${today()} phase ${opts.phase} wave ${opts.wave}: ${body}`);
     },
     decision: (s) => appendEntry(s, "Decisions", `${today()} (${opts.by ?? "owner"}): ${text()}`),
     override: (s) => appendEntry(s, "Overrides", `${today()}: ${text()}`),

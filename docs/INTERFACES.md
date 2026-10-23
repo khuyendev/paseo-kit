@@ -161,7 +161,7 @@ Thinking levels (`THINKING_LEVELS`): `off, low, medium, high, xhigh, max`.
 | --- | --- | --- |
 | `commands` | `{build: argv\|null, test: argv\|null, build_timeout_s: int>=1, test_timeout_s: int>=1, gates: [{name, argv}], verify: {<runner>: {argv, timeout_s}}}`; argv = non-empty string[] | `{build: null, test: null, build_timeout_s: 300, test_timeout_s: 600, gates: [], verify: {}}` |
 | `verify_vocabulary` | map kind -> `{prefix: string, parser: path\|null, resolver: path\|null, runner: <key of commands.verify>\|null, evidence_parser: path\|null, exit_code_sufficient: bool}`; `runner: null` = core built-in (`build` -> `commands.build`, `cmd` -> the obligation argument run as argv) | `build` (`prefix: "build"`) and `cmd` (`prefix: "cmd:"`), both all-null with `exit_code_sufficient: true` |
-| `ownership` | `{owns_forms: [{prefix, maps_to}], shared: {globs: string[], predicate: path\|null}, source_roots: string[]}` | `{owns_forms: [{prefix: "Path:", maps_to: "<path>"}], shared: {globs: [], predicate: null}, source_roots: []}` |
+| `ownership` | `{owns_forms: [{prefix, maps_to}], shared: {globs: string[], predicate: path\|null}, source_roots: string[], ignore: string[]}` | `{owns_forms: [{prefix: "Path:", maps_to: "<path>"}], shared: {globs: [], predicate: null}, source_roots: [], ignore: []}` |
 | `review_lenses` | `[{name, text, stage?: skeleton\|plan_review\|code, applies_to?: string[]}]` (stage default `code`, applies_to default all files) | `[]` (code review then uses the kit lens `correctness`, owned by gsd-flows) |
 | `syntax_checkers` | map extension (`.ext`) -> `{argv, timeout_s?: int>=1, max_parallel?: int>=1}` (consumer defaults: hook budget, 3) | `{}` |
 | `instructions` | string[] repo-relative paths | `[]` |

@@ -12,7 +12,7 @@ import { evidenceVerdict, requiredSteps, executionProblem, gateStepName, obligat
 import { gateObligation } from "../../harness/adapter/contract.mjs";
 import { sha256 } from "../../harness/lib/hash.mjs";
 import { gitLines, head } from "./flow-git.mjs";
-import { contentHash, owned, ownsPath, ownsPrefixes } from "./flow-owns.mjs";
+import { contentHash, owned, ownsPath, ownsPrefixes, specificOwners } from "./flow-owns.mjs";
 
 const TIMEOUT_CODE = 124;
 const EXCERPT_LINES = 40;
@@ -69,36 +69,78 @@ export function inputsOf(root, scopes) {
     else if (fs.statSync(abs).isFile()) files[toSlash(rel)] = contentHash(abs);
   }
   for (const rel of scopes) if (!/[?*\[\]]/.test(rel) && !fs.existsSync(resolveInside(root, rel))) files[toSlash(rel)] = null;
-  // CONF-12: configuration identity comes from the validated shared loader, never raw config files.
+  // CONF-12: configuration identity comes from the validated shared loader, never raw config files. Only the adapter
+  // section (commands, vocabulary, ownership, hooks) shapes a gate; a gsd setting edit leaves its evidence current (G076).
   const cfg = loadConfig(root);
-  return { head: head(root), scopes, files: Object.fromEntries(Object.entries(files).sort()), config: sha256(JSON.stringify({ adapter: cfg.adapter, gsd: cfg.gsd })) };
+  return { head: head(root), scopes, files: Object.fromEntries(Object.entries(files).sort()), config: sha256(JSON.stringify({ adapter: cfg.adapter })) };
 }
 
-// Digest line value of an agent call: the current content of the files it judges (GSDF-03, CR-GSF-19).
+// Files a run writes about itself (gate evidence, review records, transfer and commit records, progress, halts): they
+// are not inputs of a judgment, so they never change an agent call's digest; a resumed run then replays the calls
+// whose code is unchanged (G080, G081).
+const RUN_RECORD = /^\.planning\/(phases|quick)\/[^/]+\/(evidence|review|transfers|transfers-pending)\/|^\.planning\/(phases|quick)\/[^/]+\/([^/]+-REVIEW\.md|deferred\.md|execute-progress\.json|execute-baseline\.json|commits\.json|[^/]+-HALT\.json|halt-answers\.json)$/;
+export const runRecord = (rel) => RUN_RECORD.test(toSlash(rel));
+
+// Digest line value of an agent call: the current content of the files it judges and the effective settings
+// (GSDF-03, CR-GSF-19). HEAD is left out: the content is the identity, and an unrelated commit is no new input (G076).
 export function digest(root, { files = [], owns = [] }) {
   const cfg = loadConfig(root);
   const prefixes = ownsPrefixes(root);
   const ownScopes = owns.map((o) => ownsPath(o, prefixes).replace(/\/$/, ""));
   const scopes = [...new Set([...files.map((f) => toSlash(f)), ...ownScopes, ...(cfg.adapter.instructions ?? [])])].filter(Boolean).sort();
   const now = inputsOf(root, scopes);
-  for (const rel of Object.keys(now.files)) if (rel.startsWith("_workspace/") || rel.startsWith(`${cfg.worktree_dir}/`)) delete now.files[rel];
+  for (const rel of Object.keys(now.files)) if (rel.startsWith("_workspace/") || rel.startsWith(`${cfg.worktree_dir}/`) || runRecord(rel)) delete now.files[rel];
   const missing = files.filter((f) => !fs.existsSync(resolveInside(root, f))).sort();
-  return { hash: sha256(JSON.stringify({ head: now.head, files: now.files, missing, adapter: cfg.adapter, gsd: cfg.gsd })) };
+  return { hash: sha256(JSON.stringify({ files: now.files, missing, adapter: cfg.adapter, gsd: cfg.gsd })) };
 }
 
+// The next evidence number of a wave, taken by creating its logs directory exclusively: two gate runs of one wave
+// never share a number (G063); only evidence files are counted.
 function nextEvidence(dir, waveId) {
-  const used = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.startsWith(`${waveId}-`)).length : 0;
-  return path.join(dir, `${waveId}-${used + 1}.json`);
+  fs.mkdirSync(dir, { recursive: true });
+  const used = fs.readdirSync(dir).filter((f) => f.startsWith(`${waveId}-`) && f.endsWith(".json")).length;
+  for (let n = used + 1; ; n++) {
+    const file = path.join(dir, `${waveId}-${n}.json`);
+    if (fs.existsSync(file)) continue;
+    try {
+      fs.mkdirSync(file.replace(/\.json$/, ".logs"));
+      return file;
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+    }
+  }
 }
 
 const NOT_RUN = { count: null, targets: [] };
 
+// G063: each finished step is checkpointed in the run's logs directory; a gate of the same wave and the same inputs
+// after an interrupted one (no evidence file) reuses its passed steps whose command is unchanged, instead of
+// rerunning every command. The inputs-stable check still covers the whole run.
+function interruptedSteps(root, dir, waveId, inputs) {
+  if (!fs.existsSync(dir)) return new Map();
+  const num = (f, ext) => Number(new RegExp(`^${waveId.replace(/[.]/g, "\\.")}-(\\d+)\\.${ext}$`).exec(f)?.[1] ?? NaN);
+  const names = fs.readdirSync(dir);
+  // Only a run after the last finished one: a finished gate supersedes every earlier checkpoint.
+  const lastDone = Math.max(0, ...names.map((f) => num(f, "json")).filter(Number.isFinite));
+  const runs = names.map((f) => [f, num(f, "logs")]).filter(([f, n]) => n > lastDone && !fs.existsSync(path.join(dir, f.replace(/\.logs$/, ".json"))));
+  for (const [f] of runs.sort((x, y) => y[1] - x[1])) {
+    let cp = null;
+    try { cp = readJsonIf(path.join(dir, f, "checkpoint.json"), null); } catch { cp = null; }
+    if (cp && JSON.stringify(cp.inputs) === JSON.stringify(inputs)) return new Map((cp.steps ?? []).filter((s) => s.outcome === "passed" && typeof s.log === "string" && fs.existsSync(path.join(root, s.log))).map((s) => [s.name, s]));
+  }
+  return new Map();
+}
+
+// The combined log is the human one; stdout and stderr also go to their own files for an evidence parser (G077).
 async function step(root, logDir, name, argv, timeoutS, extra = {}) {
   const r = await runArgv(argv, { cwd: root, timeoutMs: timeoutS * 1000 });
   const log = path.join(logDir, `${safeName(name)}.log`);
   writeTextAtomic(log, `${r.stdout ?? ""}\n${r.stderr ?? ""}${r.error ? `\n${r.error}` : ""}`);
+  const streams = { stdout: path.join(logDir, `${safeName(name)}.stdout.log`), stderr: path.join(logDir, `${safeName(name)}.stderr.log`) };
+  writeTextAtomic(streams.stdout, r.stdout ?? "");
+  writeTextAtomic(streams.stderr, `${r.stderr ?? ""}${r.error ? `\n${r.error}` : ""}`);
   const outcome = r.timedOut ? "timeout" : r.error && r.code === null ? "unavailable" : r.code === 0 ? "passed" : "failed";
-  return { name, argv, outcome, exitCode: r.timedOut ? TIMEOUT_CODE : r.code, executed: { ...NOT_RUN }, log: toSlash(path.relative(root, log)), text: `${r.stdout ?? ""}\n${r.stderr ?? ""}`, ...extra };
+  return { name, argv, outcome, exitCode: r.timedOut ? TIMEOUT_CODE : r.code, executed: { ...NOT_RUN }, log: toSlash(path.relative(root, log)), streams: { stdout: toSlash(path.relative(root, streams.stdout)), stderr: toSlash(path.relative(root, streams.stderr)) }, text: `${r.stdout ?? ""}\n${r.stderr ?? ""}`, ...extra };
 }
 
 // A step that did not run still has the ADPT-17 shape: a log holding the reason and an outcome that never certifies.
@@ -121,17 +163,28 @@ export async function gate(root, phaseDir, input) {
   const scopes = scopesOf(cfg, input.plans ?? [], prefixes);
   // CR-GSF-11: the identity is taken before anything runs; a change while the gate runs is a failed step.
   const inputs = inputsOf(root, scopes);
+  const reusable = interruptedSteps(root, path.dirname(evidenceFile), input.waveId, inputs);
+  const checkpoint = () => writeJsonAtomic(path.join(logDir, "checkpoint.json"), { inputs, steps: steps.map(({ text, ...s }) => s) });
+  const run = async (name, argv, timeoutS, extra = {}) => {
+    const prior = reusable.get(name);
+    if (prior && JSON.stringify(prior.argv) === JSON.stringify(argv)) {
+      notes.push(`${name}: passed in an interrupted gate run of the same inputs; reused`);
+      return { ...prior, ...extra, reused: true, text: fs.existsSync(path.join(root, prior.log)) ? fs.readFileSync(path.join(root, prior.log), "utf8") : "" };
+    }
+    return step(root, logDir, name, argv, timeoutS, extra);
+  };
   // ADPT-10: the same machine-wide lock as every other adapter.mutex user.
   await withMutex(cfg.adapter.mutex, async () => {
     let gateRed = false;
     for (const g of cmds.gates ?? []) {
-      const s = await step(root, logDir, gateStepName(g.name), g.argv, cmds.build_timeout_s);
+      const s = await run(gateStepName(g.name), g.argv, cmds.build_timeout_s);
       steps.push(s);
+      checkpoint();
       if (s.outcome !== "passed") gateRed = true;
     }
-    if (cmds.build) steps.push(await step(root, logDir, "build", cmds.build, cmds.build_timeout_s));
+    if (cmds.build) { steps.push(await run("build", cmds.build, cmds.build_timeout_s)); checkpoint(); }
     else { notes.push("build not configured (adapter.commands.build)"); steps.push(noRun(root, logDir, "build", "not_configured", notes.at(-1))); }
-    if (cmds.test) steps.push(await step(root, logDir, "test", input.testArgv ?? cmds.test, cmds.test_timeout_s));
+    if (cmds.test) { steps.push(await run("test", input.testArgv ?? cmds.test, cmds.test_timeout_s)); checkpoint(); }
     else { notes.push("tests not configured (adapter.commands.test)"); steps.push(noRun(root, logDir, "test", "not_configured", notes.at(-1))); }
     for (const p of input.plans ?? []) for (const ob of p.verify ?? []) {
       const name = obligationStepName(p.id, ob.task, ob.kind);
@@ -141,8 +194,9 @@ export async function gate(root, phaseDir, input) {
       if (o.outcome !== "ready") { steps.push(noRun(root, logDir, name, o.outcome, o.reason, meta)); continue; }
       const { argument, targets } = o;
       const s = await step(root, logDir, name, o.argv, o.timeoutS, meta);
+      checkpoint();
       if (o.evidenceParser) {
-        const ev = await runHook(root, cfg, o.evidenceParser, { op: "evidence", phaseDir, kind: ob.kind, argument, targets, exitCode: s.exitCode, stdoutPath: s.log, stderrPath: s.log });
+        const ev = await runHook(root, cfg, o.evidenceParser, { op: "evidence", phaseDir, kind: ob.kind, argument, targets, exitCode: s.exitCode, stdoutPath: s.streams.stdout, stderrPath: s.streams.stderr });
         if (ev.error) { s.outcome = "unavailable"; s.text += `\n${ev.error}`; }
         else {
           s.executed = { count: ev.executed?.count ?? 0, targets: ev.executed?.targets ?? [] };
@@ -163,6 +217,7 @@ export async function gate(root, phaseDir, input) {
   writeJsonAtomic(evidenceFile, evidence);
   const failures = steps.filter((s) => s.outcome !== "passed").map((s) => ({ step: s.name, plan: s.plan ?? null, outcome: s.outcome, excerpt: excerpt(s.text), log: s.log, files: mentionedFiles(root, s.text) }));
   const attribution = await attribute(root, cfg, input.plans ?? [], failures, prefixes);
+  if (attribution.attributionError) notes.push(`attribution hook failed: ${attribution.attributionError}; its failures stay unplaced`);
   const timedOut = steps.filter((s) => s.outcome === "timeout").map((s) => `${s.name} timed out after its limit (exit ${TIMEOUT_CODE})`);
   return { green: failures.length === 0, evidence: toSlash(path.relative(root, evidenceFile)), notes, timedOut, failures, failureCount: failures.length, ...attribution };
 }
@@ -171,19 +226,32 @@ async function attribute(root, cfg, plans, failures, prefixes) {
   const byPlan = {};
   const unplaced = [];
   const blockedBy = {};
+  const ownersOfFiles = (f) => [...new Set(f.files.flatMap((file) => specificOwners(file, plans, prefixes).map((p) => p.id)))];
   for (const f of failures) {
-    if (f.plan) { (byPlan[f.plan] ??= []).push(f); continue; }
-    const owners = [...new Set(f.files.flatMap((file) => plans.filter((p) => owned(file, p.owns ?? [], prefixes)).map((p) => p.id)))];
+    // An obligation failing only in files its plan does not own goes to the owners of those files, or to the
+    // integration fixer when no plan of the gate owns them (a whole-project obligation hitting committed code,
+    // kit-feedback 36); its own plan is then blocked by them.
+    const plan = f.plan ? plans.find((p) => p.id === f.plan) : null;
+    if (f.plan && !(f.files.length && plan && !f.files.some((file) => owned(file, plan.owns ?? [], prefixes)))) { (byPlan[f.plan] ??= []).push(f); continue; }
+    const owners = ownersOfFiles(f);
     if (owners.length) for (const o of owners) (byPlan[o] ??= []).push(f);
     else unplaced.push(f);
   }
+  let attributionError = null;
   if (unplaced.length && cfg.adapter.attribution) {
-    const res = await runHook(root, cfg, cfg.adapter.attribution, { op: "attribute", failures: unplaced.map((f) => ({ text: f.excerpt, file: f.files[0] })), plans: plans.map((p) => ({ id: p.id, owns: p.owns ?? [] })) });
-    for (const [i, as] of (res.assignments ?? []).entries()) if (as?.plan && unplaced[i]) { (byPlan[as.plan] ??= []).push(unplaced[i]); unplaced[i] = null; }
+    // G077: each failure carries an id, and an assignment names the failure it answers (an id, or the old echo of the
+    // failure text at its own position).
+    const ids = unplaced.map((_, i) => `f${i + 1}`);
+    const res = await runHook(root, cfg, cfg.adapter.attribution, { op: "attribute", failures: unplaced.map((f, i) => ({ id: ids[i], text: f.excerpt, file: f.files[0] })), plans: plans.map((p) => ({ id: p.id, owns: p.owns ?? [] })) });
+    if (res.error) attributionError = res.error;
+    for (const [i, as] of (res.assignments ?? []).entries()) {
+      const at = ids.indexOf(as?.failure) >= 0 ? ids.indexOf(as.failure) : i;
+      if (as?.plan && unplaced[at]) { (byPlan[as.plan] ??= []).push(unplaced[at]); unplaced[at] = null; }
+    }
   }
   // An obligation of plan A failing in plan B's files marks A blocked by B.
   for (const f of failures) if (f.plan) for (const file of f.files) for (const p of plans) if (p.id !== f.plan && owned(file, p.owns ?? [], prefixes)) (blockedBy[f.plan] ??= new Set()).add(p.id);
-  return { byPlan, unplaced: unplaced.filter(Boolean), blockedBy: Object.fromEntries(Object.entries(blockedBy).map(([k, v]) => [k, [...v]])) };
+  return { byPlan, unplaced: unplaced.filter(Boolean), blockedBy: Object.fromEntries(Object.entries(blockedBy).map(([k, v]) => [k, [...v]])), ...(attributionError ? { attributionError } : {}) };
 }
 
 // ADPT-17 readback through the shared validator: `plans` [{id, owns, verify, waveId?, batch?}] are the planned

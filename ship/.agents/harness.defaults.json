@@ -96,7 +96,8 @@
     "ownership": {
       "owns_forms": [{ "prefix": "Path:", "maps_to": "<path>" }],
       "shared": { "globs": [], "predicate": null },
-      "source_roots": []
+      "source_roots": [],
+      "ignore": []
     },
     "review_lenses": [],
     "syntax_checkers": {},

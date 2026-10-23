@@ -6,6 +6,7 @@ import { done, fail, idList, none, unavailable } from "./common.mjs";
 import { frontmatterGet, frontmatterValidate, historyDigest, initPayload, initProject, listArtifacts, researchPrompt, summaryExtract, supersede, verifyArtifacts, verifyKeyLinks, writeArtifact } from "./artifacts.mjs";
 import { debugBudget, debugCheckpoint, debugClose, debugCreate, debugList, debugStatus } from "./debug.mjs";
 import { commitVerb, evaluationScope, selectRevertCommits } from "./gitverbs.mjs";
+import { haltClear } from "./halts.mjs";
 import { handoff, outlineCheck, outlineParseVerb, wavesVerb } from "./outline.mjs";
 import { checkOwns, coverage, decisionCoverage, failureDirections, planStructure, verifyCommandPaths } from "./plan-checks.mjs";
 import { findPhaseVerb, phaseAdd, phaseComplete, phaseInsert, phaseRemove, planIndex, requirementsVerb, roadmapVerb, uatPassed } from "./phases.mjs";
@@ -100,6 +101,7 @@ export const verbHandlers = {
   "phase.list-plans": { options: {}, run: (g, a) => done({ phase: phaseOf(g, a).number, plans: planIds(phaseOf(g, a)) }) },
   "phase.list-artifacts": { options: { type: "string" }, run: (g, a, o) => listArtifacts(g, phaseOf(g, a), o.type) },
   "phase-plan-index": { options: {}, run: (g, a) => planIndex(g, phaseOf(g, a)) },
+  "halt.clear": { options: { plan: "string", reason: "string" }, run: (g, a, o) => haltClear(g, phaseOf(g, a), o.plan, o.reason) },
   "verify.plan-structure": {
     options: { plans: "string" },
     run: async (g, a, o) => {

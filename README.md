@@ -115,8 +115,8 @@ immutable planning inputs; later batch waves receive hash-checked accepted depen
 Pre-existing owned dirty files are refused rather than overwritten. Missing review replies, failed required
 commits and invalid/stale evidence stop execution.
 
-Code review runs after the wave is green. Only high findings with a trigger, confidence >= 80 and a likelihood above
-theoretical block, and a `finding-verifier` confirms each one (a second verifier decides what the first left
+Code review runs after the wave is green. Only critical and high findings with a trigger, confidence >= 80 and a
+likelihood above theoretical block, and a `finding-verifier` confirms each one (a second verifier decides what the first left
 uncertain). A finding outside the lines the plan changed that the change did not cause is recorded as pre-existing in
 `deferred.md` and never blocks; one finding names its defect class and every instance, so one fix covers them. The
 code fixer runs at effort `high` unless `gsd.roles.fixer.effort` is set. `gsd.code_review` is the owner's choice per

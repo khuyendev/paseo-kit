@@ -18,7 +18,7 @@ Args file `_workspace/args/gsd-plan.json`, e.g. `{"phaseDir": ".planning/phases/
 `node .agents/harness/ph.mjs workflow --name gsd-plan --args-file _workspace/args/gsd-plan.json --detach`, then wait as `next:` says. Rerunning with the same args reuses everything whose inputs did not change; a run that died is continued with `ph workflow --resume <runId>`.
 
 ### Results
-- `planned`: apply the `sharedChanges` the result lists before the first wave (they are the architect's and the plans' declared shared changes). STATE already says `Ready to execute` and the ROADMAP carries wave headers. Then chain: `gsd-execute`, then `gsd-verify`, stopping at the first `needs-owner` or `failed`. `--plan-only`: stop after the handoff.
+- `planned`: apply the architect's `sharedChanges` the result lists (those without `executionWave`) before the first wave; the plans' own shared changes carry `executionWave` and gsd-execute makes them before that wave's gate. STATE already says `Ready to execute` and the ROADMAP carries wave headers. Then chain: `gsd-execute`, then `gsd-verify`, stopping at the first `needs-owner` or `failed`. `--plan-only`: stop after the handoff.
 - `needs-owner`: show `stage`, `reason`, the issues or the conflict, and the `options` numbered. Typical stages: Discuss (finish gsd-discuss), Research (run gsd-research, or rerun with `skipResearch` and a reason the owner gives), Skeleton review / Checker (open blockers or a stall: guidance and rerun, or `forceProceed {reason}` at the checker cap, never over an open REVISION_CONFLICT), Plan (owner marker such as PHASE SPLIT RECOMMENDED), Handoff (coverage gate: re-plan, move to a later phase, or tag the decision informational in CONTEXT).
 - `failed` / `refused`: report the reason; nothing to chain.
 

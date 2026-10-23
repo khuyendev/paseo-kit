@@ -231,8 +231,8 @@ export async function handoff(g, phase, { subset, prefix, noTracerSplit = false 
   const reqs = loadRequirements(g.codeRoot);
   const role = g.cfg.gsd.roles.executor ?? {};
   const dir = path.join(phase.dir, "handoff");
-  const own = new RegExp(`^${prefix ? `${prefix}-` : ""}w\\d+\\.args\\.json$`);
-  if (fs.existsSync(dir)) for (const name of fs.readdirSync(dir)) if (own.test(name)) fs.rmSync(path.join(dir, name));
+  const own = /^w(\d+)\.args\.json$/;
+  const pre = prefix ? `${prefix}-` : "";
   const out = [];
   segments.forEach((seg, i) => {
     const k = i + 1;
@@ -260,13 +260,33 @@ export async function handoff(g, phase, { subset, prefix, noTracerSplit = false 
         effort: role.effort ?? null,
       };
     });
-    const args = { wave: k, waveId, gsdPhase: phase.padded, planWave: seg.planWave, planRevision: revision, executionMode: mode, tasks };
-    const file = path.join(dir, `${prefix ? `${prefix}-` : ""}w${k}.args.json`);
+    // G083: a plan's <shared_changes> belong to its execution wave; gsd-execute applies them before that wave's gate.
+    const shared = seg.plans.flatMap((p) => p.sharedChanges.map((text) => ({ source: p.id, text, paths: sharedChangePaths(text) })));
+    const args = { wave: k, waveId, gsdPhase: phase.padded, planWave: seg.planWave, planRevision: revision, executionMode: mode, tasks, sharedChanges: shared };
+    const file = path.join(dir, `${pre}w${k}.args.json`);
     writeJsonAtomic(file, args);
-    out.push({ executionWave: k, planWave: seg.planWave, waveId, argsFile: rel(g.codeRoot, file), tasks: seg.plans.map((p) => p.id), tracer: seg.tracer });
+    out.push({ executionWave: k, planWave: seg.planWave, waveId, argsFile: rel(g.codeRoot, file), tasks: seg.plans.map((p) => p.id), tracer: seg.tracer, shared });
   });
-  const sharedChanges = w.plans.flatMap((p) => p.sharedChanges.map((text) => ({ source: p.id, text })));
-  return done({ planRevision: revision, waves: out, sharedChanges, warnings: w.warnings });
+  // G075: the new set is complete before the old one goes: surplus wave files of an earlier, longer handoff are removed
+  // only now, and the manifest (written last) names the wave count and plan digests gsd-execute checks.
+  if (fs.existsSync(dir)) for (const name of fs.readdirSync(dir)) {
+    if (!name.startsWith(pre)) continue;
+    const m = own.exec(name.slice(pre.length));
+    if (m && Number(m[1]) > out.length) fs.rmSync(path.join(dir, name));
+  }
+  writeJsonAtomic(path.join(dir, `${pre}manifest.json`), { planRevision: revision, waves: out.length, plans: segments.flatMap((s) => s.plans).map((p) => ({ id: p.id, planHash: textDigest(p.text).slice(0, 12) })) });
+  const sharedChanges = out.flatMap((o) => o.shared.map(({ source, text, paths }) => ({ source, text, paths, executionWave: o.executionWave })));
+  return done({ planRevision: revision, waves: out.map(({ shared, ...o }) => o), sharedChanges, warnings: w.warnings });
+}
+
+// The files a <shared_changes> block changes: the leading `path:` of each of its lines (`lib/main.dart: import x`).
+export function sharedChangePaths(text) {
+  const out = [];
+  for (const line of String(text).split(/\r?\n/)) {
+    const m = /^\s*(?:[-*]\s+)?`?([^\s:`]+\.[A-Za-z0-9]+|[^\s:`]*\/[^\s:`]+)`?\s*:/.exec(line);
+    if (m && !/^[a-z]+:\/\//i.test(line.trim())) out.push(m[1].replace(/\\/g, "/").replace(/^\.\//, ""));
+  }
+  return [...new Set(out)];
 }
 
 

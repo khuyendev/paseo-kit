@@ -74,7 +74,7 @@ export async function requiredSteps(cfg, { codeRoot, phaseDir, plans = [] }) {
   for (const p of plans) for (const ob of p.verify ?? []) {
     const o = await gateObligation(cfg, { codeRoot, phaseDir, kind: ob.kind, command: ob.command, target: ob.target });
     const name = obligationStepName(p.id, ob.task, ob.kind);
-    steps.push({ name, targets: o.targets, exitCodeSufficient: o.exitCodeSufficient, ...(o.outcome === "unavailable" ? { unresolvable: o.reason } : {}) });
+    steps.push({ name, targets: o.targets, exitCodeSufficient: o.exitCodeSufficient, ...(Array.isArray(o.argv) ? { argv: o.argv } : {}), ...(o.outcome === "unavailable" ? { unresolvable: o.reason } : {}) });
   }
   return steps;
 }
@@ -100,6 +100,9 @@ export function evidenceVerdict(evidenceFile, { codeRoot, requested, inputs }) {
   const absent = wanted.filter((r) => !steps.has(r.name)).map((r) => `step ${r.name} missing`);
   if (absent.length) return { verdict: "incomplete", reasons: absent };
   if (!sameInputs(ev.inputs, inputs)) return { verdict: "stale", reasons: ["inputs differ from the current code"] };
+  // G063: an obligation whose command changed after its gate is not proven by the old run.
+  const changedCmd = wanted.filter((r) => Array.isArray(r.argv) && steps.get(r.name).outcome === "passed" && JSON.stringify(steps.get(r.name).argv) !== JSON.stringify(r.argv)).map((r) => `${r.name}: command changed since the gate ran`);
+  if (changedCmd.length) return { verdict: "stale", reasons: changedCmd };
   const reasons = ev.steps.filter((s) => s.outcome !== "passed").map((s) => `${s.name}: ${s.outcome}`);
   for (const r of wanted) {
     const s = steps.get(r.name);

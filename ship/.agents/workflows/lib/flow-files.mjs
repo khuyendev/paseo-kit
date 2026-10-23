@@ -58,34 +58,60 @@ export function remove(root, rel) {
   return { removed: existed ? rel : null };
 }
 
-// GSDF-64: debug, plan and execute share one root writer lock. The short transition claim serializes
-// acquisition, stale reclamation and release, so a contender cannot remove a newly acquired lease.
-// Unknown liveness (including an interrupted transition) fails closed; it is never permission to write.
+// GSDF-64: debug, plan, execute and quick share one root writer lock (the file keeps its old name `debug`); the
+// record names the holder's workflow, so a refusal says which run holds the root. The short transition claim
+// serializes acquisition, stale reclamation and release, so a contender cannot remove a newly acquired lease.
+// Unknown liveness fails closed; it is never permission to write. The claim records its owner pid, so a claim left by a
+// process that died inside the window (or whose rmdir failed) is reclaimed once that pid is dead, or once an empty
+// claim (a death between mkdir and the owner write) is older than CLAIM_ABANDONED_MS.
+const CLAIM_ABANDONED_MS = 30000;
 const lockFile = (root, name) => guardedPath(root, `_workspace/locks/${name}.lock`);
 const live = (held) => !Number.isInteger(held?.pid) || pidAlive(held.pid);
-function transition(file, fn) {
+function staleClaim(claim) {
+  const owner = readJsonIf(path.join(claim, "owner.json"), null);
+  if (owner) return !pidAlive(owner.pid);
+  try { return Date.now() - fs.statSync(claim).mtimeMs >= CLAIM_ABANDONED_MS; } catch { return false; }
+}
+function dropClaim(claim) {
+  for (let i = 0; i < 5; i++) {
+    try { fs.rmSync(claim, { recursive: true, force: true }); return; } catch (e) { if (i === 4) throw e; }
+  }
+}
+function transition(file, fn, retry = true) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const claim = `${file}.transition`;
   try { fs.mkdirSync(claim); } catch (e) {
-    if (e.code === "EEXIST") return { locked: false, holder: "lock transition (retry after checking the holder)", code: 1 };
-    throw e;
+    if (e.code !== "EEXIST") throw e;
+    if (retry && staleClaim(claim)) {
+      // Reclaim by renaming aside first: of two reclaimers only one rename succeeds.
+      const aside = `${claim}.${randomUUID()}.dead`;
+      try { fs.renameSync(claim, aside); fs.rmSync(aside, { recursive: true, force: true }); } catch {}
+      return transition(file, fn, false);
+    }
+    return { locked: false, holder: "lock transition (retry after checking the holder)", code: 1 };
   }
-  try { return fn(); } finally { fs.rmdirSync(claim); }
+  try {
+    fs.writeFileSync(path.join(claim, "owner.json"), JSON.stringify({ pid: process.pid }));
+    return fn();
+  } finally { dropClaim(claim); }
 }
-export function lock(root, name, runId, pid = process.ppid) {
+// `kind` names the workflow (gsd-plan, gsd-execute, gsd-debug, gsd-quick); a record without it is from an older kit.
+export function lock(root, name, runId, pid = process.ppid, kind = null) {
   const file = lockFile(root, name);
   return transition(file, () => {
     const held = readJsonIf(file, null);
-    if (held && live(held)) return { locked: false, holder: held.runId, code: 1 };
+    if (held && live(held)) return { locked: false, holder: held.runId, holderKind: held.kind ?? null, code: 1 };
     const token = randomUUID();
-    writeJsonAtomic(file, { runId, pid, token });
+    writeJsonAtomic(file, { runId, pid, token, ...(kind ? { kind } : {}) });
     return { locked: true, token };
   });
 }
+// The refusal text of a held root lease: "a gsd-plan run holds this code root (wf_...)".
+export const holderText = (r) => `${r?.holderKind ? `a ${r.holderKind} run` : "another run"} holds this code root (${r?.holder ?? r?.error ?? "unknown run"})`;
 export function lockCheck(root, name) {
   const file = lockFile(root, name);
   const held = readJsonIf(file, null);
-  return (held && live(held)) || fs.existsSync(`${file}.transition`) ? { held: true, holder: held?.runId ?? "lock transition", code: 1 } : { held: false };
+  return (held && live(held)) || fs.existsSync(`${file}.transition`) ? { held: true, holder: held?.runId ?? "lock transition", holderKind: held?.kind ?? null, code: 1 } : { held: false };
 }
 export function unlock(root, name, token) {
   const file = lockFile(root, name);

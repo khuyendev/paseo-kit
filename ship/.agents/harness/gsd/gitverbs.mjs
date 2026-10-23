@@ -3,7 +3,7 @@
 import path from "node:path";
 import { readJsonIf } from "../lib/io.mjs";
 import { done, fail, rel, unavailable } from "./common.mjs";
-import { git, gitOk } from "./git.mjs";
+import { GIT_TIMEOUT_MS, git, gitOk } from "./git.mjs";
 import { findPhase, normPlanId, padPhase } from "./planning.mjs";
 import { guardWriter } from "./state.mjs";
 
@@ -22,8 +22,16 @@ export function commitVerb(g, message, files, removed) {
   if (!stage.length && !removed.length) return done({ committed: false, skipped: true, hash: null, reason: "skipped_gitignored" });
   if (stage.length) gitOk(g.codeRoot, ["add", "--", ...stage]);
   if (removed.length) gitOk(g.codeRoot, ["rm", "-q", "--cached", "--ignore-unmatch", "--", ...removed]);
+  const before = git(g.codeRoot, ["rev-parse", "HEAD"]).stdout.trim();
   const r = git(g.codeRoot, ["commit", "-q", "-m", message, "--", ...stage, ...removed]);
-  if (r.code !== 0) throw fail(`git commit failed: ${(r.stderr || r.stdout).trim().split("\n")[0]}`);
+  // G068: a killed or silent git is named, never a blank "failed: "; after a timeout the commit may have landed and
+  // git may have left .git/index.lock, so the owner checks both before a retry (69: the outcome is unknown).
+  if (r.timedOut || (r.error && r.code === null)) {
+    const after = git(g.codeRoot, ["rev-parse", "HEAD"]).stdout.trim();
+    const landed = after && after !== before ? ` HEAD moved to ${after}, so the commit may have landed;` : "";
+    throw unavailable(`git commit ${r.timedOut ? `timed out after ${GIT_TIMEOUT_MS / 1000} s` : `could not run (${r.error?.message ?? "no exit code"})`}:${landed} check git log -1 and remove a stale .git/index.lock (only when no git runs) before a retry`, { hash: landed ? after : null });
+  }
+  if (r.code !== 0) throw fail(`git commit failed: ${(r.stderr || r.stdout).trim().split("\n")[0] || `exit ${r.code}`}`);
   return done({ committed: true, hash: gitOk(g.codeRoot, ["rev-parse", "HEAD"]).trim(), files: stage, removed, skipped_ignored: files.filter((f) => !stage.includes(f)) });
 }
 
@@ -35,8 +43,10 @@ export function subjectScope(subject) {
   return s ? { raw: m[1].trim(), phase: padPhase(s[1]), unit: s[2], plan: /^\d+$/.test(s[2]) ? normPlanId(`${s[1]}-${s[2]}`) : null } : { raw: m[1].trim(), phase: null, unit: null, plan: null };
 }
 
+// A range or since value is passed after --end-of-options, so a value starting with a dash can never become a git
+// option such as --output (G065). `max` null walks the whole range.
 function logCommits(root, range, max) {
-  const args = ["log", "--format=%H%x09%s", `--max-count=${max}`];
+  const args = ["log", "--format=%H%x09%s", ...(max ? [`--max-count=${max}`] : []), "--end-of-options"];
   if (range) args.push(range);
   return gitOk(root, args)
     .split(/\r?\n/)
@@ -54,15 +64,19 @@ const commitMap = (phase) => (phase ? (readJsonIf(path.join(phase.dir, "commits.
 
 const mappedPlans = (map, sha) => map.find((e) => e.sha === sha || (e.sha && sha.startsWith(e.sha)))?.plans ?? null;
 
-export function evaluationScope(g, { phase: phaseRef, plan, quick, since, commitsOnly, maxCommits = 500 }) {
+// G073: the default walks the whole history (bounded by the git timeout, 69 when it cannot finish); an explicit
+// --max-commits is the caller's window, and a result that hit it says `truncated`.
+export function evaluationScope(g, { phase: phaseRef, plan, quick, since, commitsOnly, maxCommits }) {
   if ([phaseRef, plan, quick].filter(Boolean).length !== 1) throw fail("evaluation-scope needs exactly one of --phase, --plan, --quick");
+  if (since !== undefined && /^-/.test(String(since))) throw fail("--since takes a revision, not an option");
   const root = g.codeRoot;
   if (git(root, ["rev-parse", "--git-dir"]).code !== 0) throw unavailable("code root is not a readable git repository");
   const planId = plan ? normPlanId(plan) : null;
   const phaseNum = phaseRef ? padPhase(phaseRef) : planId ? planId.split("-")[0] : null;
   const phase = phaseNum ? findPhase(root, phaseNum) : null;
   const map = commitMap(phase);
-  const commits = logCommits(root, since ? `${since}..HEAD` : null, maxCommits);
+  const commits = logCommits(root, since ? `${since}..HEAD` : null, maxCommits ?? null);
+  const truncated = Boolean(maxCommits) && commits.length >= maxCommits ? { truncated: true, maxCommits } : {};
   const own = [];
   for (const c of commits) {
     const s = c.scope;
@@ -79,11 +93,11 @@ export function evaluationScope(g, { phase: phaseRef, plan, quick, since, commit
     }
   }
   const unreachable = map.filter((e) => (!planId || Object.hasOwn(e.plans ?? {}, planId)) && git(root, ["merge-base", "--is-ancestor", e.sha, "HEAD"]).code !== 0).map((e) => e.sha);
-  const out = { status: "resolved", source: quick ? "quick" : planId ? "plan" : "phase", unit: quick ?? planId ?? phaseNum, unreachable };
+  const out = { status: "resolved", source: quick ? "quick" : planId ? "plan" : "phase", unit: quick ?? planId ?? phaseNum, unreachable, ...truncated };
   if (!own.length) {
     if (planId || quick) return done({ ...out, reason: "no-matching-commits", commits: [], files: [], outsideUnion: [] });
     if (!phase) return done({ ...out, reason: "no-matching-commits", commits: [], files: [], outsideUnion: [] });
-    const touching = gitOk(root, ["log", "--format=%H", `--max-count=${maxCommits}`, "--", rel(root, phase.dir)]).split(/\r?\n/).filter(Boolean);
+    const touching = gitOk(root, ["log", "--format=%H", ...(maxCommits ? [`--max-count=${maxCommits}`] : []), "--", rel(root, phase.dir)]).split(/\r?\n/).filter(Boolean);
     if (!touching.length) return done({ ...out, reason: "no-matching-commits", commits: [], files: [], outsideUnion: [] });
     const first = touching[touching.length - 1];
     const base = git(root, ["rev-parse", "--verify", "-q", `${first}^`]).code === 0 ? `${first}^` : EMPTY_TREE;
@@ -94,7 +108,7 @@ export function evaluationScope(g, { phase: phaseRef, plan, quick, since, commit
   if (!commitsOnly) for (const c of own) for (const f of c.files ?? changedFiles(root, c.sha)) union.add(f);
   let outsideUnion = [];
   if (since && !commitsOnly) {
-    const ranged = gitOk(root, ["diff", "--name-only", since, "HEAD"]).split(/\r?\n/).filter(Boolean);
+    const ranged = gitOk(root, ["diff", "--name-only", "--end-of-options", since, "HEAD"]).split(/\r?\n/).filter(Boolean);
     outsideUnion = ranged.filter((f) => !union.has(f));
   }
   return done({ ...out, commits: own.map((c) => ({ sha: c.sha, subject: c.subject, ...(c.files ? { mapped_files: c.files } : {}) })), files: commitsOnly ? undefined : [...union].sort(), outsideUnion });
@@ -102,12 +116,13 @@ export function evaluationScope(g, { phase: phaseRef, plan, quick, since, commit
 
 export function selectRevertCommits(g, { phase: phaseRef, plan, range }) {
   if (!range) throw fail("select-revert-commits needs --range");
+  if (/^-/.test(String(range))) throw fail("--range takes a revision range, not an option");
   if (!phaseRef === !plan) throw fail("select-revert-commits needs exactly one of --phase, --plan");
   const planId = plan ? normPlanId(plan) : null;
   const phaseNum = phaseRef ? padPhase(phaseRef) : planId.split("-")[0];
   const map = commitMap(findPhase(g.codeRoot, phaseNum));
   const picked = [];
-  for (const c of logCommits(g.codeRoot, range, 10000)) {
+  for (const c of logCommits(g.codeRoot, range, null)) {
     const s = c.scope;
     if (!s?.phase || s.phase !== phaseNum) continue;
     if (!planId) {

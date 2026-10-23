@@ -36,6 +36,8 @@ async function call(prompt, opts) {
 }
 const fatal = (reason) => Boolean(reason && NEVER_RETRY.test(reason));
 const needsOwner = (stage, reason, extra = {}) => ({ status: "needs-owner", stage, reason, ...extra });
+// The refusal of a held code-root lease names the holder's workflow and run (kit-feedback 1).
+const leaseText = (r) => `${r?.holderKind ? `a ${r.holderKind} run` : "another run"} holds this code root (${r?.holder ?? r?.error ?? "unknown run"})`;
 async function discussOpen(phaseDir, nn) {
   const ex = (await flow(["exists", `${phaseDir}/${nn}-DISCUSS-CHECKPOINT.json`, `${phaseDir}/${nn}-CONTEXT.md`])).json?.exists ?? {};
   if (ex[`${phaseDir}/${nn}-DISCUSS-CHECKPOINT.json`]) return "discussion interrupted (DISCUSS-CHECKPOINT present); finish it with gsd-discuss";
@@ -68,10 +70,12 @@ const EXEC_SCHEMA = {
   required: ["taskResults"],
 };
 const INSTANCE_SCHEMA = { type: "object", properties: { file: { type: "string" }, line: { type: "number" } }, required: ["file"] };
-const FINDINGS_SCHEMA = { type: "object", properties: { findings: { type: "array", items: { type: "object", properties: { id: { type: "string" }, severity: { type: "string", enum: SEVERITIES }, trigger: { type: "string" }, likelihood: { type: "string" }, confidence: { type: "number" }, impact: { type: "string" }, file: { type: "string" }, line: { type: "number" }, description: { type: "string" }, introduced: { type: "boolean" }, class: { type: "string" }, instances: { type: "array", items: INSTANCE_SCHEMA } }, required: ["severity", "description"] } } }, required: ["findings"] };
+// G056: the gate reads trigger, likelihood, confidence and file; a reply without them is re-asked by the schema retry
+// instead of being recorded as a low-confidence (downgraded) finding.
+const FINDINGS_SCHEMA = { type: "object", properties: { findings: { type: "array", items: { type: "object", properties: { id: { type: "string" }, severity: { type: "string", enum: SEVERITIES }, trigger: { type: "string" }, likelihood: { type: "string" }, confidence: { type: "number" }, impact: { type: "string" }, file: { type: "string" }, line: { type: "number" }, description: { type: "string" }, introduced: { type: "boolean" }, class: { type: "string" }, instances: { type: "array", items: INSTANCE_SCHEMA } }, required: ["severity", "description", "trigger", "likelihood", "confidence", "file"] } } }, required: ["findings"] };
 const VERDICT_SCHEMA = { type: "object", properties: { verdicts: { type: "array", items: { type: "object", properties: { id: { type: "string" }, verdict: { type: "string", enum: ["confirmed", "refuted", "uncertain"] }, evidence: { type: "string" } }, required: ["id", "verdict"] } } }, required: ["verdicts"] };
 const RESOLUTION_SCHEMA = { type: "object", properties: { resolution: { type: "array", items: { type: "object", properties: { id: { type: "string" }, resolved: { type: "boolean" }, evidence: { type: "string" } }, required: ["id", "resolved"] } } }, required: ["resolution"] };
-const FIXER_SCHEMA = { type: "object", properties: { resolvedRequests: { type: "array", items: { type: "string" } }, status: { type: "string", enum: ["fixed", "unresolved"] }, attempts: { type: "number" }, remaining_failures: { type: "number" }, evidence: { type: "string" } }, required: ["status"] };
+const FIXER_SCHEMA = { type: "object", properties: { resolvedRequests: { type: "array", items: { type: "string" } }, requests: EXEC_SCHEMA.properties.requests, status: { type: "string", enum: ["fixed", "unresolved"] }, attempts: { type: "number" }, remaining_failures: { type: "number" }, evidence: { type: "string" } }, required: ["status"] };
 const QUOTA = /usage limit|rate limit|\b429\b|too many requests|RESOURCE_EXHAUSTED|quota/i;
 
 // ---- arguments (GSDF-93) ----
@@ -99,13 +103,17 @@ const PROGRESS = `${phaseDir}/execute-progress.json`;
 const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
 const stackSkill = cfg.adapter.stack_skill ? `.claude/skills/${cfg.adapter.stack_skill}/SKILL.md` : null;
 const waveResults = [];
-const sharedChanges = [];
+// Shared changes (requests no open plan owns, the plans' <shared_changes> of each execution wave) and cross-plan
+// requests live in execute-progress.json, so a stopped run hands them to the next one (G074, G089).
+let sharedChanges = [];
+let pendingRequests = {};
+const skipped = [];
 const events = [];
 const worktrees = {};
 const seeds = {};
 const integrationFiles = new Set();
 const ev = (e) => { events.push(e); log(`event ${e}`); };
-const result = (status, extra = {}) => ({ status, phaseDir, mode: execMode, isolation: g.isolation, waves: waveResults, sharedChanges, events, ...extra });
+const result = (status, extra = {}) => ({ status, phaseDir, mode: execMode, isolation: g.isolation, waves: waveResults, sharedChanges, ...(Object.keys(pendingRequests).length ? { requests: pendingRequests } : {}), ...(skipped.length ? { skipped } : {}), events, ...extra });
 const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reason, ...extra });
 const digestOf = async (input) => (await flow(["digest"], input)).json?.hash ?? "none";
 
@@ -123,11 +131,11 @@ async function pool(items, n, fn) {
 phase("Preconditions");
 const guard = await flow(["cwd-guard", cfg.worktree_dir]);
 if (guard.code !== 0) return result("refused", { reason: (guard.json?.problems ?? ["cwd guard failed"]).join("; "), stranded: guard.json?.stranded ?? [], dirty: guard.json?.dirty ?? [] });
-const lease = await flow(["lock", "debug", runId]);
-if (lease.code !== 0) return result("refused", { reason: `a debug session holds this code root (${lease.json?.holder ?? lease.json?.error ?? "unknown run"}); execute starts after it ends` });
+const lease = await flow(["lock", "debug", runId, "gsd-execute"]);
+if (lease.code !== 0) return result("refused", { reason: `${leaseText(lease.json)}; execute starts after it ends` });
 try {
 const anti = await flow(["anti-patterns", phaseDir]);
-if (anti.code !== 0) return owner("Execute", `blocking anti-patterns need three written answers each in ${anti.json?.answersFile}: ${(anti.json?.unanswered ?? []).join(", ")}`, { rows: anti.json?.unanswered ?? [] });
+if (anti.code !== 0) return owner("Execute", `blocking anti-patterns need three written answers each in ${anti.json?.answersFile}: ${(anti.json?.unanswered ?? []).join(", ")}; run gsd-discuss ${N} to write them (it reads CONTEXT), or write them with node ${FLOW} write ${anti.json?.answersFile} (JSON on stdin)`, { rows: anti.json?.unanswered ?? [] });
 const prefix = a.gapsOnly ? "gap-" : "";
 async function readHandoff() {
   const list = [];
@@ -149,6 +157,25 @@ const progress = progressRead.json?.exists ? JSON.parse(progressRead.json.text) 
 const tracked = (id) => progress.plans[id]?.tracked === true;
 const committedOnly = (id) => progress.plans[id]?.commit !== undefined && !tracked(id);
 const saveProgress = async () => (await flow(["write", PROGRESS], JSON.stringify(progress, null, 2))).code === 0;
+pendingRequests = progress.requests ??= {};
+sharedChanges = progress.shared ??= [];
+// G075: the handoff must still describe the plans on disk. A failed or killed handoff rerun can leave a cut-short wave
+// set (the manifest, written last, names the wave count), and a plan edited, added or deleted after the handoff would
+// run with stale owns, verify commands and plan set.
+const manifestRead = await flow(["read", `${phaseDir}/handoff/${prefix}manifest.json`]);
+if (manifestRead.json?.exists) {
+  let m = null;
+  try { m = JSON.parse(manifestRead.json.text); } catch {}
+  if (!m || m.waves !== handoff.length || handoff.some((w) => w.planRevision !== m.planRevision)) return result("refused", { reason: `the handoff in ${phaseDir}/handoff/ is incomplete or mixed (${handoff.length} wave files, the manifest names ${m?.waves ?? "none"}); regenerate it with gsd-plan` });
+} else log(`warning: ${phaseDir}/handoff/ has no ${prefix}manifest.json (an older kit); the wave set is not checked`);
+const staleHandoff = [];
+for (const t of handoff.flatMap((w) => w.tasks).filter((x) => !tracked(x.plan))) {
+  const p = idx.plans.find((x) => x.id === t.plan);
+  if (!p) staleHandoff.push(`${t.plan} no longer exists`);
+  else if (p.plan_hash && t.planHash && p.plan_hash !== t.planHash) staleHandoff.push(`${t.plan} changed after the handoff`);
+}
+if (!prefix) for (const p of idx.plans) if (p.plan_hash && !p.has_summary && p.gap_closure !== true && !handoff.some((w) => w.tasks.some((t) => t.plan === p.id))) staleHandoff.push(`${p.id} is in no handoff wave`);
+if (staleHandoff.length) return result("refused", { reason: `the handoff does not match the plans: ${staleHandoff.join("; ")}; regenerate it with gsd-plan`, stale: staleHandoff });
 if (a.gapsOnly) {
   const lacking = idx.plans.filter((p) => p.gap_closure === undefined || p.gap_closure === null).map((p) => p.id);
   if (lacking.length) return result("refused", { reason: `--gaps-only needs a gap_closure key in every plan; missing in ${lacking.join(", ")}` });
@@ -165,7 +192,7 @@ const pendingPlans = open.filter((t) => !planInfo(t.plan).has_summary);
 if (pendingPlans.length === open.length && !pendingPlans.some((t) => planInfo(t.plan).ready)) {
   if ((planFilter || waveFilter !== null || a.gapsOnly) && !wanted.length) return result("nothing-to-run", { route: "none", reason: "no matching plans" });
   const stuck = idx.plans.filter((p) => p.halted || (p.blocked_by ?? []).length);
-  if (pendingPlans.length && stuck.length) return result("nothing-to-run", { route: "stuck", reason: `phase stuck, resolve the halt: ${stuck.map((p) => p.id).join(", ")}` });
+  if (pendingPlans.length && stuck.length) return result("nothing-to-run", { route: "stuck", reason: `phase stuck, resolve the halt: ${stuck.map((p) => p.id).join(", ")}; record the answer with ph gsd halt clear ${N} --plan <id> --reason <answer>, then rerun` });
   if (pendingPlans.length) return result("nothing-to-run", { route: "waiting", reason: "plans not ready yet" });
   const ver = await gsd(["verification", "status", phaseDir]);
   const vs = ver.code === 66 ? "missing" : ver.json?.status;
@@ -205,9 +232,16 @@ const base = await flow(["baseline", phaseDir]);
 if (base.code !== 0) return result("failed", { reason: `execute baseline could not be recorded: ${base.json?.error ?? base.code}` });
 async function resumeGate() {
   idx = await index();
-  const rg = await flow(["resume-gate", phaseDir], { plans: gatePlans() });
+  const rg = await flow(["resume-gate", phaseDir], { plans: gatePlans(), integration: progress.integration ?? [] });
   if (rg.json?.status === "error") return result("failed", { reason: `safe-resume gate could not look: ${rg.json.error}` });
-  if (rg.code !== 0) return owner("Execute", `safe-resume gate: ${rg.json.problems.map((p) => `${p.kind}${p.path ? ` ${p.path}` : ""}${p.plan ? ` (plan ${p.plan})` : ""}`).join("; ")}`, { recovery: { problems: rg.json.problems, head: rg.json.head }, options: ["close out manually", "re-execute from scratch", "mark and skip"] });
+  if (rg.code !== 0) return owner("Execute", `safe-resume gate: ${rg.json.problems.map((p) => `${p.kind}${p.path ? ` ${p.path}` : ""}${p.plan ? ` (plan ${p.plan})` : ""}${p.detail ? ` ${p.detail}` : ""}`).join("; ")}`, { recovery: { problems: rg.json.problems, head: rg.json.head }, options: ["close out manually", "re-execute from scratch", "mark and skip"] });
+  for (const a of rg.json?.accepted ?? []) log(`resume gate: commit ${a.sha.slice(0, 7)} touches no plan-owned file (${a.files.slice(0, 5).join(", ")}); accepted`);
+  // G054: a commit of this run whose commits.json record failed is reconciled; its plans are tracked, not re-run.
+  for (const c of rg.json?.reconciled ?? []) {
+    log(`resume gate: commit ${c.sha.slice(0, 7)} of plans ${c.plans.join(",")} was not in commits.json; reconciled`);
+    for (const id of c.plans) if (progress.plans[id]?.commit === undefined) progress.plans[id] = { commit: c.sha, verify: execMode === "batch" ? "skipped" : "green", evidence: null };
+  }
+  if ((rg.json?.reconciled ?? []).length && !(await saveProgress())) return result("failed", { reason: `${PROGRESS} could not be written after reconciling commits` });
   // CR-GSF-01: only plans that still lack a SUMMARY now, not the list captured at start.
   for (const t of wanted.filter((x) => !tracked(x.plan) && !planInfo(x.plan).has_summary)) {
     const sc = await gsd(["check", "evaluation-scope", "--plan", t.plan, "--commits-only"]);
@@ -232,7 +266,6 @@ if (a.gapsOnly) {
 }
 
 // ---- executors (GSDF-41..43, GSDF-45, GSDF-52) ----
-const pendingRequests = progress.requests ??= {};
 // CR-GSF-03: an executor worktree starts from HEAD; uncommitted planning inputs are read from the main checkout.
 const snapshot = worktreeMode ? await flow(["execution-inputs"]) : null;
 if (snapshot && snapshot.code !== 0) return result("failed", { reason: `execution inputs unavailable: ${snapshot.json?.error}` });
@@ -275,21 +308,42 @@ const classify = (reason) => {
 };
 async function halt(id, why) {
   await flow(["write", haltPath(id)], JSON.stringify({ plan: id, reason: why, runId }, null, 2));
-  return { plan: id, halted: true, reason: why };
+  return { plan: id, halted: true, reason: why, ...(pendingRequests[id]?.length ? { requests: pendingRequests[id] } : {}) };
 }
 async function headNow(cwd) { return (await shell(["git", "rev-parse", "HEAD"], cwd ? { cwd } : {})).stdout.trim(); }
-function routeRequests(t, res) {
-  for (const rq of res.requests ?? []) {
-    const ownerTask = allTasks.find((x) => x.plan !== t.plan && (x.owns ?? []).some((o) => String(rq.path).startsWith(String(o).replace(/^Path:/, ""))));
-    if (ownerTask) (pendingRequests[ownerTask.plan] ??= []).push({ from: t.plan, ...rq });
-    else sharedChanges.push({ from: t.plan, ...rq });
+const slashPath = (p) => String(p).trim().replace(/\\/g, "/").replace(/^\.\//, "");
+// G072: a request goes to the plan owning its path most specifically (adapter owns forms, path boundaries). G089: a
+// path no open plan of the phase owns (no plan, or one already committed) is a shared change, applied before the next
+// gate by the integration fixer and committed with the wave.
+async function routeRequests(t, res) {
+  const list = (res.requests ?? []).filter((rq) => rq && typeof rq.path === "string" && rq.path.trim()).map((rq) => ({ ...rq, path: slashPath(rq.path) }));
+  if (!list.length) return;
+  const others = allTasks.filter((x) => x.plan !== t.plan).map((x) => ({ id: x.plan, owns: x.owns ?? [], summary: x.summary }));
+  const owners = (await flow(["owners"], { paths: list.map((rq) => rq.path), plans: others })).json?.owners ?? {};
+  for (const rq of list) {
+    const id = (owners[rq.path] ?? [])[0];
+    if (id && progress.plans[id]?.commit === undefined) (pendingRequests[id] ??= []).push({ from: t.plan, ...rq });
+    else sharedChanges.push({ from: t.plan, ...rq, applied: false });
   }
 }
 const ownerDecision = (res) => (res.deviations ?? []).find((x) => Number(x.rule) === 4 || x.kind === "checkpoint") ?? (res.taskResults ?? []).find((x) => x.status === "partial" || x.status === "blocked") ?? null;
+const clearResolved = (id, res) => { if (pendingRequests[id]) pendingRequests[id] = pendingRequests[id].filter((q) => !(res?.resolvedRequests ?? []).map(slashPath).includes(slashPath(q.path))); };
+// The owner's answers to earlier halts of a plan (ph gsd halt clear), handed to its next executor (G055).
+async function haltAnswers(id) {
+  const r = await flow(["read", `${phaseDir}/halt-answers.json`]);
+  try { return r.json?.exists ? JSON.parse(r.json.text).filter((x) => x.plan === id).map(({ halt: why, answer }) => ({ halt: why, answer })) : []; } catch { return []; }
+}
 async function dispatch(t, waveId) {
   await flow(["remove", haltPath(t.plan)]);
   const before = await headNow();
-  const prompt = [execRuntime(t), digestLine(`plan:${t.plan}`, t.planHash ?? "none")].join("\n\n");
+  const answers = await haltAnswers(t.plan);
+  const reqs = pendingRequests[t.plan] ?? [];
+  const prompt = [
+    execRuntime(t),
+    answers.length ? `Owner answers to earlier halts of this plan (JSON); follow them: ${JSON.stringify(answers)}` : "",
+    reqs.length ? `Change requests from other plans for files you own (JSON): ${JSON.stringify(reqs)}. Make them inside your owns and list each request path you resolved in resolvedRequests.` : "",
+    digestLine(`plan:${t.plan}`, t.planHash ?? "none"),
+  ].filter(Boolean).join("\n\n");
   const d = await agent(prompt, { ...execOpts(t, `exec-${t.plan}`), detail: true });
   const res = d?.result ?? null;
   const wt = d?.worktree ?? null;
@@ -303,9 +357,16 @@ async function dispatch(t, waveId) {
     const c = classify(d?.reason);
     return { ...(await halt(t.plan, `executor ended abnormally (${c.class}): ${d?.reason ?? "no reply"}`)), failure: c };
   }
-  routeRequests(t, res);
+  await routeRequests(t, res);
+  clearResolved(t.plan, res);
   const decision = ownerDecision(res);
   if (decision) return { ...(await halt(t.plan, `owner decision needed: ${decision.note ?? decision.evidence ?? decision.status}`)), decision };
+  // G058: one result per plan task; an empty list or a skipped task is no finished plan.
+  const want = planInfo(t.plan).task_count;
+  const got = (res.taskResults ?? []).length;
+  if (!got || (Number.isInteger(want) && got < want)) return { ...(await halt(t.plan, `executor reported ${got} task result(s)${Number.isInteger(want) ? ` for ${want} task(s)` : ""}`)), failed: true };
+  const skippedTask = res.taskResults.find((x) => x.status === "skipped");
+  if (skippedTask) return { ...(await halt(t.plan, `owner decision needed: task ${skippedTask.task} was skipped${skippedTask.evidence ? ` (${skippedTask.evidence})` : ""}`)), decision: skippedTask };
   if (!hasSummary) return { ...(await halt(t.plan, `no SUMMARY at ${t.summary}`)), failed: true };
   return { plan: t.plan, ok: true, wt };
 }
@@ -329,7 +390,7 @@ const haltStop = (outcomes, stage) => {
   if (!bad.length) return null;
   const quota = bad.find((o) => o.failure?.class === "quota");
   if (quota) return owner(stage, `quota or rate limit: ${quota.reason}`, { failure: quota.failure, halted: bad, options: [`rerun after the reset${quota.failure.retryAfterSeconds ? ` (about ${quota.failure.retryAfterSeconds} s)` : ""}`] });
-  return owner(stage, bad.map((o) => `${o.plan}: ${o.reason}`).join("; "), { halted: bad, options: ["continue (rerun with the same args after resolving)", "stop"] });
+  return owner(stage, bad.map((o) => `${o.plan}: ${o.reason}`).join("; "), { halted: bad, options: [`answer each halt with ph gsd halt clear ${N} --plan <id> --reason <answer>, then rerun with the same args`, "stop"] });
 };
 
 // ---- green gate and bounded verify-fix rounds (GSDF-44, GSDF-49..52) ----
@@ -351,22 +412,56 @@ async function runGate(waveId, tasks) {
 }
 const failureText = (list) => list.map((f) => `- ${f.step}${f.plan ? ` (plan ${f.plan})` : ""}: ${f.outcome ?? "failed"}; full log ${f.log ?? "n/a"}\n${String(f.excerpt ?? "").split(/\r?\n/).map((l) => `    ${l}`).join("\n")}`).join("\n");
 const fixerBlock = () => (g.fixer_verifies_itself
-  ? `After your changes run the build (${JSON.stringify(cmds.build)}) and the tests (${JSON.stringify(testArgv)}) yourself, at most ${g.fixer.max_build_attempts} times and within ${g.fixer.minutes} minutes; stop early when two consecutive attempts do not reduce the failure count. Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence}.`
-  : "Do not run the build or the tests: the orchestrator's gate verifies your changes. Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence}.");
-const fixerText = (owns, findings, failures) => [`<kit_fixer_runtime>\nYou own: ${JSON.stringify(owns)}. Fix the confirmed review findings and gate failures below, nothing else; a finding with instances is fixed at every instance. Never commit.\n${fixerBlock()}\n</kit_fixer_runtime>`, findings.length ? `Confirmed findings (JSON): ${JSON.stringify(findings.map(findingBrief))}` : "", failures.length ? `Gate failures:\n${failureText(failures)}` : ""].filter(Boolean).join("\n\n");
+  ? `After your changes run the build (${JSON.stringify(cmds.build)}) and the tests (${JSON.stringify(testArgv)}) yourself, at most ${g.fixer.max_build_attempts} times and within ${g.fixer.minutes} minutes; stop early when two consecutive attempts do not reduce the failure count. Judge yourself only on the failures and findings given to you: a failure in a file you do not own is not yours and does not make your status unresolved. Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence, requests}.`
+  : "Do not run the build or the tests: the orchestrator's gate verifies your changes. Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence, requests}.");
+// G070: an edit outside the owns is never a workaround; the fixer returns it as a request instead.
+const fixerText = (owns, findings, failures) => [`<kit_fixer_runtime>\nYou own: ${JSON.stringify(owns)}. Fix the confirmed review findings and gate failures below, nothing else; a finding with instances is fixed at every instance. Never commit. A change needed in a file you do not own: do not make it (not even a rename or an import tweak to dodge a clash); return it in requests [{path, change, reason}].\n${fixerBlock()}\n</kit_fixer_runtime>`, findings.length ? `Confirmed findings (JSON): ${JSON.stringify(findings.map(findingBrief))}` : "", failures.length ? `Gate failures:\n${failureText(failures)}` : ""].filter(Boolean).join("\n\n");
 // The fixer repairs confirmed defects and failed checks in existing code, where more effort finds the edge cases its
 // tests miss (owner decision 2026-10-22, after "Spending your effort"): it runs at FIXER_EFFORT on its own tier's
 // model unless the project's gsd.roles.fixer sets an effort.
 const FIXER_EFFORT = "high";
 const fixerOpts = (label, extra = {}) => ({ label, agentType: agentFor("fixer", "gsd-code-fixer"), role: "fixer", ...(cfg.gsd.roles?.fixer?.effort ? {} : { effort: FIXER_EFFORT }), schema: FIXER_SCHEMA, ...extra });
-// CR-GSF-16: every fix result is inspected before the gate reruns; a failed or unresolved repair stops the round.
+// Main-tree edits outside every plan's owns stop the run before the gate and the review are paid for, not at Commit
+// (G070, kit-feedback 35).
+async function strayStop(tasks, stage) {
+  const pf = await planFiles(tasks);
+  if (pf.stop) return pf.stop;
+  if (!pf.unowned.length) return null;
+  return owner(stage, `changes outside every plan's owns: ${pf.unowned.slice(0, 10).join(", ")}`, { paths: pf.unowned, options: ["move or revert them, then rerun with the same args", "add them to a plan's owns and replan"] });
+}
+// G089, G083: shared changes (requests no open plan owns; the plans' <shared_changes> of this execution wave) are made
+// by one integration fixer owning exactly their paths, before the gate; its files join the wave commit and
+// commits.json, and the resume gate knows them from execute-progress.json.
+async function applyShared(waveId, label) {
+  const open = sharedChanges.filter((s) => !s.applied);
+  if (!open.length) return null;
+  const nameless = open.filter((s) => !s.path);
+  if (nameless.length) return owner("Integration", `shared changes of ${label} name no file, so no fixer can own them: ${nameless.map((s) => `${s.from}: ${String(s.change).slice(0, 120)}`).join("; ")}`, { sharedChanges: nameless, options: ["apply them by hand, commit them, then rerun with the same args", "name the file in the plan's <shared_changes> and regenerate the handoff"] });
+  const files = [...new Set(open.map((s) => s.path))];
+  for (const f of files) integrationFiles.add(f);
+  progress.integration = [...integrationFiles];
+  if (!(await saveProgress())) return result("failed", { reason: `${PROGRESS} could not be written before the shared changes` });
+  const brief = open.map(({ from, path, change, reason }) => ({ from, path, change, reason }));
+  const r = await call([`Shared changes for ${label}: no open plan of the phase owns these paths, so you make them. You own exactly these files: ${JSON.stringify(files)}. Make each change below and nothing else; never commit.`, `Changes (JSON): ${JSON.stringify(brief)}`, "Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence}.", digestLine(`shared:${waveId}`, await digestOf({ files }))].join("\n\n"), fixerOpts(`shared-${waveId}`));
+  if (r.result === null) return owner("Integration", `the shared-change fixer of ${label} returned nothing${r.reason ? ` (${r.reason})` : ""}`, { sharedChanges: open, ...(fatal(r.reason) ? { failure: classify(r.reason) } : {}) });
+  if (r.result.status !== "fixed") return owner("Integration", `shared changes of ${label} unresolved${r.result.evidence ? `: ${r.result.evidence}` : ""}`, { sharedChanges: open });
+  for (const s of open) s.applied = true;
+  if (!(await saveProgress())) return result("failed", { reason: `${PROGRESS} could not be written after the shared changes` });
+  ev(`shared ${waveId} ${files.length}`);
+  return null;
+}
+// CR-GSF-16: every fix result is inspected before the gate reruns. An owner decision, a quota or a call that could
+// not run stops the round at once; a fixer that answers unresolved, or a fix call that returned nothing, is judged on a
+// fresh gate (G066, G088, kit-feedback 28/30): the round stops red only while that fixer's own failures remain.
 async function fixRounds(waveId, tasks, first, label, tail) {
   let cur = first;
   let prev = first.failureCount;
   let noDrop = 0;
   for (let round = 1; !cur.green && round <= g.max_verify_rounds; round++) {
     const red = (why, extra = {}) => ({ stop: owner("Gate", `${label} is red after fix round ${round}: ${why}${tail}`, { failures: cur.failures, evidence: cur.evidence, blockedBy: cur.blockedBy, ...extra }) });
-    const fixes = Object.entries(cur.byPlan ?? {}).map(([id, list]) => async () => {
+    const placed = (cur.unplaced ?? []).filter((f) => (f.files ?? []).length);
+    const fileless = (cur.unplaced ?? []).filter((f) => !(f.files ?? []).length);
+    const fixes = Object.entries(cur.byPlan ?? {}).filter(([id]) => tasks.some((x) => x.plan === id)).map(([id, list]) => async () => {
       const t = tasks.find((x) => x.plan === id);
       if (!t) return { id, skipped: true };
       const reqs = pendingRequests[id] ?? [];
@@ -377,25 +472,32 @@ async function fixRounds(waveId, tasks, first, label, tail) {
       const prompt = [`Fix round ${round} for plan ${id}: the gate failed on your owned files. Fix only inside your owns; do not run the build or the tests.`, failureText(list), reqs.length ? `Change requests from other plans of this wave (JSON): ${JSON.stringify(reqs)}` : "", `Evidence: ${cur.evidence}`, "Return the same JSON as before, with resolvedRequests listing only request paths you actually resolved.", dg].filter(Boolean).join("\n\n");
       return { id, kind: "executor", t, ...(await call(prompt, execOpts(t, `fix-${id}-${round}`))) };
     });
-    if ((cur.unplaced ?? []).length) {
-      const files = [...new Set(cur.unplaced.flatMap((f) => f.files ?? []))];
+    // G064: an integration fixer owns exactly the files its failures name; a failure naming no file has no owner.
+    if (placed.length) {
+      const files = [...new Set(placed.flatMap((f) => f.files ?? []))];
       for (const f of files) integrationFiles.add(f);
-      fixes.push(async () => ({ id: null, kind: "integration", ...(await call([`Integration fix: these gate failures belong to no plan. You own exactly these files: ${JSON.stringify(files)}.`, failureText(cur.unplaced), "Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence}.", digestLine("fix:integration", await digestOf({ files })) ].join("\n\n"), fixerOpts(`integration-fix-${round}`))) }));
+      progress.integration = [...integrationFiles];
+      fixes.push(async () => ({ id: null, kind: "integration", ...(await call([`Integration fix: these gate failures belong to no plan. You own exactly these files: ${JSON.stringify(files)}.`, failureText(placed), "Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence}.", digestLine("fix:integration", await digestOf({ files })) ].join("\n\n"), fixerOpts(`integration-fix-${round}`))) }));
     }
+    if (!fixes.length && !sharedChanges.some((s) => !s.applied)) return red(fileless.length ? `${fileless.length} gate failure(s) name no file of any plan, so no fixer can own them` : "no fixer owns the failing files");
     const results = await parallel(fixes);
+    const soft = [];
     for (const r of results) {
       if (!r) return red("a fix call failed to run");
       if (r.skipped) continue;
       const who = r.id ? `plan ${r.id}` : "the integration fixer";
-      if (r.result === null) return fatal(r.reason) ? { stop: owner("Gate", `fix call of ${who} failed: ${r.reason}`, { failure: classify(r.reason), evidence: cur.evidence }) } : red(`fix call of ${who} returned nothing${r.reason ? ` (${r.reason})` : ""}`);
+      if (r.result === null) {
+        if (fatal(r.reason)) return { stop: owner("Gate", `fix call of ${who} failed: ${r.reason}`, { failure: classify(r.reason), evidence: cur.evidence }) };
+        soft.push({ id: r.id, why: `fix call of ${who} returned nothing${r.reason ? ` (${r.reason})` : ""}` });
+        continue;
+      }
+      await routeRequests(r.t ?? { plan: r.id ?? "integration" }, r.result);
+      if (!(await saveProgress())) return red("could not persist pending change requests");
       if (r.kind === "executor") {
-        routeRequests(r.t, r.result);
-        if (!(await saveProgress())) return red("could not persist pending change requests");
         const decision = ownerDecision(r.result);
         if (decision) return { stop: owner("Gate", `owner decision needed in the fix of ${r.id}: ${decision.note ?? decision.evidence ?? decision.status}`, { decision, evidence: cur.evidence }) };
-        pendingRequests[r.id] = (pendingRequests[r.id] ?? []).filter((q) => !(r.result.resolvedRequests ?? []).includes(q.path));
-      } else if (r.result.status !== "fixed") return red(`${who} unresolved (${r.result.remaining_failures ?? "?"} failures remain)${r.result.evidence ? `: ${r.result.evidence}` : ""}`);
-      else if (r.id) pendingRequests[r.id] = (pendingRequests[r.id] ?? []).filter((q) => !(r.result.resolvedRequests ?? []).includes(q.path));
+      } else if (r.result.status !== "fixed") soft.push({ id: r.id, why: `${who} unresolved (${r.result.remaining_failures ?? "?"} failures remain)${r.result.evidence ? `: ${r.result.evidence}` : ""}` });
+      if (r.id) clearResolved(r.id, r.result);
     }
     if (!(await saveProgress())) return red("could not persist pending change requests");
     if (worktreeMode) {
@@ -403,8 +505,14 @@ async function fixRounds(waveId, tasks, first, label, tail) {
       const hs = haltStop(await integrate(live.map((t) => ({ plan: t.plan, ok: true, wt: worktrees[t.plan] })), live), "Gate");
       if (hs) return { stop: hs };
     }
+    const stray = await strayStop(tasks, "Gate");
+    if (stray) return { stop: stray };
+    const sh = await applyShared(waveId, label);
+    if (sh) return { stop: sh };
     ev(`fix ${waveId} round ${round}`);
     cur = await runGate(waveId, tasks);
+    const still = soft.filter((s) => (s.id ? (cur.byPlan?.[s.id] ?? []).length > 0 : (cur.unplaced ?? []).some((f) => (f.files ?? []).length)));
+    if (!cur.green && still.length) return red(still.map((s) => s.why).join("; "));
     noDrop = cur.failureCount >= prev ? noDrop + 1 : 0;
     prev = cur.failureCount;
     if (!cur.green && noDrop >= 2) return { stop: owner("Gate", `verify-fix stalled: ${cur.failureCount} failures did not drop over 2 rounds`, { failures: cur.failures, evidence: cur.evidence }) };
@@ -436,18 +544,21 @@ const gateFinding = (f) => {
   if (!high) return "deferred";
   return String(f.trigger ?? "").trim() && Number(f.confidence) >= 80 && String(f.likelihood).toLowerCase() !== "theoretical" ? "gated" : "downgraded";
 };
-const metrics = { confirmed: 0, refuted: 0, unverified: 0, resolved: 0, deferred: 0, preExisting: 0, secondVerifier: 0 };
+const metrics = { confirmed: 0, refuted: 0, unverified: 0, resolved: 0, deferred: 0, downgraded: 0, preExisting: 0, secondVerifier: 0 };
 const findingFiles = (list) => [...new Set(list.flatMap((f) => [f.file, ...(f.instances ?? []).map((x) => x.file)]).filter(Boolean))];
+// Each verdict keeps its evidence on the finding (G081): an uncertain or unverified finding reaches the owner with
+// what the verifiers found, not only a generic reason.
 async function verifyFindings(gated, plan) {
   const verdicts = {};
+  const evidence = {};
   const dg = digestLine(`findings:${plan}`, await digestOf({ files: findingFiles(gated) }));
   for (let attempt = 0; attempt < 2; attempt++) {
     const missing = gated.filter((f) => !verdicts[f.id]);
     if (!missing.length) break;
     const r = await call([`Verify these review findings of plan ${plan} independently, read-only: trace each trigger through the code and answer confirmed, refuted or uncertain with evidence.`, `Findings (JSON): ${JSON.stringify(missing.map(findingBrief))}`, "Return JSON {verdicts: [{id, verdict, evidence}]}.", dg].join("\n\n"), { label: `verify-findings-${plan}`, agentType: agentFor("finding_verifier", "finding-verifier"), role: "finding_verifier", readOnly: true, schema: VERDICT_SCHEMA });
     // GSDF-01: a quota, credit or auth failure is never retried.
-    if (r.result === null && fatal(r.reason)) return { stop: owner("Review", `finding verifier of ${plan} failed: ${r.reason}`, { failure: classify(r.reason) }) };
-    for (const v of r.result?.verdicts ?? []) if (missing.some((f) => f.id === v.id)) verdicts[v.id] = v.verdict;
+    if (r.result === null && fatal(r.reason)) return { stop: owner("Review", `finding verifier of ${plan} failed: ${r.reason}`, { failure: classify(r.reason), findings: gated.map(findingBrief) }) };
+    for (const v of r.result?.verdicts ?? []) if (missing.some((f) => f.id === v.id)) { verdicts[v.id] = v.verdict; evidence[v.id] = v.evidence ?? ""; }
   }
   // A second, independent verifier decides what the first left uncertain, before the owner is asked; it does not see
   // the first verdict. Still uncertain stays unverified.
@@ -455,10 +566,16 @@ async function verifyFindings(gated, plan) {
   if (unsure.length) {
     metrics.secondVerifier += unsure.length;
     const r = await call([`Verify these review findings of plan ${plan} independently, read-only: trace each trigger through the code and answer confirmed, refuted or uncertain with evidence.`, `Findings (JSON): ${JSON.stringify(unsure.map(findingBrief))}`, "Return JSON {verdicts: [{id, verdict, evidence}]}.", dg].join("\n\n"), { label: `verify-findings-${plan}-second`, agentType: agentFor("finding_verifier", "finding-verifier"), role: "finding_verifier", readOnly: true, schema: VERDICT_SCHEMA });
-    if (r.result === null && fatal(r.reason)) return { stop: owner("Review", `second finding verifier of ${plan} failed: ${r.reason}`, { failure: classify(r.reason) }) };
-    for (const v of r.result?.verdicts ?? []) if (unsure.some((f) => f.id === v.id) && v.verdict !== "uncertain") verdicts[v.id] = v.verdict;
+    if (r.result === null && fatal(r.reason)) return { stop: owner("Review", `second finding verifier of ${plan} failed: ${r.reason}`, { failure: classify(r.reason), findings: gated.map(findingBrief) }) };
+    for (const v of r.result?.verdicts ?? []) if (unsure.some((f) => f.id === v.id)) {
+      if (v.verdict !== "uncertain") verdicts[v.id] = v.verdict;
+      evidence[v.id] = [evidence[v.id], v.evidence].filter(Boolean).join(" | second verifier: ");
+    }
   }
-  for (const f of gated) f.verdict = verdicts[f.id] ?? "unverified";
+  for (const f of gated) {
+    f.verdict = verdicts[f.id] ?? "unverified";
+    f.verdictEvidence = evidence[f.id] ?? (verdicts[f.id] ? "" : "no verifier answered");
+  }
   return {};
 }
 // Review records and deferred.md are written one at a time: review-record renders REVIEW.md from every record, and two
@@ -469,12 +586,53 @@ async function writeRecord(waveId, record) {
   const wr = await reviewWrite(() => flow(["review-record", phaseDir], { waveId, record }));
   return wr.code === 0 ? null : result("failed", { reason: `review record of ${record.plan} refused: ${(wr.json?.errors ?? [wr.json?.error ?? `exit ${wr.code}`]).join("; ")}` });
 }
+async function readRecord(waveId, plan) {
+  const r = await flow(["read", `${phaseDir}/review/${waveId}-${plan}.json`]);
+  try { return r.json?.exists ? JSON.parse(r.json.text) : null; } catch { return null; }
+}
+// deferred.md lines are appended once per finding (G081): a resumed review does not repeat them.
+async function appendDeferred(lines) {
+  if (!lines.length) return;
+  await reviewWrite(async () => {
+    const cur = await flow(["read", `${phaseDir}/deferred.md`]);
+    const have = new Set(String(cur.json?.text ?? "").split(/\r?\n/));
+    const fresh = lines.filter((l) => !have.has(l));
+    return fresh.length ? flow(["append", `${phaseDir}/deferred.md`], fresh.join("\n")) : null;
+  });
+}
+const confirmedOf = (record) => record.findings.filter((f) => f.verdict === "confirmed");
+const resolvedIds = (record) => new Set((record.resolution ?? []).filter((x) => x.resolved === true).map((x) => x.id));
+const unresolvedOf = (record) => confirmedOf(record).filter((f) => !resolvedIds(record).has(f.id));
+const asReview = (record, replay = null) => ({ record, replay, confirmed: confirmedOf(record), unverified: record.findings.filter((f) => f.verdict === "unverified" || f.verdict === "uncertain") });
 async function reviewPlan(t, waveId, codeOnly, scopeOverride) {
   const evScope = scopeOverride ? null : await gsd(["check", "evaluation-scope", "--plan", t.plan]);
-  const sc = (await flow(["review-scope", phaseDir], { plan: t.plan, files: scopeOverride ?? a.files, summary: t.summary, evaluation: evScope?.json?.files ?? [] })).json ?? { scope: [] };
+  const sc = (await flow(["review-scope", phaseDir], { plan: t.plan, files: scopeOverride ?? a.files, filterExplicit: Boolean(scopeOverride), summary: t.summary, evaluation: evScope?.json?.files ?? [] })).json ?? { scope: [] };
   for (const l of sc.log ?? []) log(`review scope ${t.plan}: ${l}`);
   const lenses = lensesFor(sc.scope ?? []);
-  const record = { plan: t.plan, scope: sc.scope ?? [], excluded: sc.excluded ?? [], lenses: lenses.map((l) => l.name), codeOnly, findings: [], resolution: [] };
+  // The record of a review is reused for the same work (plan text, SUMMARY, lenses, reviewers): unchanged code replays
+  // its findings; after a fix pass (a stop at Review, a hand fix) only the resolution check runs again (G080,
+  // kit-feedback 33/34). Findings left unverified, and resolutions without an answer, are judged again.
+  const key = { plan: t.planHash ?? null, summary: t.summary ? await fileSha(t.summary) : null, lenses: lenses.map((l) => l.name), reviewers: reviewers.map((rv) => [rv.model ?? null, rv.effort ?? null]) };
+  const record = { plan: t.plan, scope: sc.scope ?? [], excluded: sc.excluded ?? [], lenses: lenses.map((l) => l.name), codeOnly, findings: [], resolution: [], key, stamp: null, fixPass: 0 };
+  record.stamp = record.scope.length ? await digestOf({ files: record.scope }) : null;
+  const prior = await readRecord(waveId, t.plan);
+  if (prior && JSON.stringify(prior.key) === JSON.stringify(key) && JSON.stringify(prior.scope) === JSON.stringify(record.scope)) {
+    const open = prior.findings.filter((f) => f.status === "gated" && !["confirmed", "refuted"].includes(f.verdict));
+    if (!open.length && (prior.fixPass ?? 0) >= 1) {
+      log(`review ${t.plan}: the recorded findings were fixed once; only the resolution check runs again`);
+      return asReview(prior, "resolution");
+    }
+    if (prior.stamp === record.stamp && !(prior.fixPass ?? 0)) {
+      log(`review ${t.plan}: the recorded review of this code is reused${open.length ? `; ${open.length} finding(s) are verified again` : ""}`);
+      if (open.length) {
+        const vf = await verifyFindings(open, t.plan);
+        const bad = await writeRecord(waveId, prior);
+        if (bad) return { stop: bad };
+        if (vf.stop) return vf;
+      }
+      return asReview(prior, "review");
+    }
+  }
   if (record.scope.length) {
     const changed = (await flow(["changed-lines", phaseDir], { plan: t.plan, files: record.scope })).json?.files ?? {};
     const prompt = [
@@ -486,7 +644,7 @@ async function reviewPlan(t, waveId, codeOnly, scopeOverride) {
       "Set introduced true when this plan's change causes the defect, also on an unchanged line (a caller broken by a changed signature); false when the defect was there before the change. A defect outside the changed lines that the change did not cause is recorded as pre-existing and does not block.",
       "Report one defect once: when the same defect occurs in several places, give it a class (a short name of the defect kind) and list every other place in the reviewed files as instances [{file, line}], so one fix covers all of them.",
       `Return JSON {findings: [{id, severity (${SEVERITIES.join("|")}), trigger, likelihood, confidence, impact, file, line, description, introduced, class, instances}]}; an empty findings list when nothing needs fixing.`,
-      digestLine(`review:${t.plan}`, await digestOf({ files: record.scope })),
+      digestLine(`review:${t.plan}`, record.stamp),
     ].join("\n\n");
     // Each reviewer reviews the plan on its own; their findings are kept apart (ids R2-, R3-, ...), not merged.
     const replies = await parallel(reviewers.map((rv, k) => async () => {
@@ -508,18 +666,23 @@ async function reviewPlan(t, waveId, codeOnly, scopeOverride) {
     const gated = record.findings.filter((f) => f.status === "gated");
     if (gated.length) {
       const vf = await verifyFindings(gated, t.plan);
-      if (vf.stop) return vf;
+      if (vf.stop) {
+        // G081: what came back is kept, so the owner sees the findings and a rerun does not pay for them again.
+        const bad = await writeRecord(waveId, record);
+        return bad ? { stop: bad } : vf;
+      }
     }
     const deferred = record.findings.filter((f) => f.status !== "gated");
-    if (deferred.length) await reviewWrite(() => flow(["append", `${phaseDir}/deferred.md`], deferred.map((f) => `- ${f.id} (${f.severity}, ${f.status}) plan ${t.plan} ${f.file}${f.line ? `:${f.line}` : ""}: ${f.description} [reason: ${DEFER_REASON[f.status]}]`).join("\n")));
+    await appendDeferred(deferred.map((f) => `- ${f.id} (${f.severity}, ${f.status}) plan ${t.plan} ${f.file}${f.line ? `:${f.line}` : ""}: ${f.description} [reason: ${DEFER_REASON[f.status]}]`));
     metrics.deferred += deferred.length;
+    metrics.downgraded += deferred.filter((f) => f.status === "downgraded").length;
     metrics.preExisting += deferred.filter((f) => f.status === "pre-existing").length;
   }
   for (const f of record.findings) if (f.verdict) metrics[f.verdict === "uncertain" ? "unverified" : f.verdict] = (metrics[f.verdict === "uncertain" ? "unverified" : f.verdict] ?? 0) + 1;
   const bad = await writeRecord(waveId, record);
   if (bad) return { stop: bad };
   ev(`review ${waveId} ${t.plan}${codeOnly ? " code-only" : ""}`);
-  return { record, confirmed: record.findings.filter((f) => f.verdict === "confirmed"), unverified: record.findings.filter((f) => f.verdict === "unverified" || f.verdict === "uncertain") };
+  return asReview(record);
 }
 // Runs fn over items, gsd.code_review.max_concurrent at a time, in order; after the first stop no new item starts.
 async function reviewPool(items, fn) {
@@ -543,23 +706,64 @@ async function fixer(label, findings, failures, owns) {
   const r = await call(prompt, fixerOpts(label, { timeoutS: (g.fixer.minutes + 5) * 60 }));
   ev(`fixer ${label}`);
   if (!r.result || r.result.status !== "fixed") return { stop: owner("Fix", r.result ? `fixer unresolved: ${r.result.remaining_failures ?? "?"} failures remain` : `fixer stopped or timed out${r.reason ? `: ${r.reason}` : ""}`, { evidence: r.result?.evidence ?? null }) };
+  await routeRequests({ plan: "fixer" }, r.result);
   return { ok: true };
 }
+// Checks the confirmed findings still unresolved; findings resolved earlier keep their answer. A resolution call that
+// returns nothing (a dead caller, a lost transport) is no verdict: the run fails with a resume hint instead of
+// recording the findings as unresolved (G126, kit-feedback 32).
 async function resolutionCheck(reviews, waveId) {
   const unresolved = [];
   const done = await reviewPool(reviews, async (rv) => {
-    const confirmed = rv.record.findings.filter((f) => f.verdict === "confirmed");
-    if (!confirmed.length) return null;
-    const r = await call([`Resolution check of plan ${rv.record.plan}: decide for each finding below whether the current code resolves it; a finding with instances is resolved only when every instance is. Review only these findings; raise no new ones.`, `Findings (JSON): ${JSON.stringify(confirmed.map(findingBrief))}`, "Return JSON {resolution: [{id, resolved, evidence}]}.", digestLine(`resolve:${rv.record.plan}`, await digestOf({ files: [...new Set([...rv.record.scope, ...findingFiles(confirmed)])] }))].join("\n\n"), { label: `resolve-${rv.record.plan}`, agentType: agentFor("reviewer", "gsd-code-reviewer"), role: "reviewer", readOnly: true, schema: RESOLUTION_SCHEMA });
+    const open = unresolvedOf(rv.record);
+    if (!open.length) return null;
+    const prompt = [`Resolution check of plan ${rv.record.plan}: decide for each finding below whether the current code resolves it; a finding with instances is resolved only when every instance is. Review only these findings; raise no new ones.`, `Findings (JSON): ${JSON.stringify(open.map(findingBrief))}`, "Return JSON {resolution: [{id, resolved, evidence}]}.", digestLine(`resolve:${rv.record.plan}`, await digestOf({ files: [...new Set([...rv.record.scope, ...findingFiles(open)])] }))].join("\n\n");
+    const r = await call(prompt, { label: `resolve-${rv.record.plan}`, agentType: agentFor("reviewer", "gsd-code-reviewer"), role: "reviewer", readOnly: true, schema: RESOLUTION_SCHEMA });
     if (r.result === null && fatal(r.reason)) return { stop: owner("Review", `resolution check of ${rv.record.plan} failed: ${r.reason}`, { failure: classify(r.reason) }) };
-    rv.record.resolution = confirmed.map((f) => r.result?.resolution?.find((x) => x.id === f.id) ?? { id: f.id, resolved: false, evidence: "no answer" });
-    for (const x of rv.record.resolution) x.resolved ? metrics.resolved++ : unresolved.push(x);
+    if (r.result === null) return { stop: result("failed", { stage: "Review", reason: `resolution check of ${rv.record.plan} returned nothing (${r.reason ?? "no reply"}); this is no verdict on the findings: rerun with the same args (the recorded review and fix are reused)` }) };
+    const answered = open.map((f) => r.result.resolution?.find((x) => x.id === f.id) ?? { id: f.id, resolved: false, evidence: "no answer" });
+    rv.record.resolution = [...(rv.record.resolution ?? []).filter((x) => !open.some((f) => f.id === x.id)), ...answered];
+    for (const x of answered) x.resolved ? metrics.resolved++ : unresolved.push({ ...x, plan: rv.record.plan });
     const bad = await writeRecord(waveId, rv.record);
     return bad ? { stop: bad } : null;
   });
   if (done.stop) return done;
   ev(`resolution ${waveId}`);
   return { unresolved };
+}
+// The fix of confirmed findings: one fixer pass, the gate, the resolution check; findings still unresolved get one more
+// fixer pass limited to them (G080). A replayed review whose first pass already ran goes straight to the check.
+// opts: {label (first fixer label), failures (gate failures for the first pass), owns, gate() -> gate result}.
+async function fixAndResolve(waveId, reviews, opts) {
+  let open = reviews.filter((r) => unresolvedOf(r.record).length || ((opts.failures ?? []).length && r.replay !== "resolution"));
+  let evidence = null;
+  for (let pass = 1; pass <= 2; pass++) {
+    const fixNow = open.filter((r) => (r.record.fixPass ?? 0) < pass);
+    const findings = fixNow.flatMap((r) => unresolvedOf(r.record));
+    const failures = pass === 1 ? opts.failures ?? [] : [];
+    if (findings.length || failures.length) {
+      const fx = await fixer(pass === 1 ? opts.label : `fix-unresolved-${waveId}`, findings, failures, opts.owns);
+      if (fx.stop) return fx;
+      for (const r of fixNow) {
+        r.record.fixPass = pass;
+        const bad = await writeRecord(waveId, r.record);
+        if (bad) return { stop: bad };
+      }
+      const stray = await strayStop(opts.tasks, "Fix");
+      if (stray) return { stop: stray };
+      const sh = await applyShared(waveId, opts.what);
+      if (sh) return { stop: sh };
+      const again = await opts.gate();
+      if (!again.green) return { stop: owner("Gate", `${opts.what} red after the review fix`, { failures: again.failures, evidence: again.evidence }) };
+      evidence = again.evidence;
+    }
+    const rc = await resolutionCheck(open, waveId);
+    if (rc.stop) return rc;
+    if (!rc.unresolved.length) return { evidence };
+    open = open.filter((r) => unresolvedOf(r.record).length);
+    if (pass === 2) return { stop: owner("Review", `${rc.unresolved.length} confirmed findings unresolved after two fix passes`, { findings: rc.unresolved, options: ["fix them by hand, then rerun with the same args (only the resolution check runs again)", "stop"] }) };
+  }
+  return { evidence };
 }
 
 // ---- orchestrator commits (GSDF-53) and tracking ----
@@ -654,10 +858,26 @@ async function codeWave(w) {
   }
   const coded = open.filter((t) => planInfo(t.plan).has_summary);
   const haltedCoded = coded.filter((t) => planInfo(t.plan).halted).map((t) => t.plan);
-  if (haltedCoded.length) return { stop: owner("Execute", `plans with a SUMMARY and a halt record: ${haltedCoded.join(", ")}; resolve the halt first`, { halted: haltedCoded }) };
+  if (haltedCoded.length) return { stop: owner("Execute", `plans with a SUMMARY and a halt record: ${haltedCoded.join(", ")}; resolve the halt first (ph gsd halt clear ${N} --plan <id> --reason <answer>)`, { halted: haltedCoded }) };
+  // G069: a transfer that started and never finished left a partial copy; the plan does not rejoin as if complete.
+  const partial = ((await flow(["pending-transfers", phaseDir])).json?.pending ?? []).filter((p) => open.some((t) => t.plan === p.plan));
+  if (partial.length) return { stop: owner("Execute", `the transfer of ${partial.map((p) => p.plan).join(", ")} did not finish: the main tree holds part of it (the worktree ${partial[0].worktree} is kept)`, { partial, options: ["copy the rest from the worktree by hand and delete the transfers-pending record", "revert the copied paths, delete the SUMMARY and the record, then rerun to re-execute"] }) };
   for (const t of coded) log(`plan ${t.plan}: SUMMARY present but not committed; it rejoins the gate, review and commit of wave ${w.k}`);
   const toRun = open.filter((t) => !planInfo(t.plan).has_summary && planInfo(t.plan).ready !== false);
+  // G055: a halted or blocked plan is reported, never skipped in silence while the rest of the wave commits.
+  for (const t of open.filter((x) => !planInfo(x.plan).has_summary && planInfo(x.plan).ready === false)) {
+    const p = planInfo(t.plan);
+    const why = p.halted ? "halted" : p.error ? `frontmatter ${p.error}` : `blocked by ${(p.blocked_by ?? []).join(", ") || "an unfinished plan"}`;
+    if (!skipped.some((s) => s.plan === t.plan)) skipped.push({ plan: t.plan, wave: w.k, why });
+    log(`warning: plan ${t.plan} skipped (${why}); answer a halt with ph gsd halt clear ${N} --plan ${t.plan} --reason <answer>`);
+  }
   const tasks = w.tasks.filter((t) => coded.includes(t) || toRun.includes(t));
+  // G083: the plans' <shared_changes> of this execution wave are applied before its gate.
+  for (const s of w.sharedChanges ?? []) {
+    const key = `${w.waveId}:${s.source}:${s.text}`;
+    if (!tasks.some((t) => t.plan === s.source) || sharedChanges.some((x) => x.key === key)) continue;
+    for (const p of s.paths?.length ? s.paths : [null]) sharedChanges.push({ key, from: s.source, path: p, change: s.text, reason: "declared in the plan's <shared_changes>", applied: false });
+  }
   if (!tasks.length) return { tasks };
   if (toRun.length && !worktreeMode) {
     const ow = await gsd(["check", "owns", N, "--plans", tasks.map((t) => t.plan).join(",")]);
@@ -683,10 +903,24 @@ async function codeWave(w) {
   await integrate(outcomes, toRun);
   if (!(await saveProgress())) return { stop: result("failed", { reason: "could not persist pending change requests" }) };
   const hs = haltStop(outcomes, "Execute");
-  return hs ? { stop: hs } : { tasks };
+  if (hs) return { stop: hs };
+  // G070: shared-tree executors write the main tree; an edit outside the owns stops here, before gate and review.
+  if (toRun.length && !worktreeMode) {
+    const stray = await strayStop(execMode === "batch" ? [...doneSoFar, ...tasks] : tasks, "Execute");
+    if (stray) return { stop: stray };
+  }
+  return { tasks };
 }
+const doneSoFar = [];
 const isTracer = (w) => w.tasks.some((t) => t.tracer === true || t.tracer?.is === true);
 const metricsLine = (wave) => flow(["append", "_workspace/review-metrics.jsonl"], JSON.stringify({ phase: N, wave, ...metrics }));
+
+// A run that skipped halted or blocked plans says so in its result; shared changes left unapplied stop it.
+const finish = (extra = {}) => {
+  const left = sharedChanges.filter((s) => !s.applied);
+  if (left.length) return owner("Integration", `${left.length} shared change(s) were never applied`, { sharedChanges: left });
+  return result("executed", { ...extra, ...(skipped.length ? { reason: `executed except ${skipped.map((s) => `${s.plan} (${s.why})`).join(", ")}`, next: `answer the halts (ph gsd halt clear ${N} --plan <id> --reason <answer>) and rerun with the same args` } : {}) });
+};
 
 if (execMode === "per-wave") {
   for (const w of waves) {
@@ -695,6 +929,8 @@ if (execMode === "per-wave") {
     if (!cw.tasks.length) continue;
     const label = isTracer(w) ? "tracer wave" : `wave ${w.k}`;
     const tail = isTracer(w) ? "; no later wave starts" : "";
+    const sh = await applyShared(w.waveId, label);
+    if (sh) return sh;
     phase("Gate");
     const fr = await fixRounds(w.waveId, cw.tasks, await runGate(w.waveId, cw.tasks), label, tail);
     if (fr.stop) return fr.stop;
@@ -703,25 +939,20 @@ if (execMode === "per-wave") {
     phase("Review");
     const rv = await reviewAll(cw.tasks, w.waveId, false);
     if (rv.stop) return rv.stop;
-    if (rv.unverified.length) return owner("Review", `${rv.unverified.length} blocking findings could not be verified`, { findings: rv.unverified });
+    if (rv.unverified.length) return owner("Review", `${rv.unverified.length} blocking findings could not be verified`, { findings: rv.unverified.map((f) => ({ ...findingBrief(f), verdict: f.verdict, evidence: f.verdictEvidence ?? "" })) });
     let evidence = fr.gate.evidence;
-    if (rv.confirmed.length) {
-      const fx = await fixer(`fix-review-${w.waveId}`, rv.confirmed, [], cw.tasks.flatMap((t) => t.owns ?? []));
-      if (fx.stop) return fx.stop;
-      const again = await runGate(w.waveId, cw.tasks);
-      if (!again.green) return owner("Gate", `wave ${w.k} red after the review fix`, { failures: again.failures, evidence: again.evidence });
-      evidence = again.evidence;
-      const rc = await resolutionCheck(rv.reviews, w.waveId);
-      if (rc.stop) return rc.stop;
+    if (rv.reviews.some((r) => unresolvedOf(r.record).length)) {
+      const fx = await fixAndResolve(w.waveId, rv.reviews, { label: `fix-review-${w.waveId}`, owns: cw.tasks.flatMap((t) => t.owns ?? []), tasks: cw.tasks, what: `wave ${w.k}`, gate: () => runGate(w.waveId, cw.tasks) });
       await metricsLine(w.waveId);
-      if (rc.unresolved.length) return owner("Review", `${rc.unresolved.length} confirmed findings unresolved after one fix pass`, { findings: rc.unresolved });
+      if (fx.stop) return fx.stop;
+      evidence = fx.evidence ?? evidence;
     } else await metricsLine(w.waveId);
     const cm = await commitWaves([{ w, tasks: cw.tasks }], "green", evidence);
     if (cm.stop) return cm.stop;
     const tr = await track(w, cw.tasks, "green", evidence);
     if (tr.stop) return tr.stop;
   }
-  return result("executed", { evidence: evidenceFiles });
+  return finish({ evidence: evidenceFiles });
 }
 
 // ---- batch mode (GSDF-49, D-63): code-only waves, one phase review, one final gate, one fixer ----
@@ -732,45 +963,65 @@ for (const w of waves) {
   if (cw.stop) return cw.stop;
   if (!cw.tasks.length) continue;
   done.push({ w, tasks: cw.tasks });
+  doneSoFar.push(...cw.tasks);
   if (g.batch_review) {
     const rv = await reviewAll(cw.tasks, w.waveId, true);
     if (rv.stop) return rv.stop;
     allReviews.push(...rv.reviews);
   }
 }
-if (!done.length) return result("executed", { evidence: evidenceFiles });
+if (!done.length) return finish({ evidence: evidenceFiles });
 phase("Batch");
 const doneTasks = done.flatMap((d) => d.tasks);
 // CR-GSF-10: the phase review covers the actual changes of every executed plan, with or without per-wave reviews.
 const phaseFiles = await planFiles(doneTasks);
 if (phaseFiles.stop) return phaseFiles.stop;
+// G070: an edit outside every plan's owns stops before the phase review is paid for.
+if (phaseFiles.unowned.length) return owner("Commit", `changes outside every plan's owns: ${phaseFiles.unowned.slice(0, 10).join(", ")}`, { paths: phaseFiles.unowned, options: ["move or revert them, then rerun with the same args", "add them to a plan's owns and replan"] });
 const phaseScope = [...new Set([...Object.values(phaseFiles.files).flat(), ...phaseFiles.integration])].filter((f) => !f.startsWith(".planning/")).sort();
 if (!phaseScope.length) log("phase review: the phase diff holds no code changes");
+// G071: the phase review covers the whole phase diff; an explicit files list scopes only the per-wave reviews.
+if (Array.isArray(a.files) && a.files.length) log(`phase review: the files argument scopes only the per-wave reviews${g.batch_review ? "" : " (none run: batch_review is off)"}; the phase review covers the phase diff`);
 const phaseReview = await reviewPlan({ plan: `${nn}-phase`, summary: null }, "phase", true, phaseScope);
 if (phaseReview.stop) return phaseReview.stop;
 allReviews.push(phaseReview);
-const confirmed = allReviews.flatMap((r) => r.confirmed);
 const unverified = allReviews.flatMap((r) => r.unverified);
-if (unverified.length) return owner("Review", `${unverified.length} blocking findings could not be verified`, { findings: unverified });
+if (unverified.length) return owner("Review", `${unverified.length} blocking findings could not be verified`, { findings: unverified.map((f) => ({ ...findingBrief(f), verdict: f.verdict, evidence: f.verdictEvidence ?? "" })) });
 const batchId = `${prefix}batch`;
-let final = await runGate(batchId, doneTasks);
-if (!final.green || confirmed.length) {
-  const fx = await fixer("batch-fixer", confirmed, final.failures ?? [], doneTasks.flatMap((t) => t.owns ?? []));
-  if (fx.stop) return fx.stop;
-  final = await runGate(batchId, doneTasks);
-  if (!final.green) return owner("Gate", "batch gate still red after the fixer", { failures: final.failures, evidence: final.evidence });
+const batchGate = () => runGate(batchId, doneTasks);
+const shB = await applyShared(batchId, "the batch");
+if (shB) return shB;
+let final = await batchGate();
+// G064: failures in files no executed plan owns go to an integration fixer owning exactly those files; the batch fixer
+// gets only the failures of the executed plans; a failure naming no file has no fixer.
+if (!final.green) {
+  const placed = (final.unplaced ?? []).filter((f) => (f.files ?? []).length);
+  if (placed.length) {
+    const files = [...new Set(placed.flatMap((f) => f.files))];
+    for (const f of files) integrationFiles.add(f);
+    progress.integration = [...integrationFiles];
+    if (!(await saveProgress())) return result("failed", { reason: `${PROGRESS} could not be written before the integration fix` });
+    const r = await call([`Integration fix: these gate failures belong to no plan. You own exactly these files: ${JSON.stringify(files)}.`, failureText(placed), "Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence}.", digestLine("fix:integration", await digestOf({ files }))].join("\n\n"), fixerOpts("integration-fix-batch"));
+    if (!r.result || r.result.status !== "fixed") return owner("Gate", `the integration fixer of the batch ${r.result ? "answered unresolved" : `returned nothing${r.reason ? ` (${r.reason})` : ""}`}`, { failures: placed, evidence: final.evidence, ...(fatal(r.reason) ? { failure: classify(r.reason) } : {}) });
+    final = await batchGate();
+  }
 }
-const rc = await resolutionCheck(allReviews, batchId);
-if (rc.stop) return rc.stop;
-await metricsLine(batchId);
-if (rc.unresolved.length) return owner("Review", `${rc.unresolved.length} confirmed findings unresolved after the fixer`, { findings: rc.unresolved });
-const cm = await commitWaves(done, "skipped", final.evidence);
+const batchFailures = [...new Set(Object.entries(final.byPlan ?? {}).filter(([id]) => doneTasks.some((t) => t.plan === id)).flatMap(([, list]) => list))];
+if (!final.green && !batchFailures.length) return owner("Gate", `batch gate red: ${final.failureCount} failure(s) that no executed plan owns${(final.unplaced ?? []).some((f) => !(f.files ?? []).length) ? " (some name no file)" : ""}`, { failures: final.failures, evidence: final.evidence });
+let finalEvidence = final.evidence;
+if (!final.green || allReviews.some((r) => unresolvedOf(r.record).length)) {
+  const fx = await fixAndResolve(batchId, allReviews, { label: "batch-fixer", failures: final.green ? [] : batchFailures, owns: doneTasks.flatMap((t) => t.owns ?? []), tasks: doneTasks, what: "batch gate still", gate: batchGate });
+  await metricsLine(batchId);
+  if (fx.stop) return fx.stop;
+  finalEvidence = fx.evidence ?? finalEvidence;
+} else await metricsLine(batchId);
+const cm = await commitWaves(done, "skipped", finalEvidence);
 if (cm.stop) return cm.stop;
 for (const d of done) {
-  const tr = await track(d.w, d.tasks, "skipped", final.evidence);
+  const tr = await track(d.w, d.tasks, "skipped", finalEvidence);
   if (tr.stop) return tr.stop;
 }
-return result("executed", { evidence: evidenceFiles, finalGate: final.evidence });
+return finish({ evidence: evidenceFiles, finalGate: finalEvidence });
 } finally {
   await flow(["unlock", "debug", lease.json.token]);
 }

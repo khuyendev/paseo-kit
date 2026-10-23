@@ -13,7 +13,8 @@ export const task = (id, extra = {}) => ({ key: id, plan: id, planHash: `h-${id}
 
 // waves: [[task, ...], ...]; plans get frontmatter wave/depends/files_modified from opts.meta[id].
 export function makeExecWorld({ waves = [[task("01-01"), task("01-02")]], overlay = {}, meta = {}, prefix = "" } = {}) {
-  const files = { ".gitignore": ".claude/worktrees/\n_workspace/\n" };
+  // fail.flag steers the fake test command; it is no plan output (the stray-edit check would stop on it).
+  const files = { ".gitignore": ".claude/worktrees/\n_workspace/\nfail.flag\n" };
   waves.forEach((tasks, i) => {
     files[`${PHASE_DIR}/handoff/${prefix}w${i + 1}.args.json`] = JSON.stringify({ wave: i + 1, waveId: `${prefix}w${i + 1}`, tasks });
     for (const t of tasks) {
@@ -79,6 +80,7 @@ export function executor(w, overrides = {}) {
     }
     if (o.label.startsWith("review-")) return { findings: [] };
     if (o.label.startsWith("fix-") || o.label.startsWith("integration-fix")) { fs.rmSync(path.join(w.root, "fail.flag"), { force: true }); return { taskResults: [], status: "fixed" }; }
+    if (o.label.startsWith("shared-")) return { status: "fixed", attempts: 1, remaining_failures: 0 };
     if (o.label.startsWith("batch-fixer") || o.label.startsWith("fix-review")) { fs.rmSync(path.join(w.root, "fail.flag"), { force: true }); return { status: "fixed", attempts: 1, remaining_failures: 0 }; }
     if (o.label.startsWith("resolve-")) return { resolution: [...prompt.matchAll(/"id":"([^"]+)"/g)].map((m) => ({ id: m[1], resolved: true, evidence: "fixed" })) };
     if (o.label.startsWith("verify-findings")) return { verdicts: [...prompt.matchAll(/"id":"([^"]+)"/g)].map((m) => ({ id: m[1], verdict: "confirmed" })) };

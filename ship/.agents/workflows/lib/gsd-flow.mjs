@@ -32,8 +32,10 @@ const COMMANDS = {
   "dirty-owned": (root, [phaseDir], input) => execute.dirtyOwned(root, phaseDir, JSON.parse(input)),
   "execution-inputs": (root) => execute.executionInputs(root),
   "dependency-seed": (root, [phaseDir], input) => execute.dependencySeed(root, phaseDir, JSON.parse(input)),
+  "pending-transfers": (root, [phaseDir]) => execute.pendingTransfers(root, phaseDir),
+  owners: (root, _args, input) => execute.ownersOf(root, JSON.parse(input)),
   remove: (root, [p]) => files.remove(root, p),
-  lock: (root, [name, runId]) => files.lock(root, name, runId),
+  lock: (root, [name, runId, kind]) => files.lock(root, name, runId, undefined, kind ?? null),
   unlock: (root, [name, runId]) => files.unlock(root, name, runId),
   "lock-check": (root, [name, runId]) => files.lockCheck(root, name, runId),
   digest: (root, _args, input) => gate.digest(root, JSON.parse(input)),
@@ -50,6 +52,11 @@ const COMMANDS = {
 
 export const COMMAND_NAMES = Object.keys(COMMANDS);
 
+// Verbs whose handler reads JSON or text from stdin; every other verb never touches stdin, so a person running
+// `gsd-flow.mjs remove <path>` from a shell whose stdin is an open pipe is not left waiting (G088).
+const STDIN = new Set(["write", "append", "json-push", "summary-heal", "resume-gate", "transfer", "owned-changes", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "evidence-check", "review-scope", "review-record", "changed-lines"]);
+export const readsStdin = (cmd) => STDIN.has(cmd);
+
 export async function main(argv, { root = configRoot(), input = "", out = (l) => process.stdout.write(`${l}\n`) } = {}) {
   const [cmd, ...args] = argv;
   const fn = COMMANDS[cmd];
@@ -58,7 +65,7 @@ export async function main(argv, { root = configRoot(), input = "", out = (l) =>
     return 1;
   }
   try {
-    const { code = 0, ...json } = await fn(root, args, input);
+    const { code = 0, ...json } = await fn(root, args, typeof input === "function" ? input() : input);
     out(JSON.stringify(json));
     return code;
   } catch (e) {
@@ -68,6 +75,7 @@ export async function main(argv, { root = configRoot(), input = "", out = (l) =>
 }
 
 if (isMain(import.meta.url)) {
-  const input = process.stdin.isTTY ? "" : fs.readFileSync(0, "utf8");
+  const cmd = process.argv[2];
+  const input = () => (process.stdin.isTTY || !readsStdin(cmd) ? "" : fs.readFileSync(0, "utf8"));
   process.exitCode = await main(process.argv.slice(2), { input });
 }

@@ -6,6 +6,37 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Bug-hunt fix pass, execute flow (owner-approved fix brief 2026-10-23, kit-bughunt FIX-BRIEF; groups G054-G092, G006,
+  G020, G126; kit-feedback 1, 19, 21, 23-36). Safe resume: a nested path belongs to the plan owning it most specifically
+  (the hotfix of feedback 31, done on normalized owns); a commit of the run whose commits.json record failed is
+  reconciled from its `Plans:` trailer; a commit between runs that touches no plan-owned file is accepted; new adapter key
+  `adapter.ownership.ignore` (default empty) for notes kept during a run. `ph gsd halt clear <N> --plan <id> --reason`
+  records the owner's answer; the rerun dispatches the plan with it, and skipped (halted, blocked) plans are listed in the
+  result. Requests route by path boundary and owns forms; a request no open plan owns, and each plan's
+  `<shared_changes>` (now `<path>: <change>` lines, carried per execution wave in the handoff), are made by one
+  integration fixer owning exactly those paths before the gate and committed with the wave (feedback 21, 36; no
+  trailer exemption). Fix rounds judge an unresolved fixer on a fresh gate (feedback 28, 30); a failure naming no file
+  stops instead of an integration fixer owning nothing; batch mode gives unplaced failures to an integration fixer.
+  Stray main-tree edits stop before the gate and the review (feedback 35); fixers return out-of-owns changes as
+  requests. Review: records carry a stamp and are replayed on unchanged code, a rerun after a fix pass runs only the
+  resolution check (feedback 33, 34), one more fixer pass covers findings still unresolved, a resolution call with no
+  answer fails with a resume hint instead of an unresolved verdict (feedback 32), verifier evidence reaches the owner,
+  deferred.md lines are written once; the agent-call digest leaves out HEAD and the run's own records. Gate evidence:
+  a changed obligation command is stale, a gsd setting edit is not, numbers are taken exclusively, attribution hooks
+  answer by failure id and their failures are noted, evidence parsers get stdout and stderr apart. Handoff writes a
+  manifest last and execute refuses a stale or cut-short handoff. Also: executor task coverage (empty or skipped is not
+  done), transfer intent record, `--end-of-options` for revision arguments, evaluation-scope walks the whole history
+  (`truncated` when a cap is hit), named git commit timeouts, STATE wave line written once, lease refusals name the
+  holder's workflow, a dead claim of the lease is reclaimed, gsd-flow verbs read stdin only when they take input, plan
+  frontmatter errors are not runnable, review-record plan ids, junction-safe review scope, quoted SUMMARY key-files.
+  gsd-plan stops at Discuss on unanswered blocking anti-patterns. Prompt text: the overlays of gsd-code-fixer (no
+  worktree, out-of-owns requests), gsd-code-reviewer (workflow severity words), gsd-executor (no WINDOWS ledger,
+  task coverage) and gsd-planner (`<path>: <change>`), finding-verifier (batched verdicts), the
+  gsd-execute, gsd-plan and gsd-discuss skills, kit-adapter.md section 4. README: critical and high block (the code's
+  rule). Changed tests: ADPT-17 fixture steps carry the requested argv; the exec test world ignores fail.flag; CONF-11
+  and ADPT-16 golden tables gain `ownership.ignore`. Measured check: tests/gsd-flows/bughunt-execute.test.mjs and the
+  full offline suite; not run on a live phase.
+
 - planning-panel targets Paseo 0.12.0 (manifest requirement and `@getpaseo/plugin`), like office: the 0.12.0 daemon
   refuses a 0.11.2 plugin. PANL-01 pins both plugins to 0.12.0. Measured check: the full offline suite.
 

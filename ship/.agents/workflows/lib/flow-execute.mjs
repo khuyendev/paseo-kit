@@ -7,7 +7,8 @@ import { loadConfig } from "../../harness/config.mjs";
 import { sha256 } from "../../harness/lib/hash.mjs";
 import { isInside, resolveInside, samePath, toSlash } from "../../harness/lib/paths.mjs";
 import { git, gitLines, head, status } from "./flow-git.mjs";
-import { contentHash, keyFiles, owned, ownsPrefixes } from "./flow-owns.mjs";
+import { contentHash, keyFiles, owned, ownsPrefixes, specificOwners } from "./flow-owns.mjs";
+import { matchesGlob } from "../../harness/adapter/contract.mjs";
 import { readWorktreeSeed } from "../../harness/runtime/worktree-seed.mjs";
 import { runGit } from "../../harness/runtime/worktrees.mjs";
 
@@ -51,6 +52,13 @@ export function cwdGuard(root, worktreeDir, cwd) {
 
 // Orchestrator bookkeeping (planning records, run records) is not plan output; owned SUMMARY files still count.
 const bookkeeping = (p) => p.startsWith(".planning/") || p.startsWith("_workspace/");
+// adapter.ownership.ignore: paths the orchestrator or the owner edits during a run (notes, feedback logs, kit-feedback
+// 23); neither the resume gate nor the commit check treats them as plan output.
+const ignoredBy = (root) => {
+  let globs = [];
+  try { globs = loadConfig(root).adapter.ownership.ignore ?? []; } catch { globs = []; }
+  return (p) => globs.some((g) => matchesGlob(p, g));
+};
 
 const baselineFile = (root, phaseDir) => path.join(resolveInside(root, phaseDir), "execute-baseline.json");
 
@@ -86,20 +94,49 @@ function accounted(root, phaseDir) {
   return { commits, transfers };
 }
 
-// input: {plans: [{id, owns[], summary, complete}]} — the plans of the phase with their SUMMARY state.
-export function resumeGate(root, phaseDir, { plans }) {
+const commitFiles = (root, sha) => gitLines(root, ["diff-tree", "--no-commit-id", "--name-only", "-r", "-m", "--root", sha], { allowFail: true });
+const trailerPlans = (root, sha) => {
+  const body = git(root, ["show", "-s", "--format=%B", sha], { allowFail: true }).out;
+  const m = /^Plans:\s*(\S.*)$/m.exec(body);
+  return m ? m[1].split(",").map((s) => s.trim()).filter(Boolean) : [];
+};
+
+// input: {plans: [{id, owns[], summary, complete}], integration?: [path]} — the plans of the phase with their SUMMARY
+// state, and the paths the run's integration fixer was given (orchestrator output, recorded in execute-progress.json).
+// A moved HEAD is checked commit by commit: a commit the orchestrator made but could not record (its `Plans:` trailer
+// names plans of this phase and every file it touches is theirs) is written into commits.json (`reconciled`); a
+// commit touching no file any plan of the phase owns (a docs commit between runs, kit-feedback 24) is `accepted`;
+// any other commit is foreign.
+export function resumeGate(root, phaseDir, { plans, integration = [] }) {
   const base = readJsonIf(baselineFile(root, phaseDir), null);
   if (!base) throw new Error(`no execute baseline in ${phaseDir}`);
   const prefixes = ownsPrefixes(root);
+  const ignored = ignoredBy(root);
+  const ownsOf = (pl) => [...(pl.owns ?? []), pl.summary].filter(Boolean);
   const problems = [];
+  const reconciled = [];
+  const accepted = [];
   if (!samePath(base.codeRoot, root)) problems.push({ kind: "code-root-moved", detail: `baseline code root ${base.codeRoot} != ${toSlash(root)}` });
   const { commits, transfers } = accounted(root, phaseDir);
   const now = snapshot(root);
   const own = new Set(commits.map((c) => c.sha));
   if (now.head !== base.head) {
-    const moved = base.head ? gitLines(root, ["rev-list", `${base.head}..HEAD`], { allowFail: true }) : [];
-    const foreign = moved.filter((sha) => !own.has(sha));
-    if (!moved.length || foreign.length) problems.push({ kind: "head-moved", detail: `HEAD ${now.head} moved outside the orchestrator's commits (${foreign.length || "unrelated"} foreign)`, head: now.head });
+    const moved = base.head ? gitLines(root, ["rev-list", "--reverse", `${base.head}..HEAD`], { allowFail: true }) : [];
+    const foreign = [];
+    for (const sha of moved.filter((s) => !own.has(s))) {
+      const files = commitFiles(root, sha);
+      const ids = trailerPlans(root, sha);
+      const mine = ids.length && ids.every((id) => plans.some((pl) => pl.id === id)) ? plans.filter((pl) => ids.includes(pl.id)) : [];
+      const assigned = mine.length ? files.map((f) => [f, specificOwners(f, mine, prefixes, ownsOf)[0]?.id ?? (bookkeeping(f) ? null : undefined)]) : [];
+      if (mine.length && files.length && assigned.every(([, id]) => id !== undefined)) {
+        const entry = { sha, phase: path.basename(phaseDir).split("-")[0], wave: null, plans: Object.fromEntries(mine.map((pl) => [pl.id, assigned.filter(([, id]) => id === pl.id).map(([f]) => f)])), reconciled: true };
+        const list = readJsonIf(path.join(resolveInside(root, phaseDir), "commits.json"), []) ?? [];
+        writeJsonAtomic(path.join(resolveInside(root, phaseDir), "commits.json"), [...list, entry]);
+        reconciled.push({ sha, plans: mine.map((pl) => pl.id) });
+      } else if (files.length && files.every((f) => !plans.some((pl) => owned(f, ownsOf(pl), prefixes)))) accepted.push({ sha, files });
+      else foreign.push(sha);
+    }
+    if (!moved.length || foreign.length) problems.push({ kind: "head-moved", detail: `HEAD ${now.head} moved outside the orchestrator's commits (${foreign.length || "unrelated"} foreign${foreign.length ? `: ${foreign.slice(0, 3).map((s) => s.slice(0, 7)).join(", ")}` : ""})`, head: now.head });
   }
   const baseDirty = new Map(base.dirty.map((d) => [d.path, d.sha256]));
   const baseUntracked = new Set(base.untracked);
@@ -111,13 +148,14 @@ export function resumeGate(root, phaseDir, { plans }) {
     changed.push(e.path);
   }
   for (const p of changed) {
-    const owners = plans.filter((pl) => owned(p, [...(pl.owns ?? []), pl.summary].filter(Boolean), prefixes));
-    if (!owners.length && bookkeeping(p)) continue;
+    if (ignored(p)) continue;
+    const owners = specificOwners(p, plans, prefixes, ownsOf);
+    if (!owners.length && (bookkeeping(p) || integration.includes(p))) continue;
     if (!owners.length) problems.push({ kind: "unauthorized path", path: p });
     else if (owners.length > 1) problems.push({ kind: "ambiguous owner", path: p, plans: owners.map((o) => o.id) });
-    else if (!owners[0].complete) problems.push({ kind: "incomplete plan changed", path: p, plan: owners[0].id });
+    else if (!owners[0].complete && !integration.includes(p)) problems.push({ kind: "incomplete plan changed", path: p, plan: owners[0].id });
   }
-  return { ok: problems.length === 0, problems, head: now.head, code: problems.length ? 1 : 0 };
+  return { ok: problems.length === 0, problems, head: now.head, reconciled, accepted, code: problems.length ? 1 : 0 };
 }
 
 // Every change of the main tree since the baseline, assigned for the commit manifest (GSDF-53, CR-GSF-07):
@@ -136,12 +174,14 @@ export function ownedChanges(root, phaseDir, { plans, pending = [], integration 
   const integrated = [];
   const unowned = [];
   const ownsOf = (p) => [...(p.owns ?? []), p.summary].filter(Boolean);
-  const ignored = (p) => ignore.some((pre) => p.startsWith(`${toSlash(pre).replace(/\/$/, "")}/`));
+  const byConfig = ignoredBy(root);
+  const ignored = (p) => byConfig(p) || ignore.some((pre) => p.startsWith(`${toSlash(pre).replace(/\/$/, "")}/`));
   for (const e of [...now.dirty, ...now.untracked.map((p) => ({ path: p, sha256: contentHash(path.join(root, p)) }))]) {
     if (baseDirty.get(e.path) === e.sha256 || (base.untracked.includes(e.path) && now.untracked.includes(e.path))) continue;
     if (ignored(e.path)) continue;
     const claimants = plans.filter((p) => (p.claimed ?? []).includes(e.path));
-    const owners = claimants.length ? claimants : plans.filter((p) => owned(e.path, ownsOf(p), prefixes));
+    // A nested file goes to the plan owning it most specifically, not to every plan owning a parent directory.
+    const owners = claimants.length ? claimants : specificOwners(e.path, [...plans, ...pending], prefixes, ownsOf).filter((p) => plans.includes(p));
     const gone = e.sha256 === "deleted";
     if (owners.length) for (const o of owners) (gone ? removed : files)[o.id].push(e.path);
     else if (integration.includes(e.path)) integrated.push(e.path);
@@ -149,6 +189,14 @@ export function ownedChanges(root, phaseDir, { plans, pending = [], integration 
     else if (!bookkeeping(e.path)) unowned.push(e.path);
   }
   return { files, removed, integration: integrated, unowned };
+}
+
+// The owners of each path among the given plans, by their most specific owns entry and the adapter's owns forms
+// (G072: `Path:src/api` does not own src/api-v2/x.js): {owners: {<path as given>: [plan ids]}}.
+export function ownersOf(root, { paths = [], plans = [] }) {
+  const prefixes = ownsPrefixes(root);
+  const ownsOf = (p) => [...(p.owns ?? []), p.summary].filter(Boolean);
+  return { owners: Object.fromEntries(paths.map((p) => [p, specificOwners(toSlash(String(p)).replace(/^\.\//, ""), plans, prefixes, ownsOf).map((x) => x.id)])) };
 }
 
 // Owned paths an owner had already edited (or created) before the execute baseline: a worktree starts from HEAD
@@ -242,8 +290,13 @@ export function transfer(root, phaseDir, { plan, worktree, owns = [], summary, f
     if (baseDirty.get(c.path) !== cur && transfers[c.path] !== cur) refused.push({ path: c.path, reason: "main tree path changed since the execute baseline" });
   }
   if (refused.length) return { ok: false, plan, refused, worktree: toSlash(worktree), code: 1 };
+  // A copy that dies half way (a kill, a Windows rename refused by a lock) must not look done on resume: the intent is
+  // recorded first and removed only with the final record, and the SUMMARY is copied last, after the code it describes.
+  const pending = pendingTransferFile(root, phaseDir, plan);
+  writeJsonAtomic(pending, { plan, worktree: toSlash(worktree), base, paths: changes.map((c) => c.path) });
   const files = [];
-  for (const c of changes) {
+  const order = [...changes.filter((c) => c.path !== summary), ...changes.filter((c) => c.path === summary)];
+  for (const c of order) {
     const dest = resolveInside(root, c.path);
     if (c.kind === "deleted") {
       fs.rmSync(dest, { force: true });
@@ -253,13 +306,27 @@ export function transfer(root, phaseDir, { plan, worktree, owns = [], summary, f
     const data = fs.readFileSync(path.join(wt, c.path));
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     const tmp = `${dest}.transfer-${process.pid}`;
-    fs.writeFileSync(tmp, data);
-    fs.renameSync(tmp, dest);
+    try {
+      fs.writeFileSync(tmp, data);
+      fs.renameSync(tmp, dest);
+    } finally {
+      fs.rmSync(tmp, { force: true });
+    }
     files.push({ path: c.path, sha256: contentHash(dest) });
   }
   const record = { plan, worktree: toSlash(worktree), base, files };
   writeJsonAtomic(path.join(resolveInside(root, phaseDir), "transfers", `${plan}.json`), record);
+  fs.rmSync(pending, { force: true });
   return { ok: true, ...record };
+}
+
+const pendingTransferFile = (root, phaseDir, plan) => path.join(resolveInside(root, phaseDir), "transfers-pending", `${plan}.json`);
+
+// Plans whose transfer started and never finished (G069): their main-tree files are a partial copy of the worktree.
+export function pendingTransfers(root, phaseDir) {
+  const dir = path.join(resolveInside(root, phaseDir), "transfers-pending");
+  const plans = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => readJsonIf(path.join(dir, f), null)).filter(Boolean) : [];
+  return { pending: plans.map((p) => ({ plan: p.plan, worktree: p.worktree, paths: p.paths ?? [] })) };
 }
 
 export function spotCheck(root, summaryRel) {

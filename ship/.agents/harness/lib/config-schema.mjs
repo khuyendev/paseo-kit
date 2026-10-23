@@ -93,7 +93,8 @@ export const SCHEMA = obj({
       owns_forms: arr(obj({ prefix: str({ nonEmpty: true }), maps_to: str({ nonEmpty: true }) })),
       shared: obj({ globs: strs(), predicate: nullable(str({ nonEmpty: true })) }),
       source_roots: strs(),
-    }),
+      ignore: strs(),
+    }, ["ignore"]),
     review_lenses: arr(obj({
       name: str({ nonEmpty: true }),
       text: str({ nonEmpty: true }),

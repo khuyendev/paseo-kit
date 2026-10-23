@@ -39,6 +39,8 @@ async function call(prompt, opts) {
 }
 const fatal = (reason) => Boolean(reason && NEVER_RETRY.test(reason));
 const needsOwner = (stage, reason, extra = {}) => ({ status: "needs-owner", stage, reason, ...extra });
+// The refusal of a held code-root lease names the holder's workflow and run (kit-feedback 1).
+const leaseText = (r) => `${r?.holderKind ? `a ${r.holderKind} run` : "another run"} holds this code root (${r?.holder ?? r?.error ?? "unknown run"})`;
 async function discussOpen(phaseDir, nn) {
   const ex = (await flow(["exists", `${phaseDir}/${nn}-DISCUSS-CHECKPOINT.json`, `${phaseDir}/${nn}-CONTEXT.md`])).json?.exists ?? {};
   if (ex[`${phaseDir}/${nn}-DISCUSS-CHECKPOINT.json`]) return "discussion interrupted (DISCUSS-CHECKPOINT present); finish it with gsd-discuss";
@@ -132,9 +134,9 @@ const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reas
 
 // ---- preconditions (GSDF-16, GSDF-33) ----
 phase("Preconditions");
-// GSDF-64: no planner writes in the code root while a debug session holds it.
-const lease = await flow(["lock", "debug", runId]);
-if (lease.code !== 0) return result("refused", { reason: `a debug session holds this code root (${lease.json?.holder ?? lease.json?.error ?? "unknown run"}); plan after it ends` });
+// GSDF-64: no planner writes in the code root while another writer (debug, execute, quick, plan) holds it.
+const lease = await flow(["lock", "debug", runId, "gsd-plan"]);
+if (lease.code !== 0) return result("refused", { reason: `${leaseText(lease.json)}; plan after it ends` });
 try {
 const found = (await gsd(["find-phase", N])).json;
 if (found?.status === "COMPLETE") {
@@ -143,6 +145,10 @@ if (found?.status === "COMPLETE") {
 }
 const open = await discussOpen(phaseDir, nn);
 if (open) return owner("Discuss", open);
+// G084: a blocking anti-pattern row without its three answers sends the phase back to discuss now, not to a stop at
+// execute after the plans are paid for.
+const anti = await flow(["anti-patterns", phaseDir]);
+if (anti.code !== 0) return owner("Discuss", `blocking anti-patterns lack their three written answers in ${anti.json?.answersFile ?? `${phaseDir}/.continue-here.answers.json`}: ${(anti.json?.unanswered ?? [anti.json?.error ?? "check failed"]).join(", ")}; run gsd-discuss ${N} to write them (it reads CONTEXT)`, { rows: anti.json?.unanswered ?? [] });
 const research = await gsd(["research", "status", phaseDir]);
 let approvedResearch = null;
 if (mode === "plan") {
