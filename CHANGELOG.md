@@ -6,6 +6,18 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Kit step library for execute (thin composition stage 3, part S1; owner 2026-10-24 "Ok tách"; design
+  kit-bughunt/thin/STAGE3.md, one Opus agent). The steps the waves, graph and batch schedules share moved verbatim into
+  `harness/workflow/steps.mjs`, which the engine binds per run as the global `executeSteps(...)`: preconditions, dispatch
+  and integration, the wave step, shared changes, gate and fix rounds, smoke and stray stops, code review with finding
+  verification, fixer and resolution check, the commit transaction, tracking, pause and phase gate. The composition
+  passes every policy as a value (no step reads a composition policy key) and gets every stop back with its answer; it
+  keeps the argument and policy reads, the order of the preconditions, the graph schedule, the wave loop and the batch
+  tail. gsd-execute.js 1461 -> 441 lines (budget test at 441). Parity over all 875 fake-host runs: agent calls, shell
+  calls and their order, logs and results identical; a run started by the previous script resumes under the new one.
+  Measured check: tests/thin/TS1*, full offline suite 2431: 2417 pass, 1 known load flake (F02, passes alone), 13
+  skipped; not run on a live phase.
+
 - Kit feedback 89-101 from the first live runs on the reworked kit (owner 2026-10-24: "Có feedback, làm đi"; one Opus
   agent per area, notes in kit-bughunt/fb7/design/). Execute: `state-plan` stores an absolute worktree path inside the
   project root-relative, so `halt clear --resume` works (91), and a halt of an older kit finds its worktree from the
