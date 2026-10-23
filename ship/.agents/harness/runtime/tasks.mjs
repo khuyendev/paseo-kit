@@ -78,6 +78,23 @@ function checkStatus(status) {
   if (status !== undefined && !STATUSES.includes(status)) throw new UsageError(`--status must be one of ${STATUSES.join("|")}`);
 }
 
+const isRecord = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+
+// A hand-edited file of the wrong shape is refused before any operation or save, so it is never rewritten.
+function taskArray(file, data) {
+  const fail = (why) => new Error(`${file}: ${why}`);
+  if (!isRecord(data)) throw fail("the file must hold a JSON object");
+  const tasks = data.tasks ?? [];
+  if (!Array.isArray(tasks)) throw fail("tasks must be an array");
+  tasks.forEach((t, i) => {
+    if (!isRecord(t)) throw fail(`tasks[${i}] must be an object`);
+    if (typeof t.id !== "number") throw fail(`tasks[${i}].id must be a number`);
+    if (!STATUSES.includes(t.status)) throw fail(`tasks[${i}].status must be one of ${STATUSES.join("|")}`);
+    if (!Array.isArray(t.depends_on)) throw fail(`tasks[${i}].depends_on must be an array`);
+  });
+  return tasks;
+}
+
 // Self, unknown and cyclic dependencies are refused; a cycle is a path from a dependency back to the task.
 function checkDependencies(tasks, id, deps) {
   const byId = new Map(tasks.map((t) => [t.id, t]));
@@ -117,7 +134,7 @@ async function task(ctx) {
   const now = () => new Date(ctx.clock.now()).toISOString();
   return withLock(file, ctx.clock, () => {
     const data = readJsonIf(file, { tasks: [] });
-    const tasks = data.tasks ?? [];
+    const tasks = taskArray(file, data);
     const save = () => writeTextIfChanged(file, `${JSON.stringify({ ...data, tasks }, null, 2)}\n`);
     if (sub === "add") {
       if (!opts.title) throw new UsageError("--title is required");
