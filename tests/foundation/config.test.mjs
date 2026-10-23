@@ -303,6 +303,7 @@ const GOLDEN = {
     max_skeleton_passes: 3,
     max_check_iterations: 3,
     drift_threshold: 3,
+    map_mode: "whole",
     debug: { max_turns: 16, minutes: 120 },
     fixer: { max_build_attempts: 3, minutes: 60 },
     parallelization: { enabled: true, max_concurrent: null },

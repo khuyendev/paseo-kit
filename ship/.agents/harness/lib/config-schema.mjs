@@ -149,6 +149,7 @@ export const SCHEMA = obj({
     max_skeleton_passes: int(1, 3),
     max_check_iterations: int(1, 3),
     drift_threshold: int(),
+    map_mode: str({ oneOf: ["whole", "per-focus"] }),
     debug: obj({ max_turns: int(1), minutes: int(1) }),
     fixer: obj({ max_build_attempts: int(1), minutes: int(1) }),
     code_review: obj({ max_concurrent: int(1), reviewers: arr(obj({ model: str({ nonEmpty: true }), effort: effort() }, ["model", "effort"])) }),

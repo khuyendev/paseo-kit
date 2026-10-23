@@ -206,6 +206,7 @@ Paths in the adapter are repo-relative script paths (validated at load: no drive
 | `max_skeleton_passes` | int 1..3 | 3 |
 | `max_check_iterations` | int 1..3 | 3 |
 | `drift_threshold` | int >= 0 | 3 |
+| `map_mode` | `whole\|per-focus`: how gsd-map-codebase runs its 4 focus areas. `whole` passes every focus through each stage (map, check, review, stamp) before the next, and one focus's problem fails the map with nothing stamped. `per-focus` runs each focus as its own stream: its doc check problem goes back to its mapper once, then its review, fix and resolution check, and it is stamped as soon as it is clean; a failing focus stops alone, the stamped focuses are committed together at the end (`gsd.commit_policy.docs`), and the result (`partial` when some focus is open) names the `rerun` args for the open ones | `whole` |
 | `debug` | `{max_turns: int>=1, minutes: int>=1}` | `{16, 120}` |
 | `fixer` | `{max_build_attempts: int>=1, minutes: int>=1}` | `{3, 60}` |
 | `parallelization` | `{enabled: bool, max_concurrent: int>=1\|null}` | `{enabled: true, max_concurrent: null}` |
