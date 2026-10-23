@@ -49,7 +49,10 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
     try {
       const def = opts.agentType ? definition(opts.agentType) : null;
       const sel = runtime.selectModel(cfg, { explicit: { model: opts.model, effort: opts.effort }, role: opts.role, definition: def });
-      return { def, sel, model: sel.id, effort: sel.thinking ?? null, roleHash: def?.roleHash ?? "", provider: sel.provider };
+      // The read-only mode (the note and the daemon's disallowed tools) and the prompt notes are part of the call's
+      // identity, so the resume cache reruns a call whose permissions or notes changed (FLOW-15).
+      const readOnly = opts.readOnly === true || Boolean(def?.readOnly);
+      return { def, sel, model: sel.id, effort: sel.thinking ?? null, roleHash: def?.roleHash ?? "", provider: sel.provider, readOnly, notesHash: runtime.promptNotesHash(cfg) };
     } catch (e) {
       return { error: errText(e) };
     }
@@ -112,7 +115,7 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
     const sel = identity.sel;
     const key = opts.session;
     const prior = key !== undefined ? sessions.get(key) : null;
-    const readOnly = opts.readOnly === true || Boolean(def?.readOnly);
+    const readOnly = identity.readOnly;
     let agentId = prior?.agentId ?? null;
     let base = null;
     let wd = null;

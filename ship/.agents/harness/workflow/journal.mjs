@@ -10,14 +10,16 @@ export const DEFAULT_RUNS_DIR = path.join("_workspace", "_runs");
 export const RUN_FILES = Object.freeze({ script: "script.js", args: "args.json", run: "run.json", journal: "journal.jsonl", log: "log.txt", result: "result.json" });
 
 // Options that change what the agent does; label, phase, keep, role and session are not part of the key (FLOW-15).
-const CACHE_KEY_OPTIONS = ["schema", "agentType", "model", "effort", "isolation", "readOnly", "cwd", "worktreeSeed"];
+// model is not one either: identity.model is the resolved model, so `pro` and its provider/model share an entry.
+const CACHE_KEY_OPTIONS = ["schema", "agentType", "effort", "isolation", "readOnly", "cwd", "worktreeSeed"];
 
-// `identity` is the host's resolution of the call: role-text hash and the resolved provider/model and effort, so an
-// edited definition or role table invalidates the cached calls it affects.
+// `identity` is the host's resolution of the call: role-text hash, the resolved provider/model and effort, the effective
+// read-only mode (the definition's tools or the call's readOnly) and the digest of the prompt notes, so an edited
+// definition, role table, note or permission invalidates the cached calls it affects.
 export function cacheKey(prompt, opts, identity) {
   const call = { prompt };
   for (const k of CACHE_KEY_OPTIONS) if (opts[k] !== undefined) call[k] = opts[k];
-  return sha256(JSON.stringify({ call: sha256(JSON.stringify(call)), role: identity.roleHash ?? "", model: identity.model ?? "", effort: identity.effort ?? "" })).slice(0, 32);
+  return sha256(JSON.stringify({ call: sha256(JSON.stringify(call)), role: identity.roleHash ?? "", model: identity.model ?? "", effort: identity.effort ?? "", readOnly: Boolean(identity.readOnly), notes: identity.notesHash ?? "" })).slice(0, 32);
 }
 
 // `<key>#<occ>` -> finish entry of an earlier run, only for calls that produced a result; bad lines are skipped.

@@ -312,10 +312,11 @@ Before diagnosing an empty or odd result, read `journal.jsonl`: it records what 
 ### 6-6. Resume
 
 `ph workflow --script <file> --args-file <file> --resume <runId>` starts a new run whose `agent()` calls with unchanged
-`(prompt, schema, agentType, model, effort, isolation, readOnly, cwd)`, unchanged role text (definition body and
-included files) and the same resolved model and effort return the earlier run's result at once (the n-th identical
-call maps to the n-th earlier one). Changed, new or earlier-`null` calls run live. The same script and args resume
-to a 100 % cache hit. Edit the script file and resume to rerun only what changed. Without `--script`/`--name`, the
+`(prompt, schema, agentType, effort, isolation, readOnly, cwd, worktreeSeed)`, unchanged role text (definition body and
+included files), the same resolved model and effort, the same effective read-only mode (the call's `readOnly` or the
+definition's `tools:`) and unchanged prompt notes (kit, project and platform) return the earlier run's result at once (the
+n-th identical call maps to the n-th earlier one). Changed, new or earlier-`null` calls run live. The same script and args
+resume to a 100 % cache hit. Edit the script file and resume to rerun only what changed. Without `--script`/`--name`, the
 resumed run's own `script.js` is rerun; without `--args`/`--args-file`, its `args.json` is reused, so
 `ph workflow --resume <runId>` alone repeats the earlier run (for example after quota came back).
 
@@ -383,8 +384,9 @@ builds and tests in the foreground.
   harness process, `shell()` runs host commands on purpose, a busy loop hangs the runner (there is no body timeout),
   and calls the script does not await are awaited before "workflow done" and logged as a warning. Write scripts
   like code you run and await every `agent()`.
-- **Resume reuses results by prompt, options, role text and resolved model.** Changing the config elsewhere (for
-  example `mode` or the first-prompt notes) does not invalidate cached calls; start a new run after such changes.
+- **Resume reuses results by prompt, options, role text, resolved model and effort, read-only mode and prompt notes.**
+  Changing other config (for example `mode`), or a skill file the prompt tells the agent to read, does not invalidate
+  cached calls; start a new run after such changes.
 - **Runner bookkeeping.** run.json records the runner's `pid`; `ph watch-run` ends with "workflow interrupted" when
   that process is gone without a terminal status, and `ph archive --run <runId>` stops a live runner, archives the
   run's agents and marks the run stopped. Every task message ends with the runtime note `Run <runId> #<n>` so

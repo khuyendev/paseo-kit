@@ -59,7 +59,7 @@ const shellText = (cmd) => (Array.isArray(cmd) ? cmd.map(String).join(" ") : Str
  *      journalPath, cache, out, resolveChild(ref) -> {source, scriptPath}, extraSpent() -> tokens,
  *      host: {identify({prompt, opts}), admit(spec), adopt(entry, spec), runner(spec)}}
  * host.identify is synchronous (occurrence numbers are assigned at call time) and returns
- * {roleHash, model, effort, provider} or {error}; it throws configuration errors.
+ * {roleHash, model, effort, provider, readOnly, notesHash} or {error}; it throws configuration errors.
  * host.admit(spec without n) resolves {release()} or {reason} (a named null, FLOW-14); the runner gets it as
  * spec.admission. spec.journalAgent(agentId) journals an agent as soon as it exists, so a resume can stop it (G123).
  */

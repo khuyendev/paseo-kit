@@ -2,7 +2,7 @@
 // assembly, worktrees, list-price cost and the caller-root check (runtime/index.mjs, never commands.mjs).
 import {
   checkCallerRoot, checkRole, composePrompt, costUsd, createWorktree, discardWorktree, firstPromptNote, loadAgentDef, loadPrices,
-  NOTE_READ_ONLY, roleParts, selectModel, workdirNote, worktreeNote,
+  NOTE_READ_ONLY, promptNotesHash, roleParts, selectModel, workdirNote, worktreeNote,
 } from "../runtime/index.mjs";
 import { assertPromptSize } from "../paseo-client/index.mjs";
 
@@ -16,6 +16,7 @@ export const runtime = Object.freeze({
   loadAgentDefinition: (root, type) => loadAgentDef(root, type),
   checkRole: (cfg, role) => checkRole(cfg, role),
   selectModel: (cfg, { explicit, role, definition }) => selectModel({ cfg, explicit, role, definition }),
+  promptNotesHash: (cfg) => promptNotesHash(cfg),
   // The first prompt of a workflow agent (PHCL-28); a primed agent's task names its role instead of repeating it.
   composePrompt: ({ def, prompt, readOnly, worktree, workdir, cfg, root, rolePrimed, tag }) => composePrompt({
     cfg, root, kind: "workflow", readOnly, worktree, workdir, runTag: tag,

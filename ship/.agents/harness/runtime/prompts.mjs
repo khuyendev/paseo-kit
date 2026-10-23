@@ -3,6 +3,7 @@ import path from "node:path";
 import { assertPromptSize } from "../paseo-client/index.mjs";
 import { phCommand } from "../lib/cli.mjs";
 import { id8, samePath, toSlash } from "../lib/paths.mjs";
+import { sha256 } from "../lib/hash.mjs";
 
 export const NOTE_RETURN_VALUE = "Your final message is the return value for the orchestrating script, not a message to a person: return only the data asked for.";
 export const NOTE_SILENT = "Work silently: no narration, plans or commentary between tool calls (nobody reads them); only your final reply, in the format asked for.";
@@ -31,6 +32,9 @@ export function teammateNote({ name, leader, ws }) {
 export function firstPromptNote(cfg, platform = process.platform) {
   return [cfg.first_prompt_note, cfg.project_prompt_note, cfg.platform_notes[platform]].filter((t) => t && t.trim()).join(" ");
 }
+
+// Digest of every note text a first prompt can carry; the resume cache keys it so a changed note reruns the calls (FLOW-15).
+export const promptNotesHash = (cfg) => sha256(JSON.stringify([NOTE_RETURN_VALUE, NOTE_SILENT, NOTE_READ_ONLY, firstPromptNote(cfg)]));
 
 export function roleParts(def) {
   if (!def) return [];
