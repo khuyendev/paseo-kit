@@ -7,7 +7,7 @@ import path from "node:path";
 import { withMutex } from "../adapter/mutex.mjs";
 import { runArgv } from "../lib/proc.mjs";
 import { done, mentions, readIf, unavailable } from "./common.mjs";
-import { HookError, builtinResolve, callHook, classify, covers, filesUnder, overlaps, ownsPath, pathKey, physicalPath, sharedPaths, targetsOf } from "./adapter-hooks.mjs";
+import { HookError, builtinResolve, callHook, classify, covers, filesUnder, balancedGlob, hasGlob, overlaps, ownsPath, pathKey, physicalPath, sharedPaths, targetsOf } from "./adapter-hooks.mjs";
 import { phaseFile, readPlans, sharedDependencies } from "./planning.mjs";
 import { loadRoadmap, roadmapPhase } from "./roadmap.mjs";
 
@@ -245,7 +245,10 @@ export async function ownershipProblems(g, plans) {
     for (const entry of plan.owns) {
       const p = ownsPath(entry, forms);
       if (p === null) add(plan, "invalid-owns", `${plan.id}: owns entry not in adapter.ownership.owns_forms: ${entry}`);
-      else paths.push(p);
+      else {
+        paths.push(p);
+        if (hasGlob(p) && !balancedGlob(p)) add(plan, "invalid-owns-glob", `${plan.id}: owns glob has an unbalanced [ or {, it would match nothing: ${p}`, { file: p });
+      }
     }
     owned.set(plan.id, paths);
     for (const p of [...plan.filesModified, ...paths.filter((x) => !/[*?[{]/.test(x))]) {
@@ -254,7 +257,10 @@ export async function ownershipProblems(g, plans) {
     }
     for (const f of plan.filesModified) {
       candidates.add(f);
-      if (paths.length && !paths.some((p) => covers(p, f))) add(plan, "outside-owns", `${plan.id}: files_modified outside owns: ${f}`, { file: f });
+      // Kit feedback 74: files_modified names files. A `*` or `?` there would match an owns glob of the same text as a
+      // pattern against itself, while the transfer matches the real file names the generator writes.
+      if (/[*?]/.test(f)) add(plan, "glob-files-modified", `${plan.id}: files_modified holds a glob: ${f} (list the files, or put the glob or the directory in owns)`, { file: f });
+      else if (paths.length && !paths.some((p) => covers(p, f))) add(plan, "outside-owns", `${plan.id}: files_modified outside owns: ${f}`, { file: f });
     }
     for (const p of paths) {
       candidates.add(p);

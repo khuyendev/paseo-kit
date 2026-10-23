@@ -12,7 +12,7 @@ import { evidenceVerdict, requiredSteps, executionProblem, gateStepName, obligat
 import { gateObligation } from "../../harness/adapter/contract.mjs";
 import { sha256 } from "../../harness/lib/hash.mjs";
 import { gitLines, head } from "./flow-git.mjs";
-import { contentHash, owned, ownsPath, ownsPrefixes, specificOwners } from "./flow-owns.mjs";
+import { contentHash, owned, ownsPrefixes, ownsScope, specificOwners } from "./flow-owns.mjs";
 
 const TIMEOUT_CODE = 124;
 const EXCERPT_LINES = 40;
@@ -79,7 +79,7 @@ function mentionedFiles(root, text, visible) {
 function scopesOf(cfg, plans, prefixes) {
   const scopes = new Set();
   for (const p of plans) for (const o of p.owns ?? []) {
-    const rel = ownsPath(o, prefixes).replace(/\/$/, "");
+    const rel = ownsScope(o, prefixes);
     if (rel && !rel.startsWith(".planning/")) scopes.add(rel);
   }
   for (const i of cfg.adapter.instructions ?? []) scopes.add(toSlash(i).replace(/\/$/, ""));
@@ -119,7 +119,7 @@ const judgmentSettings = (cfg) => ({ ownership: cfg.adapter.ownership, review_le
 export function digest(root, { files = [], owns = [] }) {
   const cfg = loadConfig(root);
   const prefixes = ownsPrefixes(root);
-  const ownScopes = owns.map((o) => ownsPath(o, prefixes).replace(/\/$/, ""));
+  const ownScopes = owns.map((o) => ownsScope(o, prefixes));
   const scopes = [...new Set([...files.map((f) => toSlash(f)), ...ownScopes, ...(cfg.adapter.instructions ?? [])])].filter(Boolean).sort();
   const now = inputsOf(root, scopes);
   for (const rel of Object.keys(now.files)) if (rel.startsWith("_workspace/") || rel.startsWith(`${cfg.worktree_dir}/`) || runRecord(rel)) delete now.files[rel];

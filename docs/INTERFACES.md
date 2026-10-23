@@ -181,6 +181,8 @@ Thinking levels (`THINKING_LEVELS`): `off, low, medium, high, xhigh, max`.
 | `attribution` | `null` or path | `null` |
 | `worktree_setup` | `{copy: string[], link: string[]}` (both keys required; git-ignored paths copied or linked into each new harness worktree; with `gsd.isolation: worktree`, `ph doctor` and `ph harness lint` name the git-ignored paths the adapter uses that no entry sets up) | `{copy: [], link: []}` |
 
+Owns grammar of `ownership`: An owns entry is a path, a directory (`Path:lib/gen/`) or a glob (`Path:lib/i18n/strings*.g.dart`; `*` `?` `[..]` `{a,b}` `**`, read by `path.posix.matchesGlob`); one matcher (`harness/gsd/adapter-hooks.mjs` `covers`/`ownsDepth`) serves the plan checker, outline check, waves, the transfer, owned-change attribution, request routing, the gate and the resume gate (kit-feedback 74). The most specific entry owns a path: the longer path, an exact path over a glob that starts like it, a glob over the directory above its literal prefix. `files_modified` names files only: a `*` or `?` there is a blocker (`glob-files-modified`), an owns glob with an unpaired `[` or `{` is `invalid-owns-glob`.
+
 Paths in the adapter are repo-relative script paths (validated at load: no drive, no leading `/`, no `..`; `ph lint` also fails a path whose link leads outside the project); the adapter hook protocol (ADPT-15) is implemented by code-gsd-core in `gsd/` and documented in its report.
 
 ### 4.2 `gsd` section (M9/M10; ADPT-11..13; entries merge per entry, an entry is replaced whole)

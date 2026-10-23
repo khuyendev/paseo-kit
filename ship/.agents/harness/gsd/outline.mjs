@@ -4,7 +4,7 @@ import path from "node:path";
 import { writeJsonAtomic } from "../lib/io.mjs";
 import { sha256, textDigest } from "../lib/hash.mjs";
 import { done, fail, idList, lf, none, readIf, rel } from "./common.mjs";
-import { classify, covers, filesUnder, ownsPath, sharedPaths } from "./adapter-hooks.mjs";
+import { balancedGlob, classify, covers, filesUnder, hasGlob, ownsPath, sharedPaths } from "./adapter-hooks.mjs";
 import { normPlanId, phaseFile, planIds, planPath, readPlans, summaryPath } from "./planning.mjs";
 import { ownershipProblems, waveOverlaps } from "./plan-checks.mjs";
 import { loadRequirements } from "./requirements.mjs";
@@ -136,6 +136,7 @@ export async function outlineCheck(g, phase, { tracer = true, plansPerPhase, wav
         if (m === null) errors.push(`${id}: invalid owns entry ${e}`);
         else {
           paths.push(m);
+          if (hasGlob(m) && !balancedGlob(m)) errors.push(`${id}: owns glob has an unbalanced [ or {, it would match nothing: ${m}`);
           candidates.add(m);
           for (const f of filesUnder(g.codeRoot, m)) candidates.add(f);
         }

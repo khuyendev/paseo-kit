@@ -126,6 +126,22 @@ export function covers(owned, file) {
   return o === "" || f === o || f.startsWith(`${o}/`);
 }
 
+export const hasGlob = (p) => GLOB_CHARS.test(String(p));
+
+// A glob whose [ ] or { } do not pair matches nothing in matchesGlob, so the transfer would refuse the files it was written for.
+export const balancedGlob = (g) => g.split("[").length === g.split("]").length && g.split("{").length === g.split("}").length;
+
+// Kit feedback 74: how specifically an owns path covers a file, -1 when it does not. The one measure behind every owner
+// choice (transfer, owned changes, request routing, gate attribution): twice the length of a file or directory path plus
+// one, twice the length of the literal text before the first glob character for a glob. A deeper entry wins a nested
+// owns, an exact path beats a glob that begins like it, and a glob beats the directory above its literal prefix.
+export function ownsDepth(owned, file) {
+  const o = String(owned ?? "");
+  if (hasGlob(o)) return covers(o, file) ? 2 * o.search(GLOB_CHARS) : -1;
+  const r = repoPath(o);
+  return r && covers(r, file) ? 2 * r.length + 1 : -1;
+}
+
 export function overlaps(a, b) {
   const ba = base(a).replace(/\/$/, "");
   const bb = base(b).replace(/\/$/, "");

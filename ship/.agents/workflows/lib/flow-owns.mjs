@@ -5,6 +5,7 @@ import { loadConfig } from "../../harness/config.mjs";
 import { sha256 } from "../../harness/lib/hash.mjs";
 import { toSlash } from "../../harness/lib/paths.mjs";
 import { frontmatter } from "../../harness/gsd/yaml.mjs";
+import { hasGlob, ownsDepth as matchDepth } from "../../harness/gsd/adapter-hooks.mjs";
 
 // An owns entry is a path or directory, optionally in an adapter owns form (`Path:<path>`, ADPT-04).
 export function ownsPrefixes(root) {
@@ -25,18 +26,27 @@ export function owned(rel, owns, prefixes) {
   return ownsDepth(rel, owns, prefixes) >= 0;
 }
 
-// Length of the most specific owns entry that covers the path (-1 when none does): `Path:lib/a/` covers lib/a/x.js
-// with depth 5, `lib/a/x.js` itself with depth 10.
+// Specificity of the most specific owns entry that covers the path (-1 when none does), measured by the harness matcher
+// (kit-feedback 74): an entry is a path, a directory or a glob, the same grammar the plan checker reads. `Path:lib/a/`
+// covers lib/a/x.js less specifically than `lib/a/x.js` itself, and `lib/a/x*.js` sits between them.
 export function ownsDepth(rel, owns, prefixes) {
   const p = toSlash(rel).replace(/^\.\//, "");
   let best = -1;
   for (const entry of owns) {
     const o = ownsPath(entry, prefixes);
-    if (!o) continue;
-    const hit = o.endsWith("/") ? p.startsWith(o) : p === o || p.startsWith(`${o}/`);
-    if (hit) best = Math.max(best, o.replace(/\/$/, "").length);
+    if (o) best = Math.max(best, matchDepth(o, p));
   }
   return best;
+}
+
+// The directory an owns entry reaches into, for a git pathspec or a digest scope: the entry itself for a path, the
+// directory before the first glob character for a glob (`.` when it starts with one), since git does not read `**` or
+// braces and a base directory is a superset that never misses a file.
+export function ownsScope(entry, prefixes) {
+  const o = ownsPath(entry, prefixes).replace(/\/$/, "");
+  if (!hasGlob(o)) return o;
+  const lit = o.slice(0, o.search(/[*?[{]/));
+  return lit.includes("/") ? lit.slice(0, lit.lastIndexOf("/")) : ".";
 }
 
 // The plans owning a path through their most specific owns entry: a plan owning a parent directory gives way to the
