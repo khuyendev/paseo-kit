@@ -3,11 +3,31 @@ import fs from "node:fs";
 import path from "node:path";
 import { readJson, writeJsonAtomic } from "../../ship/.agents/harness/lib/io.mjs";
 import { fileDigest } from "../../ship/.agents/harness/lib/hash.mjs";
+import { errText } from "../../ship/.agents/harness/lib/cli.mjs";
+import { fail } from "./failure.mjs";
 import { hookScript, hookUnitKey, templateScripts } from "./units.mjs";
 
 export const SETTINGS_REL = ".claude/settings.json";
 
 const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+
+// Preflight for install and update, run before any kit file is copied: a settings file that the wiring step cannot
+// reconcile, or would overwrite, fails here naming the file and the event, so nothing is written.
+export function checkHookSettings(project, template) {
+  const file = path.join(project, SETTINGS_REL);
+  let settings;
+  try {
+    settings = fs.existsSync(file) ? readJson(file) : {};
+  } catch (e) {
+    fail(errText(e));
+  }
+  if (!isPlainObject(settings)) fail(`${SETTINGS_REL} is not a JSON object`);
+  if (settings.hooks !== undefined && !isPlainObject(settings.hooks)) fail(`${SETTINGS_REL}: "hooks" is not an object; fix it by hand`);
+  for (const event of Object.keys(template.hooks ?? {})) {
+    const groups = settings.hooks?.[event];
+    if (groups !== undefined && !Array.isArray(groups)) fail(`${SETTINGS_REL}: hooks.${event} is not a list of hook groups; fix it by hand`);
+  }
+}
 
 // Pure: removes every registration of the managed, unblocked scripts and of the retired ones (scripts this update deleted
 // as unchanged kit files, CR-INS-04), and appends the template groups for the managed ones.

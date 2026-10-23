@@ -4,6 +4,7 @@ import { readManifest, requireManifest, writeManifest } from "./manifest.mjs";
 import { classify, reason } from "./state.mjs";
 import { copyToKit, copyToProject, deleteFromProject, digests, linkedPart, linkProblem, MALFORMED, malformedLine } from "./parts.mjs";
 import { checkWiringTargets, wire } from "./wiring.mjs";
+import { checkHookSettings } from "./hooks.mjs";
 import { checkModGates } from "./mod.mjs";
 import { fail } from "./failure.mjs";
 
@@ -24,6 +25,7 @@ function finishInstallOrUpdate(ctx, { records, installedAt }) {
 export function install(ctx) {
   if (readManifest(ctx.project)) fail(".agents/harness-kit.json exists: already installed; use update");
   checkWiringTargets(ctx.project);
+  checkHookSettings(ctx.project, ctx.kit.template);
   if (ctx.enablePlugin) checkModGates(ctx.env);
   const records = {};
   let conflicts = 0;
@@ -57,6 +59,7 @@ export function install(ctx) {
 export function update(ctx) {
   const manifest = requireManifest(ctx.project);
   checkWiringTargets(ctx.project);
+  checkHookSettings(ctx.project, ctx.kit.template);
   if (ctx.enablePlugin) checkModGates(ctx.env);
   const records = { ...manifest.files };
   const retiredHooks = new Set();
