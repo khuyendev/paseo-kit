@@ -309,6 +309,7 @@ const GOLDEN = {
     parallelization: { enabled: true, max_concurrent: null },
     code_review: { max_concurrent: 1, reviewers: [] },
     review_depth: "standard",
+    verify_mode: "phase",
   },
 };
 

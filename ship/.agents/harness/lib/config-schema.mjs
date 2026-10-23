@@ -155,6 +155,8 @@ export const SCHEMA = obj({
     code_review: obj({ max_concurrent: int(1), reviewers: arr(obj({ model: str({ nonEmpty: true }), effort: effort() }, ["model", "effort"])) }),
     parallelization: obj({ enabled: bool(), max_concurrent: nullable(int(1)) }),
     review_depth: str({ oneOf: ["quick", "standard", "deep"] }),
+    // Kit feedback 66: phase = one verifier for the whole phase; per-criterion = one verifier per ROADMAP success criterion.
+    verify_mode: str({ oneOf: ["phase", "per-criterion"] }),
   }),
 });
 

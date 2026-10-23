@@ -15,7 +15,7 @@ import { findPhaseVerb, phaseAdd, phaseComplete, phaseInsert, phaseRemove, planI
 import { normPlanId, planIds, readPlan, readPlans, requirePhase } from "./planning.mjs";
 import { ATTEMPT_KINDS, readAttempt, recordAttempt, revisionsVerb } from "./revisions.mjs";
 import { stateVerb } from "./state.mjs";
-import { fingerprint, researchStatus, verificationStatusVerb } from "./status.mjs";
+import { fingerprint, researchStatus, verificationParts, verificationStatusVerb } from "./status.mjs";
 import { health, normalizeTestCommand, runWithTimeout } from "./tools.mjs";
 import { upstreamVerb } from "./upstream.mjs";
 
@@ -142,6 +142,9 @@ export const verbHandlers = {
   },
   "verification.status": { usage: "ph gsd verification.status <phase>", options: {}, run: (g, a) => verificationStatusVerb(g.codeRoot, phaseOf(g, a)) },
   "verification.fingerprint": { usage: "ph gsd verification.fingerprint <phase> [extra files...]", options: {}, run: (g, a) => done(fingerprint(g.codeRoot, phaseOf(g, a), a.slice(1))) },
+  // Kit feedback 66: the parts of a per-criterion verify, checked (parts) or merged into the report (merge).
+  "verification.parts": { usage: "ph gsd verification.parts <phase> (stdin JSON {attemptKey, parts: [{id: SC-<k>|phase, path, text}]})", options: {}, run: (g, a) => verificationParts(g.codeRoot, phaseOf(g, a), json(g.stdin()), false) },
+  "verification.merge": { usage: "ph gsd verification.merge <phase> (stdin JSON {attemptKey, parts: [{id: SC-<k>|phase, path, text}]})", options: {}, run: (g, a) => verificationParts(g.codeRoot, phaseOf(g, a), json(g.stdin()), true) },
   "check.coverage": {
     usage: "ph gsd check.coverage <phase>",
     options: {},

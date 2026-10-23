@@ -2,10 +2,10 @@
 // and the one phase status ladder (GSDC-13). The file is the contract; an agent's claim never is (INV-35, INV-43).
 import fs from "node:fs";
 import path from "node:path";
-import { readJsonIf } from "../lib/io.mjs";
+import { readJsonIf, writeTextAtomic } from "../lib/io.mjs";
 import { sha256, textDigest } from "../lib/hash.mjs";
 import { isInside } from "../lib/paths.mjs";
-import { asArray, done, mentions, none, readIf, rel, unavailable } from "./common.mjs";
+import { asArray, done, fail, lf, mentions, none, nowIso, readIf, rel, unavailable } from "./common.mjs";
 import { headOf } from "./git.mjs";
 import { haltIds, listFiles, phaseFile, planIds, summaryIds } from "./planning.mjs";
 import { keyHash, readAttempt, readRevisions } from "./revisions.mjs";
@@ -48,6 +48,22 @@ const behaviorCount = (fm) => {
   return Number.isFinite(n) ? n : 0;
 };
 
+// The frontmatter rules of a verification report, shared by the report and its per-criterion parts.
+function reportProblems(fm) {
+  const problems = [];
+  const status = fm.status;
+  const gaps = asArray(fm.gaps);
+  const human = asArray(fm.human_verification);
+  const behavior = behaviorCount(fm);
+  if (!VERIFICATION_STATUSES.has(status)) problems.push(`status must be exactly passed, gaps_found or human_needed (got ${JSON.stringify(status ?? null)})`);
+  if (status === "passed" && (gaps.length || human.length || behavior > 0)) problems.push("status passed with gaps, human_verification or behavior_unverified");
+  if (status === "gaps_found" && !gaps.length) problems.push("status gaps_found without gaps");
+  if (status === "human_needed" && !human.length && behavior <= 0) problems.push("status human_needed without human_verification or behavior_unverified");
+  if (!Array.isArray(fm.covered_files) || !fm.covered_files.length) problems.push("covered_files missing");
+  if (typeof fm.covered_digest !== "string" || !fm.covered_digest) problems.push("covered_digest missing");
+  return problems;
+}
+
 // The verification report read back: {exists, valid, problems, status (stale overrides), ...}.
 export function readVerification(codeRoot, phase) {
   const file = phaseFile(phase, "VERIFICATION.md");
@@ -61,14 +77,7 @@ export function readVerification(codeRoot, phase) {
   const gaps = asArray(fm.gaps);
   const human = asArray(fm.human_verification);
   const behavior = behaviorCount(fm);
-  if (!parsed.error) {
-    if (!VERIFICATION_STATUSES.has(status)) problems.push(`status must be exactly passed, gaps_found or human_needed (got ${JSON.stringify(status ?? null)})`);
-    if (status === "passed" && (gaps.length || human.length || behavior > 0)) problems.push("status passed with gaps, human_verification or behavior_unverified");
-    if (status === "gaps_found" && !gaps.length) problems.push("status gaps_found without gaps");
-    if (status === "human_needed" && !human.length && behavior <= 0) problems.push("status human_needed without human_verification or behavior_unverified");
-    if (!Array.isArray(fm.covered_files) || !fm.covered_files.length) problems.push("covered_files missing");
-    if (typeof fm.covered_digest !== "string" || !fm.covered_digest) problems.push("covered_digest missing");
-  }
+  if (!parsed.error) problems.push(...reportProblems(fm));
   const base = {
     exists: true,
     path: rel(codeRoot, file),
@@ -106,6 +115,85 @@ export function verificationStatusVerb(codeRoot, phase) {
   };
   if (!v.valid) return done({ ...json, problems: v.problems }, 1);
   return done(json);
+}
+
+// --- per-criterion verification (kit feedback 66): one verifier per part, the merge writes the report ---
+
+export const PART_ID = /^(SC-[1-9]\d*|phase)$/;
+// Word values are written plain, as an upstream report writes them; every other value is one line of JSON (valid YAML).
+const PLAIN_KEYS = new Set(["phase", "status", "verify_mode", "phase_checks"]);
+const PART_LISTS = ["gaps", "human_verification", "behavior_unverified_items", "deferred", "advisory", "overrides", "coincidental_reliance_items"];
+
+// A part read back against this attempt: the report rules, its own criterion id, this attempt's key, not stale.
+function readPart(codeRoot, phase, part, attemptKey) {
+  const out = { id: part?.id ?? null, path: part?.path ?? null };
+  const bad = (status, problems) => ({ ...out, valid: false, status, problems });
+  if (!PART_ID.test(String(part?.id ?? ""))) return bad("invalid", [`part id must be SC-<k> or phase (got ${JSON.stringify(part?.id ?? null)})`]);
+  const abs = path.resolve(codeRoot, String(part.path ?? ""));
+  if (!isInside(abs, path.join(phase.dir, "verify"))) return bad("invalid", [`part path must be inside ${rel(codeRoot, phase.dir)}/verify/`]);
+  const text = readIf(abs);
+  if (text === null) return bad("missing", [`no ${part.path}`]);
+  const parsed = frontmatter(text);
+  const fm = parsed.fm;
+  const problems = parsed.error ? [`frontmatter: ${parsed.error}`] : reportProblems(fm);
+  if (!parsed.error && fm.criterion !== part.id) problems.push(`criterion must be ${part.id} (got ${JSON.stringify(fm.criterion ?? null)})`);
+  if (!parsed.error && String(fm.attempt_key ?? "") !== attemptKey) problems.push("attempt_key is not this attempt's key");
+  if (!problems.length) {
+    try {
+      const extra = fm.covered_files.map(String).filter((f) => !PLAN_OR_SUMMARY.test(f));
+      if (fingerprint(codeRoot, phase, extra).covered_digest !== fm.covered_digest) problems.push("covered_digest differs from the covered files (stale)");
+    } catch (e) {
+      problems.push(`covered files unreadable: ${e.message}`);
+    }
+  }
+  if (problems.length) return bad("invalid", problems);
+  return { ...out, valid: true, status: fm.status, fm, body: parsed.body };
+}
+
+const tagged = (id, item) => (item !== null && typeof item === "object" && !Array.isArray(item) ? { criterion: id, ...item } : `${id}: ${item}`);
+const cell = (s) => String(s ?? "").replace(/\r?\n/g, " ").replace(/\|/g, "\\|");
+
+// stdin {attemptKey, parts: [{id: SC-<k>|phase, path, text}]}; write false = check only. The merged report is the most
+// restrictive status of its parts (gaps_found > human_needed > passed); every gap and human item names its criterion.
+export function verificationParts(codeRoot, phase, input, write) {
+  const attemptKey = String(input?.attemptKey ?? "");
+  const list = Array.isArray(input?.parts) ? input.parts : [];
+  if (!attemptKey) throw fail("verification parts needs attemptKey");
+  if (!list.length) throw fail("verification parts needs parts [{id, path, text}]");
+  const ids = list.map((p) => p?.id);
+  if (new Set(ids).size !== ids.length) throw fail(`verification parts: duplicate part ids (${ids.join(", ")})`);
+  const parts = list.map((p) => ({ ...readPart(codeRoot, phase, p, attemptKey), text: p?.text ?? null }));
+  const summary = parts.map(({ id, path: file, valid, status, problems }) => ({ id, path: file, valid, status, ...(problems ? { problems } : {}) }));
+  const allValid = parts.every((p) => p.valid);
+  if (!write || !allValid) return done({ valid: allValid, written: null, parts: summary }, allValid ? 0 : 1);
+  const lists = Object.fromEntries(PART_LISTS.map((k) => [k, parts.flatMap((p) => asArray(p.fm[k]).map((item) => tagged(p.id, item)))]));
+  const behavior = parts.reduce((n, p) => n + behaviorCount(p.fm), 0);
+  const status = lists.gaps.length ? "gaps_found" : lists.human_verification.length || behavior > 0 ? "human_needed" : "passed";
+  const criteria = parts.filter((p) => p.id !== "phase").map((p) => ({ id: p.id, text: p.text, status: p.status, part: p.path }));
+  const phasePart = parts.find((p) => p.id === "phase");
+  const extra = [...new Set(parts.flatMap((p) => p.fm.covered_files.map(String)))].filter((f) => !PLAN_OR_SUMMARY.test(f) && !f.includes("/verify/"));
+  const fp = fingerprint(codeRoot, phase, extra);
+  const fm = {
+    phase: path.basename(phase.dir),
+    verified: nowIso(),
+    status,
+    score: `${criteria.filter((c) => c.status === "passed").length}/${criteria.length} criteria verified`,
+    verify_mode: "per-criterion",
+    attempt_key: attemptKey,
+    criteria,
+    ...(phasePart ? { phase_checks: phasePart.status } : {}),
+    covered_files: fp.covered_files,
+    covered_digest: fp.covered_digest,
+    behavior_unverified: behavior,
+    ...Object.fromEntries(Object.entries(lists).filter(([, v]) => v.length)),
+  };
+  const head = Object.entries(fm).map(([k, v]) => `${k}: ${typeof v === "number" || PLAIN_KEYS.has(k) ? v : JSON.stringify(v)}`).join("\n");
+  const table = ["| Part | Criterion | Status | Report |", "| --- | --- | --- | --- |", ...parts.map((p) => `| ${p.id} | ${cell(p.id === "phase" ? "phase-wide checks" : p.text)} | ${p.status} | ${p.path} |`)].join("\n");
+  const sections = parts.map((p) => `## ${p.id}: ${cell(p.id === "phase" ? "phase-wide checks" : p.text)}\n\n${lf(p.body).trim()}\n`).join("\n");
+  const text = `---\n${head}\n---\n\n# Phase ${path.basename(phase.dir)}: Verification Report (per criterion)\n\n**Status:** ${status}\n**Score:** ${fm.score}\n\n${table}\n\n${sections}`;
+  const file = phaseFile(phase, "VERIFICATION.md");
+  writeTextAtomic(file, text);
+  return done({ valid: true, written: rel(codeRoot, file), status, sha: textDigest(text), parts: summary });
 }
 
 export const completionFile = (phase) => path.join(phase.dir, "complete.json");
