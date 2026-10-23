@@ -13,6 +13,7 @@ import * as review from "./flow-review.mjs";
 import * as gate from "./flow-gate.mjs";
 import * as validation from "./flow-validation.mjs";
 import * as checks from "./flow-checks.mjs";
+import * as planState from "./flow-plan-state.mjs";
 
 const COMMANDS = {
   exists: (root, args) => files.exists(root, args),
@@ -60,18 +61,33 @@ const COMMANDS = {
   "quick-dir": (root, [slugSource]) => project.quickDir(root, slugSource),
   "quick-verification": (root, [dir, action]) => project.quickVerification(root, dir, action),
   "forensics-path": (root, _args, input) => project.forensicsPath(root, input),
+  // Planning state (kit feedback 87): the one writer of <phaseDir>/plan-progress.json.
+  "plan-state": (root, [phaseDir]) => planState.planState(root, phaseDir),
+  "plan-run": (root, [phaseDir], input) => planState.planRun(root, phaseDir, JSON.parse(input)),
+  "plan-mark": (root, [phaseDir], input) => planState.planMark(root, phaseDir, JSON.parse(input)),
+  "plan-end": (root, [phaseDir], input) => planState.planEnd(root, phaseDir, JSON.parse(input)),
+  "plan-outline": (root, [phaseDir], input) => planState.planOutline(root, phaseDir, JSON.parse(input)),
+  "plan-checker": (root, [phaseDir], input) => planState.planChecker(root, phaseDir, JSON.parse(input)),
+  "plan-contracts": (root, [phaseDir], input) => planState.planContracts(root, phaseDir, JSON.parse(input)),
+  "plan-realloc": (root, [phaseDir], input) => planState.planRealloc(root, phaseDir, JSON.parse(input)),
+  "plan-recheck": (root, [phaseDir], input) => planState.planRecheck(root, phaseDir, JSON.parse(input)),
 };
 
 export const COMMAND_NAMES = Object.keys(COMMANDS);
 
 // Verbs whose handler reads JSON or text from stdin; every other verb never touches stdin, so a person running
 // `gsd-flow.mjs remove <path>` from a shell whose stdin is an open pipe is not left waiting (G088).
-const STDIN = new Set(["write", "append", "json-push", "summary-heal", "resume-gate", "transfer", "discard-worktree", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "evidence-check", "check-weakening", "review-scope", "review-record", "prereview-record", "changed-lines", "forensics-path"]);
+const STDIN = new Set(["write", "append", "json-push", "summary-heal", "resume-gate", "transfer", "discard-worktree", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "evidence-check", "check-weakening", "review-scope", "review-record", "prereview-record", "changed-lines", "forensics-path", "plan-run", "plan-mark", "plan-end", "plan-outline", "plan-checker", "plan-contracts", "plan-realloc", "plan-recheck"]);
 export const readsStdin = (cmd) => STDIN.has(cmd);
 
 export async function main(argv, { root = configRoot(), input = "", out = (l) => process.stdout.write(`${l}\n`) } = {}) {
   const [cmd, ...args] = argv;
   const fn = COMMANDS[cmd];
+  // The plan-* verbs are the only writer of plan-progress.json.
+  if (["write", "append", "json-push", "remove"].includes(cmd) && planState.isPlanStateFile(args[0])) {
+    out(JSON.stringify({ status: "refused", error: `${args[0]} is written only by the plan-* verbs` }));
+    return 1;
+  }
   if (!fn) {
     out(JSON.stringify({ status: "error", error: `unknown command ${cmd ?? "(none)"}; one of ${COMMAND_NAMES.join(", ")}` }));
     return 1;
