@@ -32,7 +32,8 @@ test("FLOW-40 a dead pid with status running ends after 3 polls", async () => {
   const s = setup();
   fixtureRun(s, "wf_d", { status: "running" });
   const r = await s.ph(["watch-run", "wf_d"]);
-  assert.deepEqual(r.out, [`workflow interrupted (runner pid ${DEAD_PID} is gone; end it with: ph archive --run wf_d)`]);
+  assert.deepEqual(r.out.slice(0, 1), [`workflow interrupted (runner pid ${DEAD_PID} is gone; end it with: ph archive --run wf_d)`]);
+  assert.match(r.out[1], /^next: resume with `node ".+ph\.mjs" workflow --resume wf_d --detach`; /);
   assert.deepEqual(s.clock.sleeps, [1000, 1000]);
 });
 

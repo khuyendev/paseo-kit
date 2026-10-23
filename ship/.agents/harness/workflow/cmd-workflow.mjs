@@ -2,6 +2,7 @@
 // in the foreground or a detached child.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { PH_FILE, UsageError, errText } from "../lib/cli.mjs";
 import { readText, writeJsonAtomic, readJsonIf } from "../lib/io.mjs";
@@ -195,6 +196,41 @@ function recordMetrics(ctx, p, info, journalPath, result, out) {
   }
 }
 
+// Kit feedback #39: a runner that ends without its own terminal line leaves run.json "running" and log.txt silent. A
+// signal or an uncaught error is recorded as it happens; any other exit with the run still running (an unsettled
+// top-level await, a loop that ran dry) is recorded from the exit code. A hard kill (taskkill /F, TerminateProcess)
+// runs no handler, so that death stays without a reason and watch-run reports it as interrupted.
+const RUNNER_SIGNALS = process.platform === "win32" ? ["SIGINT", "SIGBREAK", "SIGHUP"] : ["SIGINT", "SIGTERM", "SIGHUP"];
+function recordRunnerExit(ctx, p, out) {
+  const runFile = path.join(p.runDir, RUN_FILES.run);
+  let reason = null;
+  const onSignal = (signal) => {
+    reason = `signal ${signal}`;
+    process.exit(128 + os.constants.signals[signal]);
+  };
+  const onError = (error) => {
+    reason = `uncaught error: ${errText(error)}`;
+    process.stderr.write(`${error?.stack ?? error}\n`);
+    process.exit(1);
+  };
+  const onExit = (code) => {
+    const info = readJsonIf(runFile);
+    if (info?.status !== "running") return;
+    const why = reason ?? `runner exited with code ${code} before the run ended`;
+    writeJsonAtomic(runFile, { ...info, status: "failed", endedAt: new Date(ctx.clock.now()).toISOString(), error: why });
+    out(`workflow failed ${p.runId}: ${why}`);
+  };
+  process.on("exit", onExit);
+  process.on("uncaughtException", onError);
+  for (const signal of RUNNER_SIGNALS) process.on(signal, onSignal);
+  // The listeners last only as long as the run, so a process that runs several runs in turn does not stack them.
+  return () => {
+    process.off("exit", onExit);
+    process.off("uncaughtException", onError);
+    for (const signal of RUNNER_SIGNALS) process.off(signal, onSignal);
+  };
+}
+
 async function runForeground(ctx, p) {
   const logFile = path.join(p.runDir, RUN_FILES.log);
   let info = writeRunStart(p, ctx, process.pid);
@@ -206,6 +242,7 @@ async function runForeground(ctx, p) {
   };
   const journalPath = path.join(p.runDir, RUN_FILES.journal);
   fs.appendFileSync(journalPath, "", "utf8");
+  const stopRecording = recordRunnerExit(ctx, p, out);
   out(`workflow start ${p.runId} ${p.runDir}`);
   let host = null;
   try {
@@ -247,6 +284,8 @@ async function runForeground(ctx, p) {
     recordMetrics(ctx, p, info, journalPath, null, out);
     out(`workflow failed ${p.runId}: ${errText(e)}`);
     return 2;
+  } finally {
+    stopRecording();
   }
 }
 

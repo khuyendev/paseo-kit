@@ -13,6 +13,7 @@ const POLL_MS = 1000;
 const ABSENT_MS = 60_000;
 const DEAD_CHECKS = 3;
 const TERMINAL = /^workflow (done|failed) /;
+const FAILED = /^workflow failed /;
 const SHOWN = /^(log |phase |workflow )|^agent done #\d+ .* null \(/;
 
 function readAppended(st) {
@@ -49,7 +50,7 @@ export async function watchRunCommand(ctx) {
   // Every id is checked before any run starts streaming, so one bad id stops the whole command.
   for (const id of ids) checkRunId(id, "run id");
   const runsDir = runsDirOf(ctx.root, ctx.opts["runs-dir"]);
-  const archiveHint = runsDirSuffix(ctx.root, runsDir);
+  const runsHint = runsDirSuffix(ctx.root, runsDir);
   const many = ids.length > 1;
   const runs = ids.map((id) => {
     const dir = resolveInside(runsDir, id);
@@ -59,8 +60,11 @@ export async function watchRunCommand(ctx) {
     };
   });
   const say = (st, line) => ctx.out(`${many ? `[${st.id.slice(-4)}] ` : ""}${line}`);
-  const end = (st, line) => {
+  // Kit feedback #39: a run that failed or was interrupted is resumed with its journal, so the line says how (the agents
+  // that finished replay from the journal, FLOW-21).
+  const end = (st, line, { resume = false } = {}) => {
     if (line) say(st, line);
+    if (resume) say(st, `next: resume with \`${ctx.ph} workflow --resume ${st.id} --detach${runsHint}\`; the journal keeps the agents that finished`);
     st.ended = true;
   };
   // --quiet: the wait is woken once, by the line that ends the watch (the end lines below are always printed).
@@ -73,11 +77,11 @@ export async function watchRunCommand(ctx) {
       const phase = lines.filter((l) => l.startsWith("phase ")).pop()?.slice(6) ?? "none";
       if (!ctx.opts.quiet) say(st, `resuming ${st.id}: skipped ${lines.length} earlier lines; current phase ${phase} (--from-start replays them)`);
       const terminal = lines.find((l) => TERMINAL.test(l));
-      if (terminal) return end(st, terminal);
+      if (terminal) return end(st, terminal, { resume: FAILED.test(terminal) });
     } else {
       for (const line of lines) {
         if (shown(line)) say(st, line);
-        if (TERMINAL.test(line)) return end(st);
+        if (TERMINAL.test(line)) return end(st, null, { resume: FAILED.test(line) });
       }
     }
     st.first = false;
@@ -98,11 +102,13 @@ export async function watchRunCommand(ctx) {
         return;
       }
       const why = info.stopReason ? `; reason: ${oneLine(info.stopReason)}` : info.error ? `; error: ${oneLine(info.error)}` : "";
-      return end(st, `workflow ended (run.json status ${info.status}${why})`);
+      return end(st, `workflow ended (run.json status ${info.status}${why})`, { resume: info.status === "failed" });
     }
     // Three consecutive dead checks, so a runner that just wrote its last line is not taken for dead.
     if (pidAlive(info.pid)) st.deadChecks = 0;
-    else if (++st.deadChecks >= DEAD_CHECKS) end(st, `workflow interrupted (runner pid ${info.pid} is gone; end it with: ph archive --run ${st.id}${archiveHint})`);
+    else if (++st.deadChecks >= DEAD_CHECKS) {
+      end(st, `workflow interrupted (runner pid ${info.pid} is gone; end it with: ph archive --run ${st.id}${runsHint})`, { resume: true });
+    }
   }
 
   for (;;) {

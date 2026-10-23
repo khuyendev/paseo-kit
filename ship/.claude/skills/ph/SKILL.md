@@ -185,6 +185,8 @@ not hold lines back, and match both forms: `ph watch-run RUNID --all | grep --li
 | `agent cached #<n> <label>` | a resumed run reused a recorded result |
 | `shell start #<n> <command>` / `shell done #<n> code=<c> <s>s` | a `shell()` call |
 | `workflow done <runId>: ...` / `workflow failed <runId>: ...` | the run ended |
+| `workflow failed <runId>: runner exited with code <n> ...` / `uncaught error: ...` / `signal <SIG>` | the runner ended by itself with the run still running; its reason is also in run.json `error` |
+| `` next: resume with `ph workflow --resume <runId> --detach`; ... `` | printed after a failed or interrupted run; resume it with that command (the journal keeps the agents that finished) |
 
 Watchdog of workflow agents (config keys, shipped values; 0 disables a limit, `watchdog_enabled: false` arms none).
 Time counts model time since the last prompt, tool time excluded. Teammates get no automatic stop.

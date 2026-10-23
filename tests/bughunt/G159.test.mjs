@@ -24,7 +24,9 @@ test("G159 the stop reason and the error of a run that ended without a terminal 
   const stopped = await s.ph(["watch-run", "wf_s"]);
   assert.equal(stopped.out.at(-1), "workflow ended (run.json status stopped; reason: owner: cancel, the spec changed)");
   const failed = await s.ph(["watch-run", "wf_x"]);
-  assert.equal(failed.out.at(-1), "workflow ended (run.json status failed; error: Cannot connect to daemon: ECONNREFUSED)");
+  // A failed run is followed by its resume command (feedback #39).
+  assert.equal(failed.out.at(-2), "workflow ended (run.json status failed; error: Cannot connect to daemon: ECONNREFUSED)");
+  assert.match(failed.out.at(-1), /^next: resume with `node ".+ph\.mjs" workflow --resume wf_x --detach`; /);
 });
 
 test("G159 a multi-line or long stop reason is shown on one line of at most 300 characters", async () => {
