@@ -59,7 +59,12 @@ function typeOf(value) {
 }
 
 const typeMatches = (want, got) => want === got || (want === "number" && got === "integer");
-const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+// enum and const equality: object members match by key set and value (key order is not data), array order counts.
+const same = (a, b) => {
+  if (Array.isArray(a) || Array.isArray(b)) return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => same(v, b[i]));
+  if (isObject(a) && isObject(b)) return Object.keys(a).length === Object.keys(b).length && Object.keys(a).every((k) => Object.hasOwn(b, k) && same(a[k], b[k]));
+  return a === b;
+};
 
 function validateNode(value, node, path, errors) {
   const got = typeOf(value);
