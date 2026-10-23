@@ -129,6 +129,7 @@ export const SCHEMA = obj({
     roles: map(obj({ model: str({ nonEmpty: true }), effort: effort(), reason: str() }, ["model", "effort", "reason"])),
     granularity: str({ oneOf: ["coarse", "standard", "fine"] }),
     plan_limits: obj({ tasks_per_plan: int(1), plans_per_phase: int(1), waves_per_phase: int(1) }),
+    tracer_extra_files: int(0),
     execution_mode: str({ oneOf: ["per-wave", "batch"] }),
     batch_review: bool(),
     isolation: str({ oneOf: ["shared", "worktree"] }),

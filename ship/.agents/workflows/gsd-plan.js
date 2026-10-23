@@ -140,10 +140,13 @@ const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reas
 // planning-only change would fail there; `replan` regenerates the outline on purpose.
 const roleOf = (name) => ({ ...(g.roles?.[name] ?? {}), ...(roleOverrides[name] ?? {}) });
 const planning = { tracer, reversibilityGates, granularity: g.granularity, plan_limits: g.plan_limits, stack_skill: cfg.adapter.stack_skill ?? null };
+// kit-feedback 37: extra files a tracer plan may list above the checker's Files/plan lines (0 = the same lines). It sits outside
+// plan_limits so setting it does not replan every plan; the checked key takes it only when set, so earlier records stay valid.
+const tracerExtraFiles = g.tracer_extra_files;
 const settingsOf = {
   freeze: { lanes: lanes.map((l) => ({ lens: l.lens, text: lensText(l.lens), model: l.model ?? null, effort: l.effort ?? null })), skeleton_lane: roleOf("skeleton_lane"), tracer, maxSkeletonPasses },
   plan: { ...planning, planner: roleOf("planner") },
-  checked: { ...planning, checker: roleOf("checker"), maxCheckIterations },
+  checked: { ...planning, checker: roleOf("checker"), maxCheckIterations, ...(tracerExtraFiles ? { tracerExtraFiles } : {}) },
 };
 const settingsDigest = {};
 for (const [key, value] of Object.entries(settingsOf)) settingsDigest[key] = await sha(JSON.stringify(value));
@@ -634,6 +637,7 @@ async function checkerLoop(scopeIds, gapScoped) {
       `Check the plans of phase ${N} read-only: ${live.map(planPath).join(", ")}.`,
       planningContext(gapScoped ? "gap_closure" : "standard"),
       filesPerPlan ? `Files per plan: warning at ${filesPerPlan.warning}+, blocker at ${filesPerPlan.blocker}+ (use these for the Files/plan thresholds).` : "",
+      filesPerPlan && tracerExtraFiles ? `Tracer files per plan (a plan with a type="tracer" task): warning at ${filesPerPlan.warning + tracerExtraFiles}+, blocker at ${filesPerPlan.blocker + tracerExtraFiles}+.` : "",
       `Deterministic probe results are in ${probeFile}: they are already counted; do not re-derive them, do not repeat them as issues.`,
       warnings.length ? `Carried warnings:\n${warnings.map((w) => `- ${w}`).join("\n")}` : "",
       "Return JSON {issues: [{plan (null for phase-level), dimension, severity (blocker|warning|info), required_property (the invariant that must hold), description (the evidence it does not), fix_hint}]}.",
@@ -689,20 +693,23 @@ async function checkerLoop(scopeIds, gapScoped) {
     // A revision that returned nothing or stopped for an owner is never recorded as revised (G008).
     const answered = perPlan.filter((_, i) => revised[i] && revised[i].result !== null && !ownerMarker(revised[i].result)).map(([id]) => id);
     const stop = await recordEach(answered, gapScoped);
+    // kit-feedback 37: a REVISION_CONFLICT on one plan does not skip the phase-level issues. Their revision still runs, and the
+    // conflict stops the loop after it, so the owner's answer reruns a phase whose other revisions are recorded.
     const owned = revised.find((r) => ownerMarker(r?.result));
-    if (owned) return { stop: ownerStop("Checker", owned.result) };
+    const conflict = owned ? ownerStop("Checker", owned.result) : null;
     // A revision that returned nothing is not a finished revision: stop with its reason; the plan is never recorded as revised.
     const missed = revised.findIndex((r) => !r || r.result === null);
-    if (missed !== -1) return { stop: failedCall(`planner revision ${perPlan[missed][0]} (checker iteration ${iter})`, revised[missed]?.reason ?? null) };
-    if (stop) return { stop };
+    if (!conflict && missed !== -1) return { stop: failedCall(`planner revision ${perPlan[missed][0]} (checker iteration ${iter})`, revised[missed]?.reason ?? null) };
+    if (!conflict && stop) return { stop };
     if (phaseLevel.length) {
       const r = await plannerCall(gapScoped ? "planner:gaps" : "planner:outline", `revise-phase-${iter}`, [planningContext("revision"), revisionContext(scopeIds.map(planPath), phaseLevel)].join("\n\n"), "freeze", freezeHash, { judges: await plansJudges(scopeIds) });
-      if (ownerMarker(r.result)) return { stop: ownerStop("Checker", r.result) };
-      if (r.result === null) return { stop: failedCall(`phase-level planner revision (checker iteration ${iter})`, r.reason) };
+      if (ownerMarker(r.result)) return { stop: conflict ?? ownerStop("Checker", r.result) };
+      if (r.result === null) return { stop: conflict ?? failedCall(`phase-level planner revision (checker iteration ${iter})`, r.reason) };
       // The phase-level revision can change any plan, so every plan is checked and recorded again.
       const s = await recordEach(scopeIds, gapScoped);
-      if (s) return { stop: s };
+      if (s) return { stop: conflict ?? s };
     }
+    if (conflict) return { stop: conflict };
   }
   for (const list of carriedBy.values()) warnings.push(...list);
   if (!stuck.size) return { passed: true };

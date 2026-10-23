@@ -187,6 +187,7 @@ Paths in the adapter are repo-relative script paths (validated at load: no drive
 | `roles` | map role -> `{model?: tier\|alias\|provider/model, effort?: level, reason?: string}`; any key is a valid role (PHCL-22: valid roles = `GSD_ROLES` + keys of this map) | `{}` (agent definitions carry their tier) |
 | `granularity` | `coarse\|standard\|fine` | `standard` |
 | `plan_limits` | `{tasks_per_plan, plans_per_phase, waves_per_phase}` ints >= 1 | `{3, 12, 4}` |
+| `tracer_extra_files` | int >= 0: files a plan with a `type="tracer"` task may list above the checker's Files/plan lines (the `Tracer files per plan` line of the checker run context); 0 = the same lines | `0` |
 | `execution_mode` | `per-wave\|batch` | `per-wave` |
 | `batch_review` | bool | true |
 | `isolation` | `shared\|worktree` | `worktree` |

@@ -118,6 +118,7 @@
     "roles": {},
     "granularity": "standard",
     "plan_limits": { "tasks_per_plan": 3, "plans_per_phase": 12, "waves_per_phase": 4 },
+    "tracer_extra_files": 0,
     "execution_mode": "per-wave",
     "batch_review": true,
     "isolation": "worktree",
