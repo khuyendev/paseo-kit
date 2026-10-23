@@ -212,11 +212,11 @@ test("GSDF-25 the structure fixer gets the exact error list once; a second failu
 });
 
 test("GSDF-26 checker: 5 issues twice stall, info-only passes with advisories, a probe blocker counts without checker issues", async () => {
-  const five = { issues: Array.from({ length: 5 }, (_, i) => ({ plan: "01-01", severity: "blocker", description: `c${i}` })) };
+  const five = { issues: Array.from({ length: 5 }, (_, i) => ({ plan: "01-01", severity: "blocker", required_property: `c${i} holds`, description: `c${i}` })) };
   const stalled = await plan(makeWorld(), {}, { "checker-": () => five });
   assert.deepEqual([stalled.result.stage, /stalled: 5 issues/.test(stalled.result.reason)], ["Checker", true]);
   assert.deepEqual(stalled.result.options, ["force proceed (rerun with forceProceed {reason})", "give guidance and retry", "abandon"]);
-  const info = await plan(makeWorld(), {}, { "checker-": () => ({ issues: [{ severity: "info", description: "a" }, { severity: "info", description: "b" }] }) });
+  const info = await plan(makeWorld(), {}, { "checker-": () => ({ issues: [{ severity: "info", required_property: "a holds", description: "a" }, { severity: "info", required_property: "b holds", description: "b" }] }) });
   assert.equal(info.result.status, "planned");
   assert.equal(info.result.advisories.length, 2);
   const w = makeWorld();
@@ -234,7 +234,7 @@ test("GSDF-26 checker: 5 issues twice stall, info-only passes with advisories, a
 
 test("GSDF-27 REVISION_CONFLICT in the checker loop stops at once with the conflict", async () => {
   const r = await plan(makeWorld(), {}, {
-    "checker-": () => ({ issues: [{ plan: "01-01", severity: "blocker", description: "x" }] }),
+    "checker-": () => ({ issues: [{ plan: "01-01", severity: "blocker", required_property: "x holds", description: "x" }] }),
     "revise-01-01": () => ({ marker: "REVISION_CONFLICT", conflict: { issue: "x", decision: "D-01" } }),
   });
   assert.deepEqual([r.result.status, r.result.marker], ["needs-owner", "REVISION_CONFLICT"]);

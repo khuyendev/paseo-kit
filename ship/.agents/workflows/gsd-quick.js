@@ -58,7 +58,7 @@ call = async (prompt, opts) => {
   return rawCall(prompt, opts);
 };
 
-const ISSUES_SCHEMA = { type: "object", properties: { issues: { type: "array", items: { type: "object", properties: { severity: { type: "string" }, description: { type: "string" } }, required: ["severity", "description"] } } }, required: ["issues"] };
+const ISSUES_SCHEMA = { type: "object", properties: { issues: { type: "array", items: { type: "object", properties: { severity: { type: "string" }, required_property: { type: "string" }, description: { type: "string" } }, required: ["severity", "required_property", "description"] } } }, required: ["issues"] };
 const EXEC_SCHEMA = { type: "object", properties: { taskResults: { type: "array" }, deviations: { type: "array" }, requests: { type: "array" } }, required: ["taskResults"] };
 const PLAN_SCHEMA = { type: "object", properties: { marker: { type: "string" } }, required: ["marker"] };
 const MAX_CHECKS = 2;
@@ -137,7 +137,7 @@ if (invalid) return invalid;
 if (a.full) {
   phase("Check");
   for (let i = 1; ; i++) {
-    const c = await ask([`Check the quick plan ${PLAN} read-only.`, "Return JSON {issues: [{severity (blocker|warning|info), description}]}.", digestLine("plan", await fileSha(PLAN))].join("\n\n"), { label: `quick-check-${i}`, agentType: agentFor("checker", "gsd-plan-checker"), role: "checker", readOnly: true, schema: ISSUES_SCHEMA });
+    const c = await ask([`Check the quick plan ${PLAN} read-only.`, "Return JSON {issues: [{severity (blocker|warning|info), required_property (the invariant that must hold), description (the evidence it does not)}]}.", digestLine("plan", await fileSha(PLAN))].join("\n\n"), { label: `quick-check-${i}`, agentType: agentFor("checker", "gsd-plan-checker"), role: "checker", readOnly: true, schema: ISSUES_SCHEMA });
     if (c.result === null) return { status: "failed", reason: `plan checker returned nothing${c.reason ? ` (${c.reason})` : ""}`, dir: q.dir };
     // Only blockers send the plan back; warnings are carried into the result (kit-feedback 13).
     const severity = (x) => String(x.severity).toLowerCase();

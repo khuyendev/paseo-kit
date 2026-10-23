@@ -73,7 +73,7 @@ test("GSDF-61 quick: needs a ROADMAP, makes the dated directory, one plan and a 
     if (plan) { w.write(plan, planText("q")); return { marker: "PLANNING COMPLETE" }; }
     if (o.label === "quick-exec") { w.write(/SUMMARY to exactly: (\S+)/.exec(p)[1], "done\n"); return { taskResults: [{ task: "1", status: "implemented" }] }; }
     if (o.label === "quick-research") { w.write(/write (\S+RESEARCH\.md)/.exec(p)[1], "research\n"); return "researched"; }
-    if (o.label.startsWith("quick-check")) return { issues: [{ severity: "blocker", description: "x" }] };
+    if (o.label.startsWith("quick-check")) return { issues: [{ severity: "blocker", required_property: "x holds", description: "x" }] };
     return full ? { marker: "REVISION COMPLETE" } : null;
   };
   const r = await runScript("gsd-quick", { root: w.root, gsd: w.gsd, args: { description: "fix a | b" }, agent: agentFn(false) });
