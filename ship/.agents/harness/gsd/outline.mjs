@@ -6,7 +6,7 @@ import { sha256, textDigest } from "../lib/hash.mjs";
 import { done, fail, idList, lf, none, readIf, rel } from "./common.mjs";
 import { classify, covers, filesUnder, ownsPath, sharedPaths } from "./adapter-hooks.mjs";
 import { normPlanId, phaseFile, planIds, planPath, readPlans, summaryPath } from "./planning.mjs";
-import { ownershipProblems, waveOverlaps } from "./plan-checks.mjs";
+import { filesPerPlanLines, ownershipProblems, waveOverlaps } from "./plan-checks.mjs";
 import { loadRequirements } from "./requirements.mjs";
 import { loadRoadmap, roadmapPhase } from "./roadmap.mjs";
 
@@ -74,7 +74,9 @@ export function outlineParseVerb(g, phase) {
   return done({ file: rel(g.codeRoot, o.file), manifestFile: rel(g.codeRoot, o.manifestFile), exists: true, complete: o.complete, rows: o.rows, manifest: o.manifest, manifestError: o.manifestError });
 }
 
-export async function outlineCheck(g, phase, { tracer = true, plansPerPhase, wavesPerPhase } = {}) {
+// filesPerPlan: "error" (default) holds a plan whose owns reach the blocker line as an error; "warn" reports it as a warning (an outline
+// that was reviewed and has plans is not reopened by this check, kit feedback 69).
+export async function outlineCheck(g, phase, { tracer = true, plansPerPhase, wavesPerPhase, filesPerPlan = "error" } = {}) {
   const errors = [];
   const warnings = [];
   const o = readOutline(phase);
@@ -112,6 +114,7 @@ export async function outlineCheck(g, phase, { tracer = true, plansPerPhase, wav
   if (o.rows.length > limits.plans_per_phase) errors.push(`${o.rows.length} plans > plans_per_phase ${limits.plans_per_phase}`);
   if (waves.length > limits.waves_per_phase) errors.push(`${waves.length} waves > waves_per_phase ${limits.waves_per_phase}`);
   const crossPlan = [];
+  let filesLines = null;
   if (o.manifestError) errors.push(o.manifestError);
   else {
     // G014: a repeated id is refused, and every entry (not one per id) feeds the owns, shared and overlap checks.
@@ -160,6 +163,16 @@ export async function outlineCheck(g, phase, { tracer = true, plansPerPhase, wav
     for (const [id, paths] of ownedOf) for (const p of paths) if ([...shared].some((s) => s === p || covers(p, s))) errors.push(`${id}: owns ${p} covers a shared path`);
     const asPlans = o.rows.filter((r) => mplans.has(r.id)).map((r) => ({ id: r.id, wave: r.wave, filesModified: [] }));
     for (const pr of waveOverlaps(asPlans, (p) => ownedOf.get(p.id) ?? [])) if (pr.kind === "overlapping-owns") errors.push(pr.message);
+    // Kit feedback 69: the checker's Files/plan lines, applied to the allocation while it can still change. A directory in owns counts 1.
+    const counts = new Map([...ownedOf].map(([id, paths]) => [id, [...new Set(paths)]]));
+    filesLines = filesPerPlanLines(g, [...counts].map(([, files]) => ({ filesModified: files })), limits.plans_per_phase);
+    const extra = g.cfg.gsd.tracer_extra_files;
+    for (const [id, files] of counts) {
+      const more = mplans.get(id)?.tracer?.is ? extra : 0;
+      const [warnAt, blockAt] = [filesLines.warning + more, filesLines.blocker + more];
+      if (files.length >= blockAt) (filesPerPlan === "warn" ? warnings : errors).push(`${id}: owns ${files.length} paths, blocker at ${blockAt}+ (split the plan or move owned paths to another plan; gsd.files_per_plan sets the lines)`);
+      else if (files.length >= warnAt) warnings.push(`${id}: owns ${files.length} paths, warning at ${warnAt}+`);
+    }
     if (tracer) {
       const tracers = [...mplans].filter(([, p]) => p.tracer?.is);
       if (!tracers.length) errors.push("tracer mode: no manifest plan has tracer.is");
@@ -171,7 +184,7 @@ export async function outlineCheck(g, phase, { tracer = true, plansPerPhase, wav
       }
     }
   }
-  const json = { passed: errors.length === 0, errors, warnings, crossPlan, needsWiring: crossPlan.length > 0, waves, rows: o.rows, limits };
+  const json = { passed: errors.length === 0, errors, warnings, crossPlan, needsWiring: crossPlan.length > 0, waves, rows: o.rows, limits, files_per_plan: filesLines };
   return done(json, errors.length ? 1 : 0);
 }
 
