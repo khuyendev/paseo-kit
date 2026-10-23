@@ -206,6 +206,33 @@ Paths in the adapter are repo-relative script paths (validated at load: no drive
 
 `GSD_ROLES` (ADPT-11): `research, project_researcher, synthesizer, outline, planner, checker, skeleton_lane, architect, plan_finder, plan_verifier, plan_judge, plan_editor, executor, reviewer, finding_verifier, fixer, verifier, mapper, roadmapper, debugger`.
 
+#### Role catalog
+
+Each row is a role, the workflows that pass it, the agent type it starts (`adapter.agents.<role>` replaces it) and the tier it runs on when nothing else is set: the agent definition's `model:`, or `default_tier` when the call names no agent type. Precedence per call: the call's own model or effort (the gsd-plan args `roles` map, `skeletonLanes`, `gsd.code_review.reviewers`) > `gsd.roles.<role>` > the agent's `model:` > `default_tier`. A tier resolves to the model in `tiers.<tier>.provider` of the project overlay; the kit ships tiers unconfigured, so calls fail until they are mapped. `outline` has its own `gsd.roles` entry: `gsd.roles.planner` does not reach it.
+
+| role | called by | agent type | tier | notes |
+| --- | --- | --- | --- | --- |
+| `research` | gsd-research, gsd-quick | `gsd-phase-researcher` | `pro` | |
+| `project_researcher` | gsd-new-project | `gsd-project-researcher` | `standard` | one per research dimension |
+| `synthesizer` | gsd-new-project | `gsd-research-synthesizer` | `standard` | |
+| `roadmapper` | gsd-new-project | `gsd-roadmapper` | `pro` | |
+| `outline` | gsd-plan | `gsd-planner` | `pro` | the phase outline, before the per-plan planners |
+| `planner` | gsd-plan, gsd-quick | `gsd-planner` | `pro` | per-plan planners; quick plan and its revisions |
+| `checker` | gsd-plan, gsd-quick | `gsd-plan-checker` | `pro` | |
+| `skeleton_lane` | gsd-plan | `gsd-skeleton-reviewer` | `pro` | each `skeletonLanes` entry may set its own model and effort |
+| `architect` | gsd-plan | none | `standard` | the wiring stage runs only when `adapter.agents.architect` names an agent |
+| `plan_finder` | gsd-plan-review | none | `standard` | one per plan and lens |
+| `plan_verifier` | gsd-plan-review | none | `standard` | |
+| `plan_judge` | gsd-plan-review | none | `standard` | |
+| `plan_editor` | gsd-plan-review | `gsd-planner` | `pro` | one revision pass over the plans |
+| `executor` | gsd-execute, gsd-quick | `gsd-executor` | `standard` | |
+| `reviewer` | gsd-execute | `gsd-code-reviewer` | `pro` | one per plan; `gsd.code_review.reviewers` add more |
+| `finding_verifier` | gsd-execute | `finding-verifier` | `pro` | confirms or refutes a review finding |
+| `fixer` | gsd-execute | `gsd-code-fixer` | `standard` | effort `high` unless `gsd.roles.fixer.effort` is set |
+| `verifier` | gsd-verify, gsd-quick | `gsd-verifier` | `pro` | |
+| `mapper` | gsd-map-codebase | `gsd-codebase-mapper` | `standard` | one per focus area |
+| `debugger` | gsd-debug | `gsd-debugger` | `pro` | |
+
 Error messages name the dotted key: `invalid harness config gsd.plan_limits.waves_per_phase: missing key`, `invalid harness config adapter.unknown_x: unknown key`, `invalid harness config read_limits.fileMaxChars: must be <= replyMaxChars`, `invalid harness config max_subagents: expected integer`. Texts after the colon: `unknown key`, `missing key`, `expected <integer|string|boolean|object|array|array of strings|...>`, `expected one of a|b|c`, `must be >= N`, `must be between A and B`, or a named rule.
 
 ## 5. Shared helpers: `ship/.agents/harness/lib/`

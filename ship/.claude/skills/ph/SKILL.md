@@ -75,7 +75,7 @@ Options are `--key value` only; a value may itself start with `--`. Prompts: exa
   workflow launches, not live agents or cached resume calls. The shipped tiers remain unconfigured.
 - `--role R` (fanout `role=`, workflow `agent({role})`) names a GSD role; model and effort then follow
   `gsd.roles.<R>` of the adapter. Precedence, for model and effort separately: `--model`/`--effort` > role entry >
-  the agent type's `model:` > `default_tier`. The role is never guessed from the agent type.
+  the agent type's `model:` > `default_tier`. The role is never guessed from the agent type. The role catalog in the kit's `docs/INTERFACES.md` section 4.2 (Role catalog) lists which workflow passes each role, its agent type and tier.
 - `--type T` loads `.agents/agents/T.md`: its body and every `include:` file are pasted into the first prompt (the
   agent is told not to open them again); `model:` picks the default model. `tools:` grants nothing; a `tools:` list
   without an editing tool marks the role read-only.
