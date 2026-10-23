@@ -46,3 +46,16 @@ test("F58 green evidence stays current when another adapter key or a harness set
   assert.equal(st.json.status, "stale");
   assert.equal(st.json.reason, "adapter configuration differs from the gate inputs");
 });
+
+test("F58 verify stays strict: an owned file edited after the phase gate makes its evidence stale", async () => {
+  const commands = { build: [NODE, "-e", "process.exit(0)"], test: [NODE, "-e", "process.exit(0)"], build_timeout_s: 30, test_timeout_s: 30, gates: [], verify: {} };
+  const p = makeTempProject({ files: { "src/a/x.js": "x\n" }, overlay: { adapter: { commands } } });
+  const plans = [{ id: "03-01", owns: ["Path:src/a/"], verify: [] }];
+  const r = await flow(p.root, ["gate", ".planning/phases/03-api"], { waveId: "batch", plans });
+  assert.equal(r.json.green, true);
+  assert.equal((await flow(p.root, ["evidence-check", r.json.evidence], { plans })).json.status, "current");
+  p.write("src/a/x.js", "x changed after the gate\n");
+  const st = (await flow(p.root, ["evidence-check", r.json.evidence], { plans })).json;
+  assert.equal(st.status, "stale");
+  assert.match(st.reason, /inputs differ from the current code/);
+});
