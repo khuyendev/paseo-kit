@@ -45,7 +45,8 @@ test("RVST-02 outcome records the later fate of a finding; the report counts it,
   assertLine(await s.ph(["review-stats", "outcome", "03-02:F-01", "wont-fix"]), "outcome 03-02:F-01 wont-fix");
   assertLine(await s.ph(["review-stats", "outcome", "03-02:F-01", "fixed"]), "outcome 03-02:F-01 fixed");
   const lines = s.project.read("_workspace/review-outcomes.jsonl").trim().split("\n").map((l) => JSON.parse(l));
-  assert.deepEqual(lines[0], { v: 1, at: lines[0].at, ref: "03-01:F-03", fate: "not-hold", note: "by design" });
+  assert.match(lines[0].fp, /^[0-9a-f]{16}$/);
+  assert.deepEqual(lines[0], { v: 1, at: lines[0].at, ref: "03-01:F-03", fp: lines[0].fp, fate: "not-hold", note: "by design" });
   const r = await s.ph(["review-stats"]);
   assertLine(r, "not blocking 3: settled 2 (fixed 1, not-hold 1, duplicate 0, wont-fix 0), open 1");
   assertLine(r, "likelihood likely: 2 findings, judged real 2, judged false 0");
@@ -60,7 +61,7 @@ test("RVST-03 outcome refuses an unknown finding or fate; no records report only
   assertExit(await s.ph(["review-stats", "outcome", "03-01:F-03", "fixed", "--phase", "3"]), 1);
   assertExit(await s.ph(["review-stats", "--note", "x"]), 1);
   s.project.write("_workspace/review-outcomes.jsonl", `${JSON.stringify({ v: 1, ref: "77-01:F-01", fate: "fixed" })}\nnot json\n`);
-  assertLine(await s.ph(["review-stats"]), /skipped 1 unreadable records, 1 unreadable outcome lines, 1 outcomes of findings no record holds$/);
+  assertLine(await s.ph(["review-stats"]), /skipped 1 unreadable records, 1 unreadable outcome lines, 1 outcomes with no finding fingerprint \(not applied\)$/);
   const empty = setup();
   const r = await empty.ph(["review-stats"]);
   assertExit(r, 0);

@@ -141,7 +141,11 @@ until dry, budget-aware loop, custom type + schema + effort, tier choice).
   `review/*.json` records: findings by severity and gate status, verifier verdicts of gated findings, confirmed
   findings resolved at the resolution check, likelihood against findings judged real or false, and the later fate of
   non-blocking findings. Record that fate when a deferred finding is settled: `ph review-stats outcome PLAN:FINDING
-  fixed|not-hold|duplicate|wont-fix [--note T]` (`_workspace/review-outcomes.jsonl`; the ids of `deferred.md`).
+  fixed|not-hold|duplicate|wont-fix [--note T]` (`_workspace/review-outcomes.jsonl`; the ids of `deferred.md`). A fate
+  binds to that finding's content (id, file, line, class, description, trigger), so a rerun that reuses the id for
+  another defect does not inherit it. When PLAN:FINDING names different findings in several records, the fate goes to
+  the newest record's finding and the output says so. Outcome lines without that fingerprint (written before) are
+  reported as not applied.
 
 Authoring rules:
 - Guard `null` per stage (an `agent()` call returns `null` with a journaled reason when it fails) and

@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { UsageError } from "../lib/cli.mjs";
+import { sha256 } from "../lib/hash.mjs";
 import { readJsonIf, readText } from "../lib/io.mjs";
 
 export const OUTCOMES_REL = "_workspace/review-outcomes.jsonl";
@@ -17,8 +18,12 @@ const SEVERITIES = ["critical", "high", "medium", "low", "info"];
 const STATUSES = ["gated", "downgraded", "deferred", "pre-existing"];
 const LIKELIHOODS = ["likely", "possible", "theoretical"];
 const REF = /^[^:\s]+:[^:\s]+$/;
+const FINGERPRINT = /^[0-9a-f]{16}$/;
 
 const ref = (plan, id) => `${plan}:${id}`;
+// What a finding says, not only its id: a rerun that reuses the id for another defect has another fingerprint.
+const fingerprint = (f) => sha256(JSON.stringify([f.id, f.file ?? null, f.line ?? null, f.class ?? null, f.description ?? null, f.trigger ?? null])).slice(0, 16);
+const fateKey = (key, fp) => `${key} ${fp}`;
 const pct = (a, b) => (b ? ` (${Math.round((100 * a) / b)}%)` : "");
 const countBy = (list, key, names) => names.map((n) => `${n} ${list.filter((x) => x[key] === n).length}`).join(", ");
 
@@ -40,38 +45,41 @@ export function readReviews(root, phase) {
       } catch {
         rec = null;
       }
-      if (typeof rec?.plan === "string" && Array.isArray(rec.findings)) reviews.push({ phase: nn, file, rec });
+      if (typeof rec?.plan === "string" && Array.isArray(rec.findings)) reviews.push({ phase: nn, file, full: path.join(rdir, file), rec });
       else bad++;
     }
   }
   return { reviews, bad };
 }
 
-/** {fates: Map ref -> {fate, note}, bad}; a later line for the same finding wins. */
+/** {fates: Map "ref fingerprint" -> {fate, note}, bad, unbound}; a later line for the same finding wins; a line with no fingerprint (written before fates were bound to findings) applies to nothing. */
 export function readOutcomes(root) {
   const fates = new Map();
   let bad = 0;
+  let unbound = 0;
   const file = path.join(root, OUTCOMES_REL);
-  if (!fs.existsSync(file)) return { fates, bad };
+  if (!fs.existsSync(file)) return { fates, bad, unbound };
   for (const line of readText(file).split("\n")) {
     if (!line.trim()) continue;
     try {
       const o = JSON.parse(line);
-      if (REF.test(o?.ref) && FATES.includes(o.fate)) fates.set(o.ref, { fate: o.fate, note: o.note ?? null });
-      else bad++;
+      if (!REF.test(o?.ref) || !FATES.includes(o.fate)) bad++;
+      else if (!FINGERPRINT.test(o.fp ?? "")) unbound++;
+      else fates.set(fateKey(o.ref, o.fp), { fate: o.fate, note: o.note ?? null });
     } catch {
       bad++;
     }
   }
-  return { fates, bad };
+  return { fates, bad, unbound };
 }
 
-/** Every finding with its phase, ref, resolution and recorded fate. */
+/** Every finding with its phase, ref, fingerprint, resolution and the fate recorded for this very finding. */
 export function findingsOf(reviews, fates) {
   return reviews.flatMap(({ phase, rec }) => rec.findings.map((f) => {
     const resolved = (rec.resolution ?? []).find((r) => r.id === f.id)?.resolved ?? null;
     const key = ref(rec.plan, f.id);
-    return { ...f, phase, plan: rec.plan, ref: key, resolved, fate: fates.get(key)?.fate ?? null };
+    const fp = fingerprint(f);
+    return { ...f, phase, plan: rec.plan, ref: key, fp, resolved, fate: fates.get(fateKey(key, fp))?.fate ?? null };
   }));
 }
 
@@ -109,11 +117,15 @@ function recordOutcome(ctx, [, key, fate]) {
   if (!REF.test(key ?? "") || !FATES.includes(fate)) throw new UsageError(`usage: ${REVIEW_STATS_USAGE}`);
   if (ctx.opts.phase !== undefined) throw new UsageError("--phase goes with the report, not with outcome");
   const { reviews } = readReviews(ctx.root);
-  if (!findingsOf(reviews, new Map()).some((f) => f.ref === key)) throw new UsageError(`no review finding ${key} in ${PHASES_REL}/*/review (PLAN:FINDING as in deferred.md, e.g. 03-02:F-01)`);
+  const hits = reviews.flatMap((r) => findingsOf([r], new Map()).filter((f) => f.ref === key).map((f) => ({ fp: f.fp, file: r.file, at: fs.statSync(r.full).mtimeMs })));
+  if (!hits.length) throw new UsageError(`no review finding ${key} in ${PHASES_REL}/*/review (PLAN:FINDING as in deferred.md, e.g. 03-02:F-01)`);
+  // A plan id can sit in several records (a rerun under another wave id): the fate goes to the newest record's finding.
+  const newest = hits.reduce((a, b) => (b.at > a.at ? b : a));
   const file = path.join(ctx.root, OUTCOMES_REL);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.appendFileSync(file, `${JSON.stringify({ v: 1, at: new Date(ctx.clock?.now() ?? Date.now()).toISOString(), ref: key, fate, note: ctx.opts.note ?? null })}\n`, "utf8");
-  ctx.out(`outcome ${key} ${fate}`);
+  fs.appendFileSync(file, `${JSON.stringify({ v: 1, at: new Date(ctx.clock?.now() ?? Date.now()).toISOString(), ref: key, fp: newest.fp, fate, note: ctx.opts.note ?? null })}\n`, "utf8");
+  const ambiguous = new Set(hits.map((h) => h.fp)).size > 1 ? ` (newest of ${hits.length} records with ${key}: ${newest.file})` : "";
+  ctx.out(`outcome ${key} ${fate}${ambiguous}`);
   return 0;
 }
 
@@ -125,9 +137,9 @@ export async function reviewStatsCommand(ctx) {
   const outcomes = readOutcomes(ctx.root);
   const findings = findingsOf(reviews, outcomes.fates);
   if (reviews.length) for (const line of reviewLines(reviews, findings)) ctx.out(line);
-  const known = new Set(findingsOf(readReviews(ctx.root).reviews, new Map()).map((f) => f.ref));
+  const known = new Set(findingsOf(readReviews(ctx.root).reviews, new Map()).map((f) => fateKey(f.ref, f.fp)));
   const orphans = [...outcomes.fates.keys()].filter((k) => !known.has(k)).length;
-  const skipped = [bad && `${bad} unreadable records`, outcomes.bad && `${outcomes.bad} unreadable outcome lines`, orphans && `${orphans} outcomes of findings no record holds`].filter(Boolean);
+  const skipped = [bad && `${bad} unreadable records`, outcomes.bad && `${outcomes.bad} unreadable outcome lines`, outcomes.unbound && `${outcomes.unbound} outcomes with no finding fingerprint (not applied)`, orphans && `${orphans} outcomes of findings no record holds`].filter(Boolean);
   ctx.out(`review-stats: ${reviews.length} review records from ${PHASES_REL}/*/review${ctx.opts.phase !== undefined ? ` (phase ${ctx.opts.phase})` : ""}${skipped.length ? `; skipped ${skipped.join(", ")}` : ""}`);
   return 0;
 }
