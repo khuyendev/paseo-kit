@@ -18,7 +18,7 @@ Mod (`ship/.claude/plugins/`):
 - `.claude-plugin/marketplace.json` (marketplace `paseo-harness-kit`, plugin `harness-files`, source `./harness-files`; matches `FILE_PLUGIN_ID`).
 - `harness-files/.claude-plugin/plugin.json`, `harness-files/hooks/hooks.json` (`{"modules":["./register.ts"]}`).
 - `harness-files/hooks/register.ts`: engine-API-only mod (no Node import, no fs); registers the three tools at `session.start` with `isDeferred:false`, serves them with `tool.check` before staging and after the plan, native `Bash` tickets (120 s), fail-closed transport, at most one native execute, recovered / unknown / not-executed outcomes, native-subagent refusal, 44,000-char result ceiling.
-- `harness-files/scripts/discover.mjs`: self-contained backend discovery (node: imports only) run by the mod through `$.process.run` on every call; manifest digest check of the trusted set, stamp cache (size + mtime) that skips digests only while nothing changed. Kept outside `register.ts` because the sandbox module has no fs and the backend may not verify itself.
+- `harness-files/scripts/discover.mjs`: self-contained backend discovery (node: imports only) run by the mod through `$.process.run` on every call; manifest digest check of the trusted set on every call, no cache (size and mtime can be restored after an edit, so a stamp cannot prove the content). Kept outside `register.ts` because the sandbox module has no fs and the backend may not verify itself.
 
 Tests (`tests/files/`): `helpers.mjs` (in-process ticket driver), `fake-engine.mjs` (fake Claude Code engine wired to the real backend), `read.test.mjs`, `edit.test.mjs`, `lines.test.mjs`, `write.test.mjs`, `transport.test.mjs`, `discover.test.mjs`, `mod.test.mjs`.
 

@@ -40,7 +40,7 @@ export async function fakeEngine({ cwd, sessionId = "claude-session-1", env = {}
     process: {
       run: async (argv, init = {}) => {
         log.processes.push({ argv, init });
-        if (String(argv[1]).endsWith("discover.mjs")) return ok(JSON.stringify({ backend: backendPath, stamp: "0".repeat(64) }));
+        if (String(argv[1]).endsWith("discover.mjs")) return ok(JSON.stringify({ backend: backendPath }));
         const input = JSON.parse(init.stdin);
         log.actions.push(input.action === "collect" ? `collect-${input.phase ?? "result"}` : input.action);
         return backendReply ? backendReply(input, realBackend) : realBackend(input);

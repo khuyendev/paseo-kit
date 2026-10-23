@@ -53,7 +53,6 @@ test("FTOL-05 an installed project's backend is found from a deep cwd and verifi
   fs.mkdirSync(deep, { recursive: true });
   const found = discover("", deep, cachePlugin());
   assert.equal(found.backend, path.join(root, ".agents/harness/files/backend.mjs"));
-  assert.match(found.stamp, /^[a-f0-9]{64}$/);
   const r = spawnSync(process.execPath, [DISCOVER, "", deep, cachePlugin()], { encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(JSON.parse(r.stdout).backend, found.backend);
@@ -63,10 +62,9 @@ test("FTOL-05 manifest problems and modified or untracked backend files fail clo
   const plugin = cachePlugin();
   const root = project();
   const fail = (re) => assert.throws(() => discover("", root, plugin), re);
-  const first = discover("", root, plugin);
+  discover("", root, plugin);
   fs.appendFileSync(path.join(root, ".agents/harness/files/edit.mjs"), "\n// edited\n");
   fail(/harness backend differs from installed marker: \.agents\/harness\/files\/edit\.mjs/);
-  assert.throws(() => discover("", root, plugin, first.stamp), /differs from installed marker/);
   writeManifest(root);
   fs.writeFileSync(path.join(root, ".agents/harness/files/extra.mjs"), "export {};\n");
   fail(/harness backend file not in installed marker: \.agents\/harness\/files\/extra\.mjs/);
@@ -98,17 +96,16 @@ test("FTOL-05 without a manifest only the plugin's own source project is trusted
   assert.equal(discover(other, empty, cachePlugin()).backend, path.join(other, ".agents/harness/files/backend.mjs"));
 });
 
-test("FTOL-05 a cached stamp skips digests only while every trusted file keeps size and mtime", () => {
+test("FTOL-05 every discovery re-reads the manifest and the digests; no earlier result is reused", () => {
   const plugin = cachePlugin();
   const root = project();
-  const { stamp } = discover("", root, plugin);
+  discover("", root, plugin);
   const manifest = path.join(root, ".agents/harness-kit.json");
+  const files = JSON.parse(fs.readFileSync(manifest, "utf8")).files;
   fs.writeFileSync(manifest, JSON.stringify({ version: "0.0.1", files: { bogus: "x" } }));
-  assert.equal(discover("", root, plugin, stamp).stamp, stamp); // unchanged trusted files: cached result reused
-  const cfg = path.join(root, ".agents/harness/config.mjs");
-  const later = new Date(Date.now() + 5000);
-  fs.utimesSync(cfg, later, later);
-  assert.throws(() => discover("", root, plugin, stamp), /not in installed marker/);
+  assert.throws(() => discover("", root, plugin), /not in installed marker: \.agents\/harness\/config\.mjs/);
+  fs.writeFileSync(manifest, JSON.stringify({ version: "0.0.1", files }));
+  assert.equal(discover("", root, plugin).backend, path.join(root, ".agents/harness/files/backend.mjs"));
 });
 
 test("FTOL-04 the three plugin JSON files parse and reference each other", () => {

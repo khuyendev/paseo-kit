@@ -1,8 +1,8 @@
 // Backend discovery of the harness-files mod (FTOL-05, INV-02). The mod may run from Claude's plugin cache, so it
 // finds the installed project's backend and checks it against the install manifest before anything runs it.
 // Self-contained on purpose: nothing of the project is loaded before it is verified.
-// argv: <PASEO_HARNESS_ROOT or ""> <session cwd> <plugin root> [<stamp of an earlier successful discovery>]
-// stdout: {"backend": <abs>, "stamp": <hex>}
+// argv: <PASEO_HARNESS_ROOT or ""> <session cwd> <plugin root>
+// stdout: {"backend": <abs>}
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -49,27 +49,17 @@ function candidates(root, cwd, plugin) {
   return out;
 }
 
-// size and mtime of every trusted file: an unchanged stamp lets a cached discovery skip the digests
-function stampOf(root, rels) {
-  const parts = rels.map((rel) => {
-    const st = fs.statSync(path.join(root, rel));
-    return `${rel}\0${st.size}\0${st.mtimeMs}`;
-  });
-  return sha256(`${root}\n${parts.join("\n")}`);
-}
-
 const same = (a, b) => (process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
 
-export function discover(root, cwd, plugin, cachedStamp = "") {
+// nothing is cached: size and mtime can be restored after an edit, so every call reads the manifest and digests the set
+export function discover(root, cwd, plugin) {
   const local = path.resolve(plugin, "../../..");
   for (const r of candidates(root, cwd, plugin)) {
     const backend = path.join(r, BACKEND_REL);
     if (!fs.existsSync(backend)) continue;
     const rels = trustedSet(r);
-    const stamp = stampOf(r, rels);
     const manifestFile = path.join(r, MANIFEST_REL);
     if (fs.existsSync(manifestFile)) {
-      if (stamp === cachedStamp) return { backend, stamp };
       let manifest;
       try {
         manifest = JSON.parse(readText(manifestFile));
@@ -82,13 +72,13 @@ export function discover(root, cwd, plugin, cachedStamp = "") {
         if (typeof files[rel] !== "string") throw new Error(`harness backend file not in installed marker: ${rel}`);
         if (files[rel] !== textDigest(path.join(r, rel))) throw new Error(`harness backend differs from installed marker: ${rel}`);
       }
-      return { backend, stamp };
+      return { backend };
     }
     // no manifest: trusted only as the plugin's own source project, never by a cwd lookup
     if (!same(path.resolve(r), local) || !fs.existsSync(path.join(plugin, ".claude-plugin", "plugin.json"))) {
       throw new Error("harness backend lacks trusted install marker");
     }
-    return { backend, stamp };
+    return { backend };
   }
   throw new Error("harness-files backend not found: install project assets or set PASEO_HARNESS_ROOT");
 }
@@ -96,8 +86,8 @@ export function discover(root, cwd, plugin, cachedStamp = "") {
 const fold = (p) => (process.platform === "win32" ? p.toLowerCase() : p);
 if (process.argv[1] && fold(path.resolve(process.argv[1])) === fold(fileURLToPath(import.meta.url))) {
   try {
-    const [root, cwd, plugin, stamp] = process.argv.slice(2);
-    process.stdout.write(JSON.stringify(discover(root, cwd, plugin, stamp)));
+    const [root, cwd, plugin] = process.argv.slice(2);
+    process.stdout.write(JSON.stringify(discover(root, cwd, plugin)));
   } catch (e) {
     process.stderr.write(`${e.message}\n`);
     process.exitCode = 1;

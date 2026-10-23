@@ -14,26 +14,21 @@ const EVENT_KEYS = ['tool', 'tool_use_id', 'agentId', 'consent', 'requestMeta']
 const NATIVE_CHILD = 'Harness file backend is unavailable inside a native subagent: the public API cannot preserve its permission context. Use native Read/Edit/Write/Bash; these built-ins are unchanged.'
 
 type Check = { tool: string; input: Record<string, unknown> }
-type Found = { backend: string; stamp: string }
+type Found = { backend: string }
 
-const discovered = new Map<string, Found>()
 const fail = (text: string) => new Error(text)
 const cut = (s: string, n = 1500) => String(s ?? '').slice(0, n)
 
-// FTOL-05: discovery runs on every call; a cached stamp lets it skip the digests while no trusted file changed.
+// FTOL-05: discovery runs on every call and nothing is cached, so the install manifest and every trusted file are checked each time.
 async function backend($: EngineInterface, cwd: string): Promise<string> {
   const root = (await $.env.get('PASEO_HARNESS_ROOT')) ?? ''
-  const key = `${$.plugin.root}\n${root}\n${cwd}`
-  const cached = discovered.get(key)
   const script = `${$.plugin.root}/scripts/discover.mjs`
-  const out = await $.process.run(['node', script, root, cwd, $.plugin.root, cached?.stamp ?? ''], { cwd, timeoutMs: TRANSPORT_MS })
+  const out = await $.process.run(['node', script, root, cwd, $.plugin.root], { cwd, timeoutMs: TRANSPORT_MS })
   if (out.exitCode !== 0 || out.isStdoutTruncated || out.isStderrTruncated || !out.stdout) {
-    discovered.delete(key)
     throw fail(`Backend discovery failed: ${cut(out.stderr) || 'incomplete discovery output'}`)
   }
   const found = JSON.parse(out.stdout) as Found
   if (typeof found.backend !== 'string' || !found.backend) throw fail('Backend discovery failed: incomplete discovery output')
-  discovered.set(key, found)
   return found.backend
 }
 
