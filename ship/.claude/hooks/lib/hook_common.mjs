@@ -68,7 +68,10 @@ export function resultText(value) {
   return "";
 }
 
-// Files the two harness-files write tools changed, from their reply lines (FTOL `edited <abs>: N edit(s)...`, `wrote <abs> (N chars)`).
+// Kit feedback 84: any MCP server's batch writer (the mod's, fsbatch, a filesystem-style server) is checked like the mod's.
+export const isBatchWriter = (toolName) => /^mcp__.+__(edit|write)_multiple_files$/.test(String(toolName));
+
+// Files the batch write tools changed, from their reply lines (FTOL `edited <abs>: N edit(s)...`, `wrote <abs> (N chars)`).
 export function changedPathsInResult(text) {
   const out = [];
   for (const line of String(text).split(/\r?\n/)) {

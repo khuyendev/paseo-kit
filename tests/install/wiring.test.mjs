@@ -17,7 +17,7 @@ const registrations = (settings) => Object.entries(settings.hooks ?? {}).flatMap
   groups.flatMap((g) => g.hooks.map((h) => [event, g.matcher ?? null, h.command, h.timeout ?? null])));
 
 test("HOOK-01 template merged into empty settings gives exactly the eight kit entries", () => {
-  const edits = "Edit|MultiEdit|Write|mcp__harness-files__(edit|write)_multiple_files";
+  const edits = "Edit|MultiEdit|Write|mcp__.*__(edit|write)_multiple_files";
   assert.deepEqual(registrations(reconcileSettings({}, TEMPLATE)).sort(), [
     ["PreToolUse", "Read|Grep|Glob|Write|Edit|MultiEdit|NotebookEdit|mcp__harness-files__.*", cmd("io_guard"), 10],
     ["PostToolUse", "Read|Grep|Glob|mcp__harness-files__read_ranges", cmd("io_guard"), 10],

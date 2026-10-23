@@ -52,3 +52,52 @@ export function pluginEnv(root, workerProvider, env = process.env) {
   const dirs = state.direct ? state.dirs : [...state.dirs, state.plugin];
   return { CLAUDE_CODE_PLUGIN_DIRS: dirs.join(path.delimiter) };
 }
+
+// Kit feedback 84: the hooks name the mod's tools, so a mod that is not selected leaves them to whatever batch writer
+// the owner still has registered. Selected = Claude Code loads it for this project, or this process loads it directly.
+export const modSelected = (state) => state.enabled || state.direct;
+
+const BATCH_SERVER_RE = /fsbatch|fs_batch|fs_proxy|server-filesystem|multiple_files/i;
+const BATCH_SERVER_NAMES = new Set(["fsbatch", "filesystem"]);
+
+function looksLikeBatchWriter(name, def) {
+  if (name === "harness-files" || name.startsWith("plugin:")) return false;
+  const text = [def?.command, ...(Array.isArray(def?.args) ? def.args : []), def?.url].filter((v) => typeof v === "string").join(" ");
+  return BATCH_SERVER_NAMES.has(name.toLowerCase()) || BATCH_SERVER_RE.test(`${name} ${text}`);
+}
+
+// Registered MCP servers that look like a file writer with `*_multiple_files` tools, read statically (no server is
+// started): user and local scope from Claude's global config, project scope from `.mcp.json`. `warnings` names a file
+// that cannot be read.
+export function batchWriterServers(root, env = process.env) {
+  const configDir = env.CLAUDE_CONFIG_DIR || path.join(homeDir(env), ".claude");
+  const globals = env.CLAUDE_CONFIG_DIR ? [path.join(configDir, ".claude.json")] : [path.join(homeDir(env), ".claude.json"), path.join(configDir, ".claude.json")];
+  const found = [];
+  const warnings = [];
+  const read = (file) => {
+    try {
+      return readJsonIf(file, {}) ?? {};
+    } catch (e) {
+      warnings.push(`${file} not read: ${String(e?.message ?? e).split(/\r?\n/)[0]}`);
+      return {};
+    }
+  };
+  const collect = (servers, scope, file) => {
+    for (const [name, def] of Object.entries(servers && typeof servers === "object" ? servers : {})) {
+      if (looksLikeBatchWriter(name, def)) found.push({ name, scope, file });
+    }
+  };
+  for (const file of globals) {
+    const config = read(file);
+    collect(config.mcpServers, "user", file);
+    for (const [project, entry] of Object.entries(config.projects ?? {})) if (samePath(project, root)) collect(entry?.mcpServers, "local", file);
+  }
+  const projectFile = path.join(root, ".mcp.json");
+  collect(read(projectFile).mcpServers, "project", projectFile);
+  return { servers: found, warnings };
+}
+
+export const batchWriterProblem = ({ name, scope, file }) =>
+  `MCP server ${name} (${scope} scope, ${file}) exposes file writers while the file mod is not selected: the kit hooks name the mod's tools and the *_multiple_files writers only; remove it with: claude mcp remove --scope ${scope} ${name}, or select the mod with kit.mjs update <project> --enable-plugin`;
+
+export const MOD_OFF_HOOK_CONSEQUENCE = "while it is not selected the harness-files tools do not exist, the io_guard reminders do not run, and syntax_check covers only Edit, Write and tools named mcp__<server>__(edit|write)_multiple_files";

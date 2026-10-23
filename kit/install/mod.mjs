@@ -5,6 +5,7 @@ import { readJsonIf } from "../../ship/.agents/harness/lib/io.mjs";
 import { fileDigest } from "../../ship/.agents/harness/lib/hash.mjs";
 import { samePath, toSlash } from "../../ship/.agents/harness/lib/paths.mjs";
 import { errText } from "../../ship/.agents/harness/lib/cli.mjs";
+import { batchWriterProblem, batchWriterServers, filePluginState, MOD_OFF_HOOK_CONSEQUENCE, modSelected } from "../../ship/.agents/harness/paseo-client/plugins.mjs";
 import { claudeVersion, FILE_PLUGIN_ID, MIN_CLAUDE_VERSION, NODE_REQUIREMENT, nodeRuntimeProblem, runClaude, versionAtLeast } from "../../ship/.agents/harness/platform.mjs";
 import { fail } from "./failure.mjs";
 import { SETTINGS_REL } from "./hooks.mjs";
@@ -67,6 +68,15 @@ function installArgs(ctx, marketplaceDir) {
   return ["plugin", "install", FILE_PLUGIN_ID, "--scope", "project"];
 }
 
+// Kit feedback 84: the doctor line for an unselected mod, what that costs the hooks, and any batch writer still registered.
+function warnModOff(ctx) {
+  const state = filePluginState(ctx.project, ctx.env);
+  if (modSelected(state)) return;
+  ctx.out(`harness-files mod: not selected (ph doctor: note file mod not selected, enabledPlugins has no ${FILE_PLUGIN_ID}); ${MOD_OFF_HOOK_CONSEQUENCE}`);
+  const { servers } = batchWriterServers(ctx.project, ctx.env);
+  for (const server of servers) ctx.out(`problem ${batchWriterProblem(server)}`);
+}
+
 function note(ctx) {
   const settings = readJsonIf(path.join(ctx.project, SETTINGS_REL), {});
   if (settings?.enabledPlugins?.[FILE_PLUGIN_ID] === true) {
@@ -74,6 +84,7 @@ function note(ctx) {
   } else {
     ctx.out(`harness-files mod: copied, not enabled; to enable: node "${ctx.kitScript}" update "${toSlash(ctx.project)}" --enable-plugin (Claude Code >= ${MIN_CLAUDE_VERSION})`);
   }
+  warnModOff(ctx);
   return 0;
 }
 

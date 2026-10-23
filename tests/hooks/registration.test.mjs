@@ -19,10 +19,10 @@ const EXPECTED = [
   ["PreToolUse", `Read|Grep|Glob|Write|Edit|MultiEdit|NotebookEdit|${HF}.*`, "io_guard.mjs", 10],
   ["PreToolUse", "Bash", "bash_long_command.mjs", 10],
   ["PreToolUse", "Skill", "skill_usage.mjs", 10],
-  ["PreToolUse", `Edit|MultiEdit|Write|${HF}(edit|write)_multiple_files`, "syntax_check.mjs", 90],
+  ["PreToolUse", "Edit|MultiEdit|Write|mcp__.*__(edit|write)_multiple_files", "syntax_check.mjs", 90],
   ["PostToolUse", `Read|Grep|Glob|${HF}read_ranges`, "io_guard.mjs", 10],
   ["PostToolUse", "*", "context_guard.mjs", 10],
-  ["PostToolUse", `Edit|MultiEdit|Write|${HF}(edit|write)_multiple_files`, "syntax_check.mjs", 90],
+  ["PostToolUse", "Edit|MultiEdit|Write|mcp__.*__(edit|write)_multiple_files", "syntax_check.mjs", 90],
   ["UserPromptSubmit", undefined, "context_guard.mjs", 10],
 ];
 const key = ([event, matcher, script, timeout]) => JSON.stringify([event, matcher ?? null, script, timeout]);

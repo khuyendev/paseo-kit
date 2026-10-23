@@ -4,6 +4,8 @@ import path from "node:path";
 import { LIMITS } from "../../ship/.claude/hooks/syntax_check.mjs";
 
 export const NATIVE_TOOLS = new Set(["Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob", "Bash", "WebFetch", "WebSearch", "TodoWrite", "Task", "Agent", "Skill"]);
+// Kit feedback 84: the one foreign-server matcher the kit registers, for any server's batch writers.
+export const BATCH_WRITERS = "mcp__.*__(edit|write)_multiple_files";
 export const MOD_TOOLS = ["mcp__harness-files__read_ranges", "mcp__harness-files__edit_multiple_files", "mcp__harness-files__write_multiple_files"];
 
 // Internal time budget per kit hook script; a registration timeout must exceed it.
@@ -41,6 +43,7 @@ function matcherProblems(matcher) {
   if (matcher === undefined || matcher === "*") return [];
   return alternatives(matcher).flatMap((alt) => {
     if (NATIVE_TOOLS.has(alt)) return [];
+    if (alt === BATCH_WRITERS) return [];
     if (alt.startsWith("mcp__harness-files__")) {
       const re = new RegExp(`^(?:${alt})$`);
       return MOD_TOOLS.some((t) => re.test(t)) ? [] : [`matcher ${alt} names no shipped mod tool`];

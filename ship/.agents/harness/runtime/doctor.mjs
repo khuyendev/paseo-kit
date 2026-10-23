@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { OVERLAY_REL } from "../config.mjs";
 import { TESTED_PASEO_CLI, clampThinking, filePluginState } from "../paseo-client/index.mjs";
+import { batchWriterProblem, batchWriterServers, modSelected } from "../paseo-client/plugins.mjs";
 import { errText } from "../lib/cli.mjs";
 import { readJsonIf } from "../lib/io.mjs";
 import { policyLines } from "../lib/provider-policy.mjs";
@@ -66,6 +67,12 @@ function modLines(ctx, line, versionText) {
   else if (st.enabled) line("ok", `file mod enabled by the owner${st.registered ? " (natively registered)" : ""}`);
   else if (st.direct) line("ok", "file mod loaded through CLAUDE_CODE_PLUGIN_DIRS of this process");
   else line("note", `file mod not selected (enabledPlugins has no ${FILE_PLUGIN_ID}); the kit never toggles it`);
+  // Kit feedback 84: the hooks name the mod's tools, so a registered batch writer is the one tool path left unchecked.
+  if (!modSelected(st)) {
+    const { servers, warnings } = batchWriterServers(ctx.root, ctx.env);
+    for (const server of servers) line("problem", batchWriterProblem(server));
+    for (const w of warnings) line("note", `MCP registrations: ${w}`);
+  }
   if (st.supported !== false && (st.launchReady || (st.copied && st.enabled && st.registered))) line("ok", "file mod eligible for ph worker launch");
   else line("note", "file mod inactive or unsupported for workers: native Read/Edit/Write fallback applies only where owner restrictions permit it");
 }

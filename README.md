@@ -36,7 +36,10 @@ node kit.mjs help
   parts, seeds, project-owned files, foreign settings keys or hooks, `CLAUDE.md` lines, `.gitignore` lines outside
   the kit block, user-scope Claude config or version gates.
 - `--enable-plugin` activates the harness-files mod with `claude plugin install --scope project`; the kit never
-  toggles an owner's plugin selection otherwise.
+  toggles an owner's plugin selection otherwise. Without it, when the mod is not selected, `install` and `update` print
+  the `ph doctor` line and what that costs the hooks, and a `problem` line for each MCP server that still looks like a
+  batch file writer (`fsbatch`, `filesystem`) with its `claude mcp remove --scope <scope> <name>` command; `ph doctor`
+  reports the same servers as problems while the mod is not selected.
 - Exit codes: 0 done; 1 usage error or refusal before any write; 2 done with conflicts, kept parts or blocked hooks.
   A failure after the first copy (write error, mod activation, malformed hook) can leave kit files copied and
   `.claude/settings.json` edited, with no `.agents/harness-kit.json`; fix the cause and re-run the same install.
@@ -169,7 +172,9 @@ Registered from `ship/templates/settings.hooks.json`; hooks never block a tool c
 
 - `context_guard.mjs`: reminds the main session to `ph compact-self` at `context_guard` bands.
 - `io_guard.mjs`: reminders for unbatched lookups, edits and re-reads (`io_guard` thresholds).
-- `syntax_check.mjs`: runs the adapter's `syntax_checkers` before and after edits and reports newly broken files.
+- `syntax_check.mjs`: runs the adapter's `syntax_checkers` before and after edits and reports newly broken files. It
+  is registered for `Edit`, `MultiEdit`, `Write` and any `mcp__<server>__(edit|write)_multiple_files` (the mod's,
+  fsbatch, other servers), so an unexpected batch writer is still checked; `io_guard` stays on the mod's tools.
 - `bash_long_command.mjs`: rescues over-long Bash commands on Windows.
 - `skill_usage.mjs`: logs each skill the model invokes to `_workspace/skill-usage.jsonl`; `ph evolve-stats` lists the
   counts, so a skill whose description never fires shows 0.

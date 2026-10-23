@@ -14,7 +14,7 @@
         "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/skill_usage.mjs\"", "timeout": 10 }]
       },
       {
-        "matcher": "Edit|MultiEdit|Write|mcp__harness-files__(edit|write)_multiple_files",
+        "matcher": "Edit|MultiEdit|Write|mcp__.*__(edit|write)_multiple_files",
         "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/syntax_check.mjs\"", "timeout": 90 }]
       }
     ],
@@ -28,7 +28,7 @@
         "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/context_guard.mjs\"", "timeout": 10 }]
       },
       {
-        "matcher": "Edit|MultiEdit|Write|mcp__harness-files__(edit|write)_multiple_files",
+        "matcher": "Edit|MultiEdit|Write|mcp__.*__(edit|write)_multiple_files",
         "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/syntax_check.mjs\"", "timeout": 90 }]
       }
     ],
