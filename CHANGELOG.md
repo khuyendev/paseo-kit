@@ -6,6 +6,31 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Kit feedback 37-56 from the Flutter port (owner 2026-10-23: "check và sửa bug luôn"; one Haiku agent per item on
+  main, merged by the main session). Plan: `gsd.tracer_extra_files` (default 0) raises the tracer plan's file line;
+  phase-level checker issues get their revision before a per-plan REVISION_CONFLICT stops the run (37); a checker
+  blocker stays open until a checker lists its id in `resolved`, carried into the next checker prompt as "still
+  open?" (44); a changed revision input is named, and `forceProceed` is refused on plans the same run wrote (40;
+  item 48's ROADMAP wave headers were already out of the hash, G053); plan review reports per-cycle counts (46) and
+  records each edited plan that passes its structure check even when the review stops (47); `adapter.commands.
+  smoke_builds` (default empty) with `ph gsd check smoke` builds each declared verification target before planning
+  (50). Map: CONCERNS Known Bugs carry `Status: verified` with `Evidence:` or `Status: suspected`, map-check rejects
+  others, and gsd-map-codebase runs a read-only map review (new agent `gsd-map-reviewer`) whose problems go back to
+  the mapper once (41, 43); `ph gsd phase complete` proposes gsd-map-codebase and the harness pass when a phase
+  shipped code and no map or no review lens exists (38, 42). Execute: a non-owner fixer's "blocked" no longer stops
+  the round before the other fixers' owned changes are transferred and re-gated, and each fixer gets only the
+  failures naming its files (51); `ph gsd grant <phase> --path <file> [--plan <id>]` lets a fixer change a committed
+  earlier-wave plan's file, offered as a needs-owner option (53); the resume gate breaks an equal-depth owner tie by
+  the latest transfer record, and `ph gsd execute adopt` re-records a transferred path after an owner hand fix (54,
+  56); a fixer's stop says when its last edit was not followed by a test run (55). Runtime: a workflow `agent()`
+  resolves its tier from the current overlay at each call and logs a tier change (45); the runner records its exit
+  reason (signal, uncaught error, unsettled await) in run.json and log.txt, and watch-run prints the resume command
+  (39); `ph doctor` and harness lint list git-ignored paths the adapter uses that `worktree_setup` does not set up
+  under worktree isolation (49; `ph gsd halt clear` already existed); `ph context --self` prints the compact reminder
+  threshold (52). Prompt text: gsd-codebase-mapper and gsd-plan-checker overlays, new kit agent gsd-map-reviewer,
+  skills gsd-plan, gsd-execute, gsd-map-codebase, gsd-verify, ph, harness references. Measured check: tests/fb2/
+  (each failing before its change), full offline suite 1872 pass / 0 fail / 11 skipped; not run on a live phase.
+
 - Bug-hunt fix pass, all other areas (owner-approved 2026-10-23: fix every verified group, design groups per the
   owner's kit-feedback suggestions, GSD-related policy kept as upstream GSD does; kit-bughunt dedup/VERIFIED-ALL.json,
   one Haiku agent per group, merged on bughunt-fixes). 157 groups across plan, plan review, research, revisions,
