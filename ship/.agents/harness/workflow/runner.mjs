@@ -357,7 +357,8 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
           out(`log warning: worktree ${worktree.path} kept: agent creation was still running at the deadline`);
         } else if (newWorktree) {
           try {
-            runtime.removeWorktree(worktree);
+            const undone = runtime.removeWorktree(worktree);
+            if (undone?.ok === false) out(`log warning: worktree ${worktree.path} kept: ${undone.reason}`);
           } catch (e) {
             out(`log warning: worktree ${worktree.path} not removed: ${errText(e)}`);
           }

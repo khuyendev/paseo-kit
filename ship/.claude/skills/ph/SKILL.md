@@ -54,7 +54,7 @@ or config error (nothing done), 2 done with failed items or problems.
 | `ph compact-self [--focus TEXT] [--resume TEXT] [--agent ID]` | compacts you after this turn (see below). |
 | `ph task add\|update\|list\|get --ws D ...` | the team's shared task list `<ws>/tasks.json` (see below). |
 | `ph freeze --ws D --phase P [--check]` | sha256 record of `<ws>/P_*` files; `--check` reports `modified`, `missing`, `new` (exit 2). |
-| `ph worktrees [--prune] [--runs-dir D]` | harness git worktrees and their state; `--prune` removes only merged-and-clean ones and registrations whose directory is gone. |
+| `ph worktrees [--prune] [--runs-dir D]` | harness git worktrees and their state; `--prune` removes only merged-and-clean and `transferred` ones (gsd-execute copied the whole delta to the main tree; its transfer record has every changed path with the same hash) and registrations whose directory is gone. `ph doctor` notes leftovers of finished runs. |
 | `ph workflow`, `ph watch-run`, `ph run-stats`, `ph evolve-stats`, `ph review-stats`, `ph runs` | workflow scripts (see the workflow section). |
 | `ph gsd <verb>` | GSD state verbs used by the GSD skills. |
 

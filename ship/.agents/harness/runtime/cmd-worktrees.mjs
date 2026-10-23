@@ -39,7 +39,7 @@ export async function worktrees(ctx, { git = runGit } = {}) {
   for (const wt of list) {
     let c;
     try {
-      c = classify(top, wt, { runsDir, agentLive, git });
+      c = classify(top, wt, { runsDir, agentLive, git, root: ctx.root });
     } catch (e) {
       failed++;
       ctx.out(`failed ${wt.name}: ${errText(e)}`);
@@ -59,7 +59,7 @@ export async function worktrees(ctx, { git = runGit } = {}) {
 export const worktreeCommands = [
   {
     name: "worktrees",
-    summary: "list harness git worktrees and their state; --prune removes merged-and-clean and missing ones",
+    summary: "list harness git worktrees and their state; --prune removes merged-and-clean, transferred and missing ones",
     usage: "ph worktrees [--prune] [--runs-dir D]",
     options: { prune: "bool", "runs-dir": "string" },
     config: "required",

@@ -110,10 +110,18 @@ let pendingRequests = {};
 const skipped = [];
 const events = [];
 const worktrees = {};
+// Kit feedback 75: executor worktrees are removed after their plan's commit (discardLanded) and when a cleared halt is dispatched
+// again; the result lists what went and what stays.
+const discarded = [];
+const keptTrees = {};
 const seeds = {};
 const integrationFiles = new Set();
 const ev = (e) => { events.push(e); log(`event ${e}`); };
-const result = (status, extra = {}) => ({ status, phaseDir, mode: execMode, isolation: g.isolation, waves: waveResults, sharedChanges, ...(Object.keys(pendingRequests).length ? { requests: pendingRequests } : {}), ...(skipped.length ? { skipped } : {}), events, ...extra });
+const treeReport = () => {
+  const left = Object.entries(worktrees).filter(([plan]) => !discarded.includes(plan)).map(([plan, path]) => ({ plan, path, ...(keptTrees[plan] ? { why: keptTrees[plan] } : {}) }));
+  return discarded.length || left.length ? { discarded, kept: left } : null;
+};
+const result = (status, extra = {}) => ({ status, phaseDir, mode: execMode, isolation: g.isolation, waves: waveResults, sharedChanges, ...(Object.keys(pendingRequests).length ? { requests: pendingRequests } : {}), ...(skipped.length ? { skipped } : {}), ...(treeReport() ? { worktrees: treeReport() } : {}), events, ...extra });
 const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reason, ...extra });
 const digestOf = async (input) => (await flow(["digest"], input)).json?.hash ?? "none";
 
@@ -424,7 +432,8 @@ const classify = (reason) => {
 };
 // `defects`: the plan defects behind the halt (kit feedback 64), recorded as a halt event.
 async function halt(id, why, defects = []) {
-  await flow(["write", haltPath(id)], JSON.stringify({ plan: id, reason: why, runId }, null, 2));
+  // The halted plan's worktree stays until the halt is cleared and the plan is dispatched again (kit feedback 75).
+  await flow(["write", haltPath(id)], JSON.stringify({ plan: id, reason: why, runId, ...(worktrees[id] ? { worktree: worktrees[id] } : {}) }, null, 2));
   await defectEvent("halt", { plan: id, reason: String(why).slice(0, 300) }, defects);
   return { plan: id, halted: true, reason: why, ...(pendingRequests[id]?.length ? { requests: pendingRequests[id] } : {}) };
 }
@@ -460,7 +469,20 @@ async function reviewNotes(id) {
   const r = await flow(["read", `${phaseDir}/plan-review-notes.json`]);
   try { return r.json?.exists ? JSON.parse(r.json.text).filter((x) => x.plan === id).map(({ severity, description }) => ({ severity, description })) : []; } catch { return []; }
 }
+// Kit feedback 75: a cleared halt (ph gsd halt clear keeps its worktree in halt-answers.json) that names a worktree of an earlier
+// run is dispatched again, so the old tree is discarded unless its run still uses it. A resumed run keeps its own session tree.
+async function discardHalted(id) {
+  if (!worktreeMode) return;
+  const a = await flow(["read", `${phaseDir}/halt-answers.json`]);
+  let trees = [];
+  try { trees = a.json?.exists ? JSON.parse(a.json.text).filter((x) => x.plan === id && x.haltWorktree && x.haltRunId !== runId).map((x) => x.haltWorktree) : []; } catch { trees = []; }
+  for (const tree of new Set(trees)) {
+    const r = await flow(["discard-worktree"], { plan: id, worktree: tree, reason: "halted" });
+    log(`plan ${id}: worktree of the cleared halt ${tree}: ${r.json?.removed ? "discarded" : r.json?.gone ? "already gone" : `kept (${r.json?.why ?? r.json?.error ?? `exit ${r.code}`})`}`);
+  }
+}
 async function dispatch(t, waveId) {
+  await discardHalted(t.plan);
   await flow(["remove", haltPath(t.plan)]);
   const before = await headNow();
   const answers = await haltAnswers(t.plan);
@@ -477,6 +499,7 @@ async function dispatch(t, waveId) {
   const d = await (worktreeMode ? run() : writeTree(run));
   const res = d?.result ?? null;
   const wt = d?.worktree ?? null;
+  if (wt) worktrees[t.plan] = wt;
   ev(`code ${waveId} ${t.plan}`);
   // GSDF-42: workers never commit; a moved HEAD (main or the agent worktree) fails the plan.
   if (movedBy(await headNow(), before) || (wt && movedBy(await headNow(wt), before))) return { ...(await halt(t.plan, "executor committed (HEAD moved)")), failed: true };
@@ -1023,6 +1046,22 @@ async function commitOne(subject, ids, wave, pf, withIntegration) {
   ev(`commit ${subject}`);
   return { sha: c.json.hash };
 }
+// Kit feedback 75: the plans of a recorded commit no longer need their executor worktrees; their deltas are in the main tree and
+// in the commit. A plan this run did not dispatch (its SUMMARY was there already) is found by the worktree its transfer record names.
+// The verb keeps a tree whose delta is not all in the transfer record, and a failure only leaves the tree.
+async function discardLanded(ids) {
+  if (!worktreeMode) return;
+  for (const id of ids.filter((x) => !discarded.includes(x))) {
+    if (!worktrees[id]) {
+      const tr = (await flow(["read", `${phaseDir}/transfers/${id}.json`])).json;
+      try { if (tr?.exists) worktrees[id] = JSON.parse(tr.text).worktree ?? undefined; } catch { /* no usable record */ }
+      if (!worktrees[id]) continue;
+    }
+    const r = await flow(["discard-worktree"], { plan: id, worktree: worktrees[id], reason: "landed" });
+    if (r.json?.removed || r.json?.gone) { discarded.push(id); delete keptTrees[id]; ev(`worktree ${id} discarded`); }
+    else { keptTrees[id] = r.json?.why ?? r.json?.error ?? `exit ${r.code}`; log(`plan ${id}: worktree ${worktrees[id]} kept (${keptTrees[id]})`); }
+  }
+}
 async function commitWaves(list, verify, evidence) {
   phase("Commit");
   const requests = list.flatMap((w) => w.tasks.flatMap((t) => pendingRequests[t.plan] ?? []));
@@ -1040,6 +1079,7 @@ async function commitWaves(list, verify, evidence) {
       withIntegration = false;
       for (const id of unit) progress.plans[id] = { commit: c.sha, verify, evidence };
       if (!(await saveProgress())) return { stop: result("failed", { reason: `${PROGRESS} could not be written after commit ${c.sha}` }) };
+      await discardLanded(unit);
     }
   }
   return {};
@@ -1138,10 +1178,13 @@ const isTracer = (w) => w.tasks.some((t) => t.tracer === true || t.tracer?.is ==
 const metricsLine = (wave) => flow(["append", "_workspace/review-metrics.jsonl"], JSON.stringify({ phase: N, wave, ...metrics }));
 
 // A run that skipped halted or blocked plans says so in its result; shared changes left unapplied stop it.
-const finish = (extra = {}) => {
+const finish = async (extra = {}) => {
   const left = sharedChanges.filter((s) => !s.applied);
   if (left.length) return owner("Integration", `${left.length} shared change(s) were never applied`, { sharedChanges: left });
-  return result("executed", { ...extra, ...(skipped.length ? { reason: `executed except ${skipped.map((s) => `${s.plan} (${s.why})`).join(", ")}`, next: `answer the halts (ph gsd halt clear ${N} --plan <id> --reason <answer>) and rerun with the same args` } : {}) });
+  // Kit feedback 75: harness worktrees of finished runs that are still there (the transferred ones go with ph worktrees --prune).
+  const old = worktreeMode ? (await flow(["leftover-worktrees"])).json : null;
+  if (old?.total) log(`${old.total} leftover harness worktree(s) of finished runs (${old.removable} removable): ph worktrees --prune removes the removable ones`);
+  return result("executed", { ...extra, ...(old?.total ? { leftoverWorktrees: { total: old.total, removable: old.removable, hint: "ph worktrees --prune" } } : {}), ...(skipped.length ? { reason: `executed except ${skipped.map((s) => `${s.plan} (${s.why})`).join(", ")}`, next: `answer the halts (ph gsd halt clear ${N} --plan <id> --reason <answer>) and rerun with the same args` } : {}) });
 };
 
 // kit-feedback 58: one gate over every plan of the run, after the last commit. A wave's gate goes stale once a later

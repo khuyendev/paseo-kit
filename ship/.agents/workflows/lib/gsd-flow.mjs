@@ -30,6 +30,8 @@ const COMMANDS = {
   baseline: (root, [phaseDir]) => execute.recordBaseline(root, phaseDir),
   "resume-gate": (root, [phaseDir], input) => execute.resumeGate(root, phaseDir, JSON.parse(input)),
   transfer: (root, [phaseDir], input) => execute.transfer(root, phaseDir, JSON.parse(input)),
+  "discard-worktree": (root, _args, input) => execute.discardWorktree(root, JSON.parse(input)),
+  "leftover-worktrees": (root) => execute.leftoverTrees(root),
   adopt: (root, [phaseDir, plan, rel]) => execute.adopt(root, phaseDir, plan, rel),
   "owned-changes": (root, [phaseDir], input) => execute.ownedChanges(root, phaseDir, JSON.parse(input)),
   "smoke-due": (root, _args, input) => execute.smokeDue(JSON.parse(input)),
@@ -60,7 +62,7 @@ export const COMMAND_NAMES = Object.keys(COMMANDS);
 
 // Verbs whose handler reads JSON or text from stdin; every other verb never touches stdin, so a person running
 // `gsd-flow.mjs remove <path>` from a shell whose stdin is an open pipe is not left waiting (G088).
-const STDIN = new Set(["write", "append", "json-push", "summary-heal", "resume-gate", "transfer", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "evidence-check", "review-scope", "review-record", "prereview-record", "changed-lines", "forensics-path"]);
+const STDIN = new Set(["write", "append", "json-push", "summary-heal", "resume-gate", "transfer", "discard-worktree", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "evidence-check", "review-scope", "review-record", "prereview-record", "changed-lines", "forensics-path"]);
 export const readsStdin = (cmd) => STDIN.has(cmd);
 
 export async function main(argv, { root = configRoot(), input = "", out = (l) => process.stdout.write(`${l}\n`) } = {}) {

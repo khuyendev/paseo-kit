@@ -181,7 +181,7 @@ prints `failed <what>: <error>` and the others go on. Exit codes: `0` all good, 
 | `ph watch-run RUNID... [--all] [--from-start] [--runs-dir D]` | follows the log of workflow runs and exits when every run has ended; run it under Monitor | `log` / `phase` / `agent done ... null` / `workflow` lines (`--all`: every line) |
 | `ph run-stats RUNID... [--transcripts] [--runs-dir D]` | wall time, tokens, cost and per-agent seconds of finished runs, with each role and its model; `--transcripts` adds tool-call counts per kind | a block per run |
 | `ph runs [--prune] [--runs-dir D]` | lists runs newest first; `--prune` deletes finished runs beyond the newest `runs_keep`, never failed or running ones | `<runId> <status> <startedAt> <name>` |
-| `ph worktrees [--prune] [--runs-dir D]` | the harness worktrees under `<repo>/<worktree_dir>` (branches `harness/*`) with owner and state; `--prune` removes only those whose owner is finished, with no uncommitted or untracked files and no commit missing from HEAD, plus records whose directory is gone; unmerged work is never deleted. An owner that cannot be checked keeps its worktree | `<state> <branch> <path> (<owner>)` |
+| `ph worktrees [--prune] [--runs-dir D]` | the harness worktrees under `<repo>/<worktree_dir>` (branches `harness/*`) with owner and state; `--prune` removes only those whose owner is finished and that hold no work that is not elsewhere: no uncommitted or untracked files and no commit missing from HEAD (`merged and clean`), or a changed delta that a gsd-execute transfer record of the same worktree carries path by path with the same content hash and no commit missing from HEAD (`transferred`), plus records whose directory is gone; unmerged work is never deleted. Every removal first unlinks all symlinks and junctions inside the tree, not only the setup links, and refuses (keeping tree and branch) when one cannot be unlinked. An owner that cannot be checked keeps its worktree | `<state> <branch> <path> (<owner>)` |
 | `ph harness lint [--all]` | checks the generated adapter and the assets it names (`references/kit-adapter.md`) | one finding per line |
 
 `fanout` file format: an optional preamble (prepended to every prompt), then one block per agent starting with
@@ -247,7 +247,7 @@ prompts by index instead). Host commands run only through `shell()`.
 | `role` | GSD role name; selects the `gsd.roles` entry (section 3) |
 | `model` | tier name or `provider/model`; default: the role entry, then the agent type's `model:`, else config `default_tier` |
 | `effort` | thinking option: `off`, `low`, `medium`, `high`, `xhigh`, `max` |
-| `isolation` | `'worktree'`: a fresh git worktree per agent, kept after the run for the orchestrator to merge (expensive; only for parallel file edits that would conflict); after merging, `ph worktrees --prune` removes the merged, clean ones |
+| `isolation` | `'worktree'`: a fresh git worktree per agent, kept after the run for the orchestrator to merge (expensive; only for parallel file edits that would conflict); after merging, `ph worktrees --prune` removes the merged, clean ones. gsd-execute removes an executor's worktree itself once its plan is committed |
 | `readOnly` | `true` adds the read-only note; any other non-boolean value throws |
 | `cwd` | working directory for the task, given to the agent as an instruction (section 10); default: the project root |
 | `keep` | `true` leaves the agent unarchived (for a follow-up with `ph send`) |
