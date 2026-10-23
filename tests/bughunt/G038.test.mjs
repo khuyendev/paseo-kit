@@ -1,5 +1,6 @@
 // G038: the plan review's last allowed edit (cycle 3) was never re-reviewed, and the cap result carried no issues.
-// The cap bounds the edits; one review-only pass follows the last edit, then the stop rules apply to it.
+// Every edit is followed by a review pass and the stop rules apply to that pass. G039 removed the fixed cap (trend-sized),
+// so the 4-3-2-1 case below now runs on until the count stops falling.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runScript } from "../gsd-flows/host.mjs";
@@ -26,14 +27,14 @@ function review(counts) {
   return runScript("gsd-plan-review", { root: w.root, gsd: w.gsd, args: { phaseDir: PHASE_DIR, plans: ["01-01"] }, agent }).then((r) => ({ r, calls }));
 }
 
-test("G038 falling 4-3-2-1: the cap stops after the last edit and the final pass returns its issues", async () => {
-  const { r, calls } = await review([4, 3, 2, 1]);
+test("G038 falling 4-3-2-1-1: the stall check stops after the review that follows the last edit, with its issues", async () => {
+  const { r, calls } = await review([4, 3, 2, 1, 1]);
   assert.equal(r.result.status, "needs-owner");
-  assert.equal(r.result.reason, "plan review did not converge in 3 cycles");
+  assert.match(r.result.reason, /not converging: 1 high issues, not below 1/);
   assert.equal(r.result.issues.length, 1);
-  assert.equal(r.result.issues[0].description, "p3-0");
-  assert.equal(calls.filter((l) => l.startsWith("find-")).length, 4);
-  assert.equal(calls.filter((l) => l.startsWith("editor-")).length, 3);
+  assert.equal(r.result.issues[0].description, "p4-0");
+  assert.equal(calls.filter((l) => l.startsWith("find-")).length, 5);
+  assert.equal(calls.filter((l) => l.startsWith("editor-")).length, 4);
 });
 
 test("G038 falling 3-2-1-0: the final review after the last edit is clean and converges", async () => {
@@ -51,7 +52,7 @@ test("G038 falling 3-2-0: converges in cycle 3, no extra pass", async () => {
 test("G038 flat 3-3: the stall check still stops at cycle 2 with the issues", async () => {
   const { r, calls } = await review([3, 3]);
   assert.equal(r.result.status, "needs-owner");
-  assert.match(r.result.reason, /not converging: 3 issues, not below 3/);
+  assert.match(r.result.reason, /not converging: 3 high issues, not below 3/);
   assert.equal(r.result.issues.length, 3);
   assert.equal(calls.filter((l) => l.startsWith("editor-")).length, 1);
 });

@@ -58,7 +58,6 @@ call = async (prompt, opts) => {
   return rawCall(prompt, opts);
 };
 
-const MAX_CYCLES = 3;
 const FIND_SCHEMA = { type: "object", properties: { issues: { type: "array", items: { type: "object", properties: { plan: { type: "string" }, severity: { type: "string" }, actionable: { type: "boolean" }, description: { type: "string" }, evidence: { type: "string" } }, required: ["severity", "description"] } } }, required: ["issues"] };
 const VERIFY_SCHEMA = { type: "object", properties: { verdicts: { type: "array", items: { type: "object", properties: { id: { type: "string" }, valid: { type: "boolean" }, evidence: { type: "string" } }, required: ["id", "valid"] } } }, required: ["verdicts"] };
 const JUDGE_SCHEMA = { type: "object", properties: { decisions: { type: "array", items: { type: "object", properties: { id: { type: "string" }, keep: { type: "boolean" }, duplicate_of: { type: "string" } }, required: ["id", "keep"] } } }, required: ["decisions"] };
@@ -76,6 +75,8 @@ const cfg = await loadCfg();
 const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
 const N = phaseNumber(phaseDir);
 const planPath = (id) => `${phaseDir}/${id}-PLAN.md`;
+// G039: the medium and low notes of the converged review, read by gsd-execute into the brief of their plan.
+const notesPath = `${phaseDir}/plan-review-notes.json`;
 // The owner's answer to an earlier needs-owner stop (gsd-plan reviewGuidance) and CONTEXT.md are locked decisions for every
 // review prompt, so the finder, verifier, judge and editor all work from them.
 const lockedDecisions = [`Locked user decisions: ${phaseDir}/${N}-CONTEXT.md. A plan that follows them is not an issue; never revise a plan against them.`, ...(guidance ? [`<owner_guidance>\n${guidance.trim()}\n</owner_guidance>`] : [])];
@@ -87,7 +88,8 @@ const lenses = [
   ...(cfg.adapter.review_lenses ?? []).filter((l) => l.stage === "plan_review").map((l) => ({ name: l.name, text: l.text })),
   { name: "source-grounding", text: "Follow the lens text in .agents/workflows/lenses/source-grounding.md." },
 ];
-const counted = (list) => list.filter((i) => String(i.severity).toLowerCase() === "high" || i.actionable === true).length;
+// G039: only a high issue blocks convergence; medium and low notes are carried to the execute brief instead.
+const isBlocking = (i) => String(i.severity).toLowerCase() === "high";
 // CR-GSF-09: every review stage needs a reply; a missing one is retried once unless fatal (GSDF-01), then the run
 // fails instead of converging on silence.
 async function ask(prompt, opts, what) {
@@ -103,11 +105,13 @@ const stopWith = (stop, issues) => ({ ...stop, reason: `${stop.reason}; resume t
 let prev = Infinity;
 let planRevision = null;
 let structure = [];
+// The notes of an earlier converged review never outlive this run.
+await flow(["remove", notesPath]);
 // A plan whose last pass kept no issue is not re-found until its file changes; an edit by the editor re-opens it.
 const clean = new Set();
-// The cap bounds the edits: after the last allowed edit one more review-only pass judges the revised plans, so the
-// owner never gets an unreviewed revision or an issue list that predates the edit.
-for (let cycle = 1; cycle <= MAX_CYCLES + 1; cycle++) {
+// G039: the cycle count follows the trend. A cycle that continues has fewer high issues than the one before (the stall
+// check below), and a count cannot fall forever, so the loop ends without a fixed cycle cap.
+for (let cycle = 1; ; cycle++) {
   // Recomputed every cycle: the editor changes the plans being judged (CR-GSF-19).
   const digest = (await gsd(["revisions", "hash", phaseDir, "checked"])).json?.hash ?? "none";
   phase("Find");
@@ -145,16 +149,19 @@ for (let cycle = 1; cycle <= MAX_CYCLES + 1; cycle++) {
   }
   // Every plan, reviewed or not: a plan that kept no issue this pass is left out of later finder passes.
   for (const p of plans) if (kept.some((x) => x.plan === p)) clean.delete(p); else clean.add(p);
-  const count = counted(kept);
-  log(`plan review cycle ${cycle}: ${count} high or actionable issues`);
-  // Kept issues that do not count are advisories: returned here, never sent to the editor.
-  if (count === 0) return { status: "converged", cycles: cycle, planRevision, structure, issues: kept };
-  if (count >= prev) return { status: "needs-owner", reason: `plan review not converging: ${count} issues, not below ${prev}`, issues: kept };
-  if (cycle > MAX_CYCLES) return { status: "needs-owner", reason: `plan review did not converge in ${MAX_CYCLES} cycles`, issues: kept };
+  const blocking = kept.filter(isBlocking);
+  const count = blocking.length;
+  log(`plan review cycle ${cycle}: ${count} high issues, ${kept.length - count} medium or low`);
+  if (count === 0) {
+    await flow(["write", notesPath], JSON.stringify(kept.map(({ plan, severity, description }) => ({ plan, severity, description })), null, 2));
+    // Kept issues that do not count are advisories too: returned here, never sent to the editor.
+    return { status: "converged", cycles: cycle, planRevision, structure, issues: kept };
+  }
+  if (count >= prev) return { status: "needs-owner", reason: `plan review not converging: ${count} high issues, not below ${prev}`, issues: kept };
   prev = count;
   phase("Edit");
   const before = new Map(await Promise.all(plans.map(async (p) => [p, await fileSha(planPath(p))])));
-  const ed = await call([`Revise these plans in one pass so the issues below are resolved: ${plans.map(planPath).join(", ")}.`, `Issues (JSON): ${JSON.stringify(kept)}`, "Return JSON {marker: REVISION COMPLETE | REVISION_CONFLICT, conflict?}. Never ask the owner; never commit.", ...lockedDecisions, policy, digestLine("checked", digest)].join("\n\n"), { label: `editor-${cycle}`, agentType: agentFor("plan_editor", "gsd-planner"), schema: EDITOR_SCHEMA, ...ro("plan_editor") });
+  const ed = await call([`Revise these plans in one pass so the issues below are resolved: ${plans.map(planPath).join(", ")}.`, `Issues (JSON): ${JSON.stringify(blocking)}`, "Return JSON {marker: REVISION COMPLETE | REVISION_CONFLICT, conflict?}. Never ask the owner; never commit.", ...lockedDecisions, policy, digestLine("checked", digest)].join("\n\n"), { label: `editor-${cycle}`, agentType: agentFor("plan_editor", "gsd-planner"), schema: EDITOR_SCHEMA, ...ro("plan_editor") });
   if (String(ed.result?.marker ?? "").includes("REVISION_CONFLICT")) return { status: "needs-owner", reason: "plan editor returned REVISION_CONFLICT", conflict: ed.result.conflict ?? null, issues: kept };
   if (!ed.result) return { status: "failed", reason: `plan editor returned nothing${ed.reason ? ` (${ed.reason})` : ""}` };
   for (const p of plans) if ((await fileSha(planPath(p))) !== before.get(p)) clean.delete(p);

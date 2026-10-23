@@ -340,14 +340,21 @@ async function haltAnswers(id) {
   const r = await flow(["read", `${phaseDir}/halt-answers.json`]);
   try { return r.json?.exists ? JSON.parse(r.json.text).filter((x) => x.plan === id).map(({ halt: why, answer }) => ({ halt: why, answer })) : []; } catch { return []; }
 }
+// G039: the medium and low notes of the converged plan review (gsd-plan-review), carried into the brief of their plan.
+async function reviewNotes(id) {
+  const r = await flow(["read", `${phaseDir}/plan-review-notes.json`]);
+  try { return r.json?.exists ? JSON.parse(r.json.text).filter((x) => x.plan === id).map(({ severity, description }) => ({ severity, description })) : []; } catch { return []; }
+}
 async function dispatch(t, waveId) {
   await flow(["remove", haltPath(t.plan)]);
   const before = await headNow();
   const answers = await haltAnswers(t.plan);
+  const notes = await reviewNotes(t.plan);
   const reqs = pendingRequests[t.plan] ?? [];
   const prompt = [
     execRuntime(t),
     answers.length ? `Owner answers to earlier halts of this plan (JSON); follow them: ${JSON.stringify(answers)}` : "",
+    notes.length ? `Plan-review notes for this plan (medium or low, not blocking; act on each one inside your owns, else say why in your SUMMARY): ${JSON.stringify(notes)}` : "",
     reqs.length ? `Change requests from other plans for files you own (JSON): ${JSON.stringify(reqs)}. Make them inside your owns and list each request path you resolved in resolvedRequests.` : "",
     digestLine(`plan:${t.plan}`, t.planHash ?? "none"),
   ].filter(Boolean).join("\n\n");
