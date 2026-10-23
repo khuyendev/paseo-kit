@@ -30,12 +30,14 @@ const roleModel = (e) => {
 
 export function runSummary(id, info, journal, nowMs) {
   const live = journal.filter((e) => e.status === "ok" || e.status === "null");
+  // A call that never created an agent (refused before a turn, transport down) has no cost and no agent time.
+  const ran = live.filter((e) => e.status === "ok" || e.agentId);
   const roles = [...new Set(live.concat(journal.filter((e) => e.status === "cached")).map(roleModel).filter(Boolean))];
   const agents = new Set([...live.map((e) => e.agentId).filter(Boolean), ...(info.adopted ?? []).map((a) => a.agentId)]);
-  const secs = live.map((e) => e.duration_s).filter((s) => typeof s === "number");
-  const sum = (field) => live.reduce((t, e) => t + (e.usage?.[field] ?? (field === "output" ? e.tokens ?? 0 : 0)), 0);
-  const costs = live.map((e) => e.usage?.costUsd);
-  const cost = live.length && costs.every((c) => typeof c === "number") ? `$${Math.round(costs.reduce((a, b) => a + b, 0) * 10000) / 10000}` : live.length ? "$?" : "$0";
+  const secs = ran.map((e) => e.duration_s).filter((s) => typeof s === "number");
+  const sum = (field) => ran.reduce((t, e) => t + (e.usage?.[field] ?? (field === "output" ? e.tokens ?? 0 : 0)), 0);
+  const costs = ran.map((e) => e.usage?.costUsd);
+  const cost = ran.length && costs.every((c) => typeof c === "number") ? `$${Math.round(costs.reduce((a, b) => a + b, 0) * 10000) / 10000}` : ran.length ? "$?" : "$0";
   const start = Date.parse(info.startedAt);
   const stop = info.endedAt ? Date.parse(info.endedAt) : nowMs;
   const wall = Number.isFinite(start) ? Math.round((stop - start) / 1000) : "?";
