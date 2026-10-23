@@ -156,6 +156,7 @@
     "verify_mode": "phase",
     "review_metrics": true,
     "validation_strategy": true,
-    "contract_check": true
+    "contract_check": true,
+    "unowned_outside_roots": "report"
   }
 }

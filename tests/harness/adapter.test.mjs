@@ -168,7 +168,7 @@ test("ADPT-12 granularity and plan limits default conservatively and a whole ent
 test("ADPT-13 the gsd section holds exactly the documented keys and ranges are validated", () => {
   assert.deepEqual(Object.keys(kit().gsd).sort(), ["batch_review", "branching", "checker_reallocate", "checker_recheck", "code_review", "commit_policy", "contract_check", "debug", "drift_threshold", "execute_schedule", "execution_mode", "files_per_plan", "fixer", "fixer_verifies_itself",
     "granularity", "isolation", "map_mode", "max_check_iterations", "max_skeleton_passes", "max_verify_rounds", "parallelization", "plan_flow", "plan_limits", "plan_review", "plan_review_check",
-    "protected_branches", "requirement_id_regex", "research", "research_ahead", "review_depth", "review_metrics", "roles", "skeleton_lanes", "tracer_extra_files", "validation_strategy", "verify_mode"]);
+    "protected_branches", "requirement_id_regex", "research", "research_ahead", "review_depth", "review_metrics", "roles", "skeleton_lanes", "tracer_extra_files", "unowned_outside_roots", "validation_strategy", "verify_mode"]);
   const k = kit();
   assert.deepEqual([k.gsd.isolation, k.gsd.execution_mode, k.gsd.review_depth, k.adapter.hook_timeout_s, k.adapter.attribution], ["worktree", "per-wave", "standard", 30, null]);
   assert.deepEqual(k.adapter.startup_globs, []);

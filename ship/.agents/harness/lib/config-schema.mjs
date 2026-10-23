@@ -174,6 +174,8 @@ export const SCHEMA = obj({
     validation_strategy: bool(),
     // Kit feedback 67, 76: structured manifest contracts, `ph gsd verify contracts` after planners, revisions and plan-review edits and at handoff, the contract block of revisers, the wave-gate check of produced symbols.
     contract_check: bool(),
+    // Kit feedback 77: report = an unowned path outside adapter.ownership.source_roots is reported and left out of the wave commit; stop = every unowned path stops the run.
+    unowned_outside_roots: str({ oneOf: ["report", "stop"] }),
   }),
 });
 

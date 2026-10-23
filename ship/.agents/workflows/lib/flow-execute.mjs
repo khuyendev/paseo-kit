@@ -64,6 +64,17 @@ const ownershipGlobs = (root, key) => {
 // 23); neither the resume gate nor the commit check treats them as plan output.
 const ignoredBy = (root) => ownershipGlobs(root, "ignore");
 
+// Kit feedback 77 (gsd.unowned_outside_roots report, the default): a path no plan owns that lies outside every
+// adapter.ownership.source_roots entry cannot be plan output (an orchestrator's note, a docs file), so it is reported and left out of
+// the commit instead of stopping the run. Without source_roots, or with the setting `stop`, every unowned path stops.
+function outsideSourceRoots(root) {
+  let cfg;
+  try { cfg = loadConfig(root); } catch { return () => false; }
+  const roots = (cfg.adapter.ownership.source_roots ?? []).map((r) => toSlash(r).replace(/^\.\//, "").replace(/\/+$/, "")).filter(Boolean);
+  if (!roots.length || cfg.gsd.unowned_outside_roots !== "report") return () => false;
+  return (p) => !roots.some((r) => p === r || p.startsWith(`${r}/`) || (/[*?[]/.test(r) && matchesGlob(p, r)));
+}
+
 const baselineFile = (root, phaseDir) => path.join(resolveInside(root, phaseDir), "execute-baseline.json");
 
 function snapshot(root) {
@@ -180,6 +191,7 @@ export function resumeGate(root, phaseDir, { plans, integration = [] }) {
   if (!base) throw new Error(`no execute baseline in ${phaseDir}`);
   const prefixes = ownsPrefixes(root);
   const ignored = ignoredBy(root);
+  const outside = outsideSourceRoots(root);
   const ownsOf = (pl) => [...(pl.owns ?? []), pl.summary].filter(Boolean);
   const problems = [];
   const reconciled = [];
@@ -195,9 +207,11 @@ export function resumeGate(root, phaseDir, { plans, integration = [] }) {
       const files = commitFiles(root, sha);
       const ids = trailerPlans(root, sha);
       const mine = ids.length && ids.every((id) => plans.some((pl) => pl.id === id)) ? plans.filter((pl) => ids.includes(pl.id)) : [];
-      const assigned = mine.length ? files.map((f) => [f, specificOwners(f, mine, prefixes, ownsOf)[0]?.id ?? (bookkeeping(f) ? null : undefined)]) : [];
+      // Kit feedback 83: a wave commit also holds the run's integration files (shared changes, integration fixes); they belong to no plan.
+      const assigned = mine.length ? files.map((f) => [f, specificOwners(f, mine, prefixes, ownsOf)[0]?.id ?? (bookkeeping(f) || integration.includes(f) ? null : undefined)]) : [];
       if (mine.length && files.length && assigned.every(([, id]) => id !== undefined)) {
-        const entry = { sha, phase: path.basename(phaseDir).split("-")[0], wave: null, plans: Object.fromEntries(mine.map((pl) => [pl.id, assigned.filter(([, id]) => id === pl.id).map(([f]) => f)])), reconciled: true };
+        const kept = assigned.filter(([f, id]) => id === null && integration.includes(f)).map(([f]) => f);
+        const entry = { sha, phase: path.basename(phaseDir).split("-")[0], wave: null, plans: Object.fromEntries(mine.map((pl) => [pl.id, assigned.filter(([, id]) => id === pl.id).map(([f]) => f)])), ...(kept.length ? { integration: kept } : {}), reconciled: true };
         const list = readJsonIf(path.join(resolveInside(root, phaseDir), "commits.json"), []) ?? [];
         writeJsonAtomic(path.join(resolveInside(root, phaseDir), "commits.json"), [...list, entry]);
         reconciled.push({ sha, plans: mine.map((pl) => pl.id) });
@@ -219,6 +233,7 @@ export function resumeGate(root, phaseDir, { plans, integration = [] }) {
     if (ignored(p)) continue;
     const owners = breakTie(specificOwners(p, plans, prefixes, ownsOf), holders[p]);
     if (!owners.length && (bookkeeping(p) || integration.includes(p))) continue;
+    if (!owners.length && (outside(p) || eolOnly(root, "HEAD", p))) continue;
     if (!owners.length) problems.push({ kind: "unauthorized path", path: p });
     else if (owners.length > 1) problems.push({ kind: "ambiguous owner", path: p, plans: owners.map((o) => o.id) });
     else if (!owners[0].complete && !integration.includes(p)) problems.push({ kind: "incomplete plan changed", path: p, plan: owners[0].id });
@@ -230,7 +245,9 @@ export function resumeGate(root, phaseDir, { plans, integration = [] }) {
 // input {plans: [{id, owns, summary, claimed?}], pending?: [{id, owns, summary}], integration?: [path], ignore?: [prefix]}.
 // A path claimed by a plan's transfer record goes to that plan, else to every plan owning it; deleted paths go to
 // `removed`; unowned paths the integration fixer was given go to `integration`; paths owned only by `pending` plans
-// (committed later in the run) are left alone; everything else is `unowned` and must stop the commit.
+// (committed later in the run) are left alone; an unowned tracked file whose only change is line endings (`eolOnly`, kit feedback 80)
+// or that lies outside adapter.ownership.source_roots (`outside`, kit feedback 77) is reported and never committed; everything
+// else is `unowned` and must stop the commit.
 export function ownedChanges(root, phaseDir, { plans, pending = [], integration = [], ignore = [] }) {
   const base = readJsonIf(baselineFile(root, phaseDir), null);
   if (!base) throw new Error(`no execute baseline in ${phaseDir}`);
@@ -241,6 +258,9 @@ export function ownedChanges(root, phaseDir, { plans, pending = [], integration 
   const removed = Object.fromEntries(plans.map((p) => [p.id, []]));
   const integrated = [];
   const unowned = [];
+  const outside = [];
+  const eol = [];
+  const outsideRoots = outsideSourceRoots(root);
   const ownsOf = (p) => [...(p.owns ?? []), p.summary].filter(Boolean);
   const byConfig = ignoredBy(root);
   const ignored = (p) => byConfig(p) || ignore.some((pre) => p.startsWith(`${toSlash(pre).replace(/\/$/, "")}/`));
@@ -254,9 +274,9 @@ export function ownedChanges(root, phaseDir, { plans, pending = [], integration 
     if (owners.length) for (const o of owners) (gone ? removed : files)[o.id].push(e.path);
     else if (integration.includes(e.path)) integrated.push(e.path);
     else if (pending.some((p) => owned(e.path, ownsOf(p), prefixes))) continue;
-    else if (!bookkeeping(e.path)) unowned.push(e.path);
+    else if (!bookkeeping(e.path)) (eolOnly(root, "HEAD", e.path) ? eol : outsideRoots(e.path) ? outside : unowned).push(e.path);
   }
-  return { files, removed, integration: integrated, unowned };
+  return { files, removed, integration: integrated, unowned, outside, eolOnly: eol };
 }
 
 // The owners of each path among the given plans, by their most specific owns entry and the adapter's owns forms
