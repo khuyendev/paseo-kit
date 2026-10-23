@@ -49,7 +49,8 @@ export function mapCheck(root, docs = MAP_DOCS) {
     const text = readText(abs);
     const lines = text.split(/\r?\n/).length;
     if (lines < MIN_LINES) problems.push(`${rel}: ${lines} lines < ${MIN_LINES}`);
-    if (doc === "CONCERNS") for (const title of unverifiedBugs(text)) problems.push(`${rel}: Known Bug "${title}" is neither verified (with its Evidence) nor suspected`);
+    // Kit-feedback 59: the message names the section a refuted entry moves to, so the owner does not have to look it up.
+    if (doc === "CONCERNS") for (const title of unverifiedBugs(text)) problems.push(`${rel}: Known Bug "${title}" is neither verified (with its Evidence) nor suspected; a claim the code refutes moves to the "## Checked, Not Bugs" section after Known Bugs`);
   }
   return { ok: problems.length === 0, problems, code: problems.length ? 1 : 0 };
 }

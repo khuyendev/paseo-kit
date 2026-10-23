@@ -53,10 +53,17 @@ const SAFE_PATH = /^(?!\/)(?![A-Za-z]:)[A-Za-z0-9_][A-Za-z0-9_ ./-]*$/;
 const CONFIRM_SCHEMA = { type: "object", properties: { focus: { type: "string" }, written: { type: "array", items: { type: "string" } } }, required: ["written"] };
 // Kit-feedback 43: a reviewer returns the claims of its group the code does not support; an empty list when all hold.
 const REVIEW_SCHEMA = { type: "object", properties: { focus: { type: "string" }, issues: { type: "array", items: { type: "object", properties: { doc: { type: "string" }, claim: { type: "string" }, problem: { type: "string", enum: ["false", "outdated", "misleading"] }, evidence: { type: "string" }, fix_hint: { type: "string" } }, required: ["doc", "claim", "problem", "evidence", "fix_hint"] } } }, required: ["issues"] };
+// Kit-feedback 61: review round 2 returns the round-1 findings that still stand as issues, and any other claim it finds as new_claims.
+const RECHECK_SCHEMA = { ...REVIEW_SCHEMA, properties: { ...REVIEW_SCHEMA.properties, new_claims: REVIEW_SCHEMA.properties.issues } };
 // The doc a confirmation names: `.planning/codebase/STACK.md`, `STACK.md` or `STACK`.
 const docName = (p) => String(p).split("/").pop().replace(/\.md$/i, "").toUpperCase();
 // G117: a mapper counts only when its confirmation names exactly the docs of its focus; otherwise the map is not this run's.
 const confirmed = (j, r) => { const names = (r?.result?.written ?? []).map(docName); return j.docs.every((d) => names.includes(d)) && names.every((n) => j.docs.includes(n)); };
+// Kit-feedback 60: a fix round rewrites only the docs with findings, so its reply names every doc with a finding and nothing outside its focus.
+const fixConfirmed = (j, issues, r) => {
+  const names = (r?.result?.written ?? []).map(docName);
+  return names.length > 0 && names.every((n) => j.docs.includes(n)) && issues.every((x) => names.includes(docName(x.doc)));
+};
 // Kit-feedback 43: a reviewer counts only when its reply carries an issue list.
 const reviewed = (r) => Array.isArray(r?.result?.issues);
 
@@ -71,11 +78,12 @@ const unknown = docs.filter((d) => !Object.values(FOCUS).flat().includes(d));
 if (unknown.length) return { status: "failed", reason: `unknown map docs ${unknown.join(", ")}` };
 const cfg = await loadCfg();
 const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
-// G117: a mapper that gives no confirmation naming its docs is retried once unless the reason is fatal.
-const mapperCall = async (j, prompt, label) => {
+// G117: a mapper that gives no confirmation naming its docs is retried once unless the reason is fatal. Kit-feedback 60: a fix
+// round passes its own check, so a correct partial fix is not sent out again.
+const mapperCall = async (j, prompt, label, ok = (r) => confirmed(j, r)) => {
   const opts = { label, agentType: agentFor("mapper", "gsd-codebase-mapper"), role: "mapper", schema: CONFIRM_SCHEMA };
   let r = await call(prompt, opts);
-  if (!confirmed(j, r) && !fatal(r.reason)) r = await call(prompt, opts);
+  if (!ok(r) && !fatal(r.reason)) r = await call(prompt, opts);
   return r;
 };
 // G119: a map holds its own root lease, not the debug one (plan and execute keep pipelining); two map runs never write
@@ -118,27 +126,44 @@ const checked = await checkDocs();
 if (checked) return checked;
 
 // Kit-feedback 43: one read-only reviewer per focus fact-checks its docs against the code (paths, symbols, behaviour, Known Bugs).
-// Its findings go back to that focus's mapper once; the docs are checked again and the group is reviewed again. Findings that
-// still stand are the owner's to decide, so nothing is stamped or committed.
+// Its findings go back to that focus's mapper once. Kit-feedback 61: the second review is a resolution check of those findings
+// (its prompt carries the digest of the docs, so a resumed run asks again); a claim it adds goes to the findings list and does
+// not stop the stamp. The findings that still stand are the owner's to decide, so nothing is stamped or committed.
 phase("Review");
-const reviewJob = async (j) => {
-  const prompt = [
+// Kit-feedback 61: an incremental map reviews only the claims about its remapped paths.
+const scope = paths.length ? `Incremental map: review only the claims about these paths: ${paths.join(", ")}; skip the rest of each doc.` : "";
+const reviewJob = async (j, prior, digest) => {
+  const prompt = prior ? [
+    `Focus: ${j.focus}. Resolution check of ${j.docs.map((d) => `.planning/codebase/${d}.md`).join(" and ")}: the mapper has corrected each finding below in its doc. Resolve each one in the code again; report it in issues only while the doc still states it wrongly.`,
+    `Findings (JSON): ${JSON.stringify(prior)}`,
+    "Report any other claim of these docs that the code does not support in new_claims, in the same shape; do not put it in issues.",
+    scope,
+    digestLine("docs", digest),
+    "Return only JSON {focus, issues: [...], new_claims: [...]}; empty lists when every finding is resolved and no other claim fails.",
+  ].filter(Boolean).join("\n\n") : [
     `Focus: ${j.focus}. Fact-check ${j.docs.map((d) => `.planning/codebase/${d}.md`).join(" and ")} against this repository.`,
     "Every concrete claim counts: file paths, symbols, commands, configuration keys, behaviour, counts, versions, and each Known Bug. Resolve each one in the code; do not trust the document's wording.",
+    scope,
     "Return only JSON {focus, issues: [{doc, claim, problem (false|outdated|misleading), evidence, fix_hint}]}; an empty list when every claim holds.",
-  ].join("\n\n");
-  const opts = { label: `review-${j.focus}`, agentType: agentFor("map_reviewer", "gsd-map-reviewer"), role: "map_reviewer", readOnly: true, schema: REVIEW_SCHEMA };
+  ].filter(Boolean).join("\n\n");
+  const opts = { label: `review-${j.focus}`, agentType: agentFor("map_reviewer", "gsd-map-reviewer"), role: "map_reviewer", readOnly: true, schema: prior ? RECHECK_SCHEMA : REVIEW_SCHEMA };
   let r = await call(prompt, opts);
   if (!reviewed(r) && !fatal(r.reason)) r = await call(prompt, opts);
   return r;
 };
-// A group whose reviewer gave no usable reply stops the run; the others report their open issues.
-const reviewGroups = async (list) => {
-  const replies = await parallel(list.map((j) => () => reviewJob(j)));
+// A group whose reviewer gave no usable reply stops the run; the others report their open issues. `prior` maps a focus to its
+// round-1 findings when the group is a resolution check.
+const reviewGroups = async (list, prior, digest) => {
+  const replies = await parallel(list.map((j) => () => reviewJob(j, prior?.[j.focus], digest)));
   const silent = list.findIndex((_, i) => !reviewed(replies[i]));
   if (silent >= 0) return { failed: `map review ${list[silent].focus} failed: ${replies[silent].reason ?? "no usable reply"}` };
-  return { open: list.map((j, i) => ({ job: j, issues: replies[i].result.issues })).filter((g) => g.issues.length) };
+  return {
+    open: list.map((j, i) => ({ job: j, issues: replies[i].result.issues })).filter((g) => g.issues.length),
+    newClaims: list.flatMap((j, i) => (replies[i].result.new_claims ?? []).map((c) => ({ focus: j.focus, ...c }))),
+  };
 };
+// Kit-feedback 61: the digest of the docs as they stand; a fix round changes it, so the resolution check is asked again on resume.
+const docsDigest = async () => sha((await Promise.all(docPaths.map((p) => fileSha(p)))).join("\n"));
 let review = await reviewGroups(jobs);
 if (review.failed) return { status: "failed", reason: review.failed };
 const fixed = review.open.map((g) => g.job.focus);
@@ -148,15 +173,15 @@ if (review.open.length) {
     `Findings (JSON): ${JSON.stringify(issues)}`,
     "Do not write last_mapped_commit or last_mapped_at. Never copy secrets, keys or tokens into a document. Do not commit.",
     "Return only a confirmation JSON {focus, written: [paths]}, not the documents.",
-  ].join("\n\n"), `mapper-fix-${job.focus}`)));
-  const unfixed = review.open.findIndex(({ job }, i) => !confirmed(job, fixes[i]));
+  ].join("\n\n"), `mapper-fix-${job.focus}`, (r) => fixConfirmed(job, issues, r))));
+  const unfixed = review.open.findIndex(({ job, issues }, i) => !fixConfirmed(job, issues, fixes[i]));
   if (unfixed >= 0) {
     const r = fixes[unfixed];
     return { status: "failed", reason: `mapper ${review.open[unfixed].job.focus} failed to fix its review findings: ${r?.result ? "its confirmation does not name exactly its docs" : (r?.reason ?? "no reply")}` };
   }
   const rechecked = await checkDocs();
   if (rechecked) return rechecked;
-  review = await reviewGroups(review.open.map((g) => g.job));
+  review = await reviewGroups(review.open.map((g) => g.job), Object.fromEntries(review.open.map((g) => [g.job.focus, g.issues])), await docsDigest());
   if (review.failed) return { status: "failed", reason: review.failed };
 }
 if (review.open.length) return needsOwner("Review", "the codebase map still has claims the code does not support after one fix round; nothing committed", { findings: review.open.flatMap(({ job, issues }) => issues.map((i) => ({ focus: job.focus, ...i }))), options: ["correct the listed claims by hand, then rerun the map", "rerun the map"] });
@@ -170,7 +195,7 @@ if (cfg.gsd.commit_policy.docs) {
   const c = await gsd(["commit", "docs: map codebase", "--files", ...docPaths]);
   if (c.code !== 0) log(`warning: docs commit failed: ${c.json?.error ?? c.code}`);
 }
-return { status: "mapped", docs: docPaths, commit: stamp.json.commit, paths, review: { checked: jobs.map((j) => j.focus), fixed } };
+return { status: "mapped", docs: docPaths, commit: stamp.json.commit, paths, review: { checked: jobs.map((j) => j.focus), fixed, findings: review.newClaims } };
 } finally {
   await flow(["unlock", "codebase-map", lease.json.token]);
 }

@@ -25,7 +25,7 @@ const OPTS = { overlay: { gsd: { commit_policy: { docs: true, code: "per-wave" }
 
 test("F41 map check rejects a Known Bug that is neither verified with its Evidence nor suspected", async () => {
   const check = async (text) => flow(makeTempProject({ files: sevenDocs({ CONCERNS: concerns(text) }) }).root, ["map-check"]);
-  const named = "Known Bug \"Decoder drops frames\" is neither verified (with its Evidence) nor suspected";
+  const named = "Known Bug \"Decoder drops frames\" is neither verified (with its Evidence) nor suspected; a claim the code refutes moves to the \"## Checked, Not Bugs\" section after Known Bugs";
   const none = await check(bug());
   assert.deepEqual([none.code, none.json.problems], [1, [`.planning/codebase/CONCERNS.md: ${named}`]]);
   const bare = await check(bug("- Status: verified"));
@@ -62,7 +62,7 @@ test("F41 review: a finding goes back to its focus's mapper once, the group is r
   const w = makeWorld(OPTS);
   const r = await runScript("gsd-map-codebase", { root: w.root, gsd: w.gsd, agent: agentFor(w, reviewer({ tech: [[finding], []] })) });
   assert.equal(r.result.status, "mapped");
-  assert.deepEqual(r.result.review, { checked: ["tech", "arch", "quality", "concerns"], fixed: ["tech"] });
+  assert.deepEqual(r.result.review, { checked: ["tech", "arch", "quality", "concerns"], fixed: ["tech"], findings: [] });
   const labels = r.calls.map((c) => c.opts.label);
   assert.deepEqual(labels.filter((l) => l.startsWith("mapper-fix")), ["mapper-fix-tech"]);
   assert.equal(labels.filter((l) => l === "review-tech").length, 2);
@@ -75,9 +75,10 @@ test("F41 review: a finding goes back to its focus's mapper once, the group is r
 
 test("F41 review: a finding that still stands after the fix round stops at stage Review; nothing is stamped or committed", async () => {
   const w = makeWorld(OPTS);
-  const r = await runScript("gsd-map-codebase", { root: w.root, gsd: w.gsd, agent: agentFor(w, reviewer({ concerns: [[finding], [finding]] })) });
+  const concernFinding = { ...finding, doc: "CONCERNS" };
+  const r = await runScript("gsd-map-codebase", { root: w.root, gsd: w.gsd, agent: agentFor(w, reviewer({ concerns: [[concernFinding], [concernFinding]] })) });
   assert.deepEqual([r.result.status, r.result.stage], ["needs-owner", "Review"]);
-  assert.deepEqual(r.result.findings, [{ focus: "concerns", ...finding }]);
+  assert.deepEqual(r.result.findings, [{ focus: "concerns", ...concernFinding }]);
   assert.deepEqual([r.calls.filter((c) => c.opts.label === "mapper-fix-concerns").length, r.calls.filter((c) => c.opts.label === "review-concerns").length], [1, 2]);
   assert.equal(r.logs.includes("phase Stamp"), false);
   assert.doesNotMatch(w.read(".planning/codebase/CONCERNS.md"), /last_mapped_commit/);

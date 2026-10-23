@@ -132,7 +132,8 @@ until dry, budget-aware loop, custom type + schema + effort, tier choice).
 - `ph workflow --script F | --name N [--args JSON | --args-file F] [--budget 500k] [--runs-dir D] [--detach]`;
   resume a run with `ph workflow --script F --args-file A --resume <runId>` or `ph workflow --resume <runId>`. A resume
   first archives the agents the killed run left running (journaled, never finished), so each call starts again with
-  one live agent.
+  one live agent. A script hotfixed after the run started resumes with `ph workflow --resume <runId> --name <name>` (the saved
+  `.agents/workflows/<name>.js`); a bare `--resume` reruns the run's own copied script and misses the hotfix.
   `--detach` returns at once; follow it with `ph watch-run <runId> --quiet` under Monitor (one line when the run ends;
   without `--quiet` the watch also prints the log, phase and `agent done ... null` lines; `--all` prints every line).
 - Run directory `_workspace/_runs/<runId>/`: `script.js`, `args.json` (only when the run got args), `run.json`, `journal.jsonl`, `log.txt`,
