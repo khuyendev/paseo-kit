@@ -320,6 +320,7 @@ const GOLDEN = {
     review_metrics: true,
     validation_strategy: true,
     contract_check: true,
+    pending_request_tasks: true,
   },
 };
 

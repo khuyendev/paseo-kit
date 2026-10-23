@@ -174,6 +174,8 @@ export const SCHEMA = obj({
     validation_strategy: bool(),
     // Kit feedback 67, 76: structured manifest contracts, `ph gsd verify contracts` after planners, revisions and plan-review edits and at handoff, the contract block of revisers, the wave-gate check of produced symbols.
     contract_check: bool(),
+    // Kit feedback 79: executor task status pending-request; a partial task that waits only for requests the run routed is no owner decision.
+    pending_request_tasks: bool(),
   }),
 });
 
