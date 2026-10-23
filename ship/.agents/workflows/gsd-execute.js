@@ -419,7 +419,6 @@ const haltStop = (outcomes, stage) => {
 };
 
 // ---- green gate and bounded verify-fix rounds (GSDF-44, GSDF-49..52) ----
-const evidenceFiles = [];
 let testArgv = null;
 if (cmds.test) {
   const joined = cmds.test.join(" ");
@@ -429,7 +428,6 @@ if (cmds.test) {
 async function runGate(waveId, tasks) {
   const r = await flow(["gate", phaseDir], { waveId, plans: tasks.map((t) => ({ id: t.plan, owns: t.owns ?? [], verify: t.verify ?? [] })), testArgv });
   if (!r.json || r.json.status === "error") return { green: false, failureCount: 1, failures: [{ step: "gate", excerpt: r.json?.error ?? "gate failed to run" }], byPlan: {}, unplaced: [], blockedBy: {} };
-  evidenceFiles.push(r.json.evidence);
   for (const n of r.json.notes ?? []) log(`gate: ${n}`);
   for (const tline of r.json.timedOut ?? []) log(`gate timeout: ${tline}`);
   ev(`gate ${waveId} ${r.json.green ? "green" : `red (${r.json.failureCount})`}`);
@@ -1033,7 +1031,14 @@ if (execMode === "per-wave") {
     const tr = await track(w, cw.tasks, "green", evidence);
     if (tr.stop) return tr.stop;
   }
-  return finish({ evidence: evidenceFiles });
+  // kit-feedback 58: one gate over every plan of the run, after the last wave is committed. A wave's gate goes stale once a
+  // later wave edits the same files, so verify reads only this evidence. A red phase gate stops the run; its waves stay tracked.
+  const phaseTasks = wanted.filter((t) => !skipped.some((s) => s.plan === t.plan));
+  if (!phaseTasks.length) return finish({ evidence: [] });
+  phase("Gate");
+  const pg = await runGate(`${prefix}batch`, phaseTasks);
+  if (!pg.green) return owner("Gate", `the phase gate is red over ${phaseTasks.length} plans; the waves are committed and tracked`, { failures: pg.failures, evidence: pg.evidence });
+  return finish({ evidence: [pg.evidence] });
 }
 
 // ---- batch mode (GSDF-49, D-63): code-only waves, one phase review, one final gate, one fixer ----
@@ -1051,7 +1056,7 @@ for (const w of waves) {
     allReviews.push(...rv.reviews);
   }
 }
-if (!done.length) return finish({ evidence: evidenceFiles });
+if (!done.length) return finish({ evidence: [] });
 phase("Batch");
 const doneTasks = done.flatMap((d) => d.tasks);
 // CR-GSF-10: the phase review covers the actual changes of every executed plan, with or without per-wave reviews.
@@ -1104,7 +1109,7 @@ for (const d of done) {
   const tr = await track(d.w, d.tasks, "skipped", finalEvidence);
   if (tr.stop) return tr.stop;
 }
-return finish({ evidence: evidenceFiles, finalGate: finalEvidence });
+return finish({ evidence: [finalEvidence], finalGate: finalEvidence });
 } finally {
   await flow(["unlock", "debug", lease.json.token]);
   await flow(["unlock", `phase-${nn}`, phaseLease.json.token]);

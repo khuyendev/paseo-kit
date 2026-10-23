@@ -96,10 +96,11 @@ export function inputsOf(root, scopes) {
     else if (fs.statSync(abs).isFile()) files[toSlash(rel)] = contentHash(abs);
   }
   for (const rel of scopes) if (!/[?*\[\]]/.test(rel) && !fs.existsSync(resolveInside(root, rel))) files[toSlash(rel)] = null;
-  // CONF-12: configuration identity comes from the validated shared loader, never raw config files. Only the adapter
-  // section (commands, vocabulary, ownership, hooks) shapes a gate; a gsd setting edit leaves its evidence current (G076).
+  // CONF-12: configuration identity comes from the validated shared loader, never raw config files. Only the commands and
+  // the verify vocabulary (kinds, runners, parser hooks) shape a gate's steps; other adapter keys and the gsd and harness
+  // settings leave its evidence current (G076, kit-feedback 58).
   const cfg = loadConfig(root);
-  return { head: head(root), scopes, files: Object.fromEntries(Object.entries(files).sort()), config: sha256(JSON.stringify({ adapter: cfg.adapter })) };
+  return { head: head(root), scopes, files: Object.fromEntries(Object.entries(files).sort()), config: sha256(JSON.stringify({ commands: cfg.adapter.commands, verify_vocabulary: cfg.adapter.verify_vocabulary })) };
 }
 
 // Files a run writes about itself (gate evidence, review records, transfer and commit records, progress, halts): they
