@@ -52,9 +52,9 @@ async function fileSha(path) { const r = await flow(["read", path]); return r.js
 // ---- end shared helpers ----
 
 const rawCall = call;
-call = async (prompt, opts) => {
-  // GSDF-03: bind judgments and repairs to current code, planning artifacts and adapter settings.
-  const identity = await flow(["digest"], { files: ["."] });
+call = async (prompt, { judges = {}, ...opts } = {}) => {
+  // GSDF-03: bind judgments and repairs to the files and owned paths the call judges (`judges`) and to the adapter settings.
+  const identity = await flow(["digest"], judges);
   if (identity.code !== 0 || !identity.json?.hash) throw new Error("agent input digest unavailable");
   const researchPolicy = prompt.includes("<research_input_policy>") ? "" : policyBlock(null);
   prompt = [prompt, researchPolicy, digestLine("stage", identity.json.hash)].filter(Boolean).join("\n\n");
@@ -218,6 +218,11 @@ const revisionContext = (plans, issues) => [
 async function inputsDigest() { return (await gsd(["revisions", "hash", phaseDir, "inputs"])).json?.hash ?? "none"; }
 // CR-GSF-19: skeleton reviews judge the outline, manifest and wiring, which the freeze key covers and inputs does not.
 async function skeletonDigest() { return (await gsd(["revisions", "hash", phaseDir, "freeze", "--settings", settingsDigest.freeze])).json?.hash ?? "none"; }
+// G125: a call's stage digest covers the files it judges. The outline stage judges the outline files and the owned paths of
+// the phase's plans; a plan-level call judges its plan files and the owns each plan's frontmatter declares.
+const outlineJudges = async () => ({ files: [OUTLINE, MANIFEST, P("CONTEXT.md")], owns: (await gsd(["outline", "parse", N])).json?.manifest?.plans?.flatMap((p) => p.owns ?? []) ?? [] });
+const planOwns = async (id) => (await gsd(["frontmatter", "get", planPath(id), "owns"])).json?.value ?? [];
+const plansJudges = async (ids) => ({ files: ids.map(planPath), owns: (await Promise.all(ids.map(planOwns))).flat() });
 async function plannerCall(session, label, body, digestKey, digest, extra = {}) {
   const prompt = [body, POLICY, RETURN_NOTE, digestLine(digestKey, digest)].join("\n\n");
   return call(prompt, { label, session, agentType: agentFor("planner", "gsd-planner"), schema: PLANNER_SCHEMA, ...roleOpts(session === "planner:outline" ? "outline" : "planner"), ...extra });
@@ -239,7 +244,7 @@ async function fixOutline(turns, stage) {
   let check = await outlineCheck();
   for (let t = 0; check.code !== 0 && t < turns; t++) {
     const errs = check.json?.errors ?? [check.json?.error ?? `outline check exit ${check.code}`];
-    const { result: r, reason } = await plannerCall("planner:outline", "outline-fix", `Fix ${OUTLINE} and ${MANIFEST} in place. outline check reported these errors (fix exactly these):\n${errs.map((e) => `- ${typeof e === "string" ? e : JSON.stringify(e)}`).join("\n")}`, "inputs", await inputsDigest());
+    const { result: r, reason } = await plannerCall("planner:outline", "outline-fix", `Fix ${OUTLINE} and ${MANIFEST} in place. outline check reported these errors (fix exactly these):\n${errs.map((e) => `- ${typeof e === "string" ? e : JSON.stringify(e)}`).join("\n")}`, "inputs", await inputsDigest(), { judges: await outlineJudges() });
     if (fatal(reason)) return { stop: failedCall("outline fixer", reason) };
     if (ownerMarker(r)) return { stop: ownerStop(stage, r) };
     check = await outlineCheck();
@@ -262,7 +267,7 @@ if (parsed.json?.complete && inputsSame && !a.replan) {
     `Write the phase outline ${OUTLINE} (table: Plan ID, Objective, Wave, Depends, Requirements; last line exactly \`## OUTLINE COMPLETE\`) and its manifest ${MANIFEST} ({phase, plans:[{id, owns, requirements, produces, consumes, tracer, verify}]}). Do not write PLAN files yet.`,
     `Before you return, run \`node ${PH} gsd ${outlineCheckArgs.join(" ")}\`, repair every error it reports in ${OUTLINE} and ${MANIFEST}, and run it again until it exits 0.`,
   ].join("\n\n");
-  const { result: r, reason } = await plannerCall("planner:outline", "outline", body, "inputs", await inputsDigest());
+  const { result: r, reason } = await plannerCall("planner:outline", "outline", body, "inputs", await inputsDigest(), { judges: await outlineJudges() });
   if (fatal(reason)) return failedCall("outline planner", reason);
   if (ownerMarker(r)) return ownerStop("Outline", r);
   const after = await gsd(["outline", "parse", N]);
@@ -291,7 +296,7 @@ async function runArchitect(label, why) {
     POLICY,
     digestLine("inputs", await inputsDigest()),
   ].join("\n\n");
-  const opts = { label, agentType: architect, schema: ARCHITECT_SCHEMA, ...roleOpts("architect") };
+  const opts = { label, agentType: architect, schema: ARCHITECT_SCHEMA, judges: await outlineJudges(), ...roleOpts("architect") };
   let attempt = await call(prompt, opts);
   // A null reply is retried once, as the skeleton lane does. An existing WIRING.md never stands in for the reply (G011).
   if (attempt.result === null && !fatal(attempt.reason)) attempt = await call(prompt, opts);
@@ -347,7 +352,7 @@ async function reviewLane(lane) {
     POLICY,
     digestLine("freeze", await skeletonDigest()),
   ].join("\n\n");
-  const opts = { label: `skeleton-${lane.id}`, agentType: agentFor("skeleton_lane", "gsd-skeleton-reviewer"), readOnly: true, schema: ISSUES_SCHEMA, ...roleOpts("skeleton_lane", { model: lane.model, effort: lane.effort }) };
+  const opts = { label: `skeleton-${lane.id}`, agentType: agentFor("skeleton_lane", "gsd-skeleton-reviewer"), readOnly: true, schema: ISSUES_SCHEMA, judges: await outlineJudges(), ...roleOpts("skeleton_lane", { model: lane.model, effort: lane.effort }) };
   let r = await call(prompt, opts);
   if (r.result === null && !fatal(r.reason)) r = await call(prompt, opts);
   return r;
@@ -362,7 +367,7 @@ async function resolutionCheck(lane, open) {
     POLICY,
     digestLine("freeze", await skeletonDigest()),
   ].join("\n\n");
-  return call(prompt, { label: `resolve-${lane.id}`, agentType: agentFor("skeleton_lane", "gsd-skeleton-reviewer"), readOnly: true, schema: RESOLUTION_SCHEMA, ...roleOpts("skeleton_lane", { model: lane.model, effort: lane.effort }) });
+  return call(prompt, { label: `resolve-${lane.id}`, agentType: agentFor("skeleton_lane", "gsd-skeleton-reviewer"), readOnly: true, schema: RESOLUTION_SCHEMA, judges: await outlineJudges(), ...roleOpts("skeleton_lane", { model: lane.model, effort: lane.effort }) });
 }
 async function skeletonGate() {
   const first = await parallel(lanes.map((l) => () => reviewLane(l)));
@@ -386,7 +391,7 @@ async function skeletonGate() {
     let wroteThisPass = false;
     if (toOutline.length) {
       const edgesBefore = hasEdges(outline);
-      const { result: r, reason } = await plannerCall("planner:outline", `outline-revise-${pass}`, [planningContext("revision"), revisionContext([OUTLINE, MANIFEST], toOutline)].join("\n\n"), "inputs", await inputsDigest());
+      const { result: r, reason } = await plannerCall("planner:outline", `outline-revise-${pass}`, [planningContext("revision"), revisionContext([OUTLINE, MANIFEST], toOutline)].join("\n\n"), "inputs", await inputsDigest(), { judges: await outlineJudges() });
       if (fatal(reason)) return { status: "failed", stop: failedCall("outline reviser", reason) };
       if (ownerMarker(r)) return { status: "needs-owner", stop: ownerStop("Skeleton review", r) };
       const f = await fixOutline(1, "Skeleton review");
@@ -519,7 +524,7 @@ async function planOne(id) {
     wiringText ? `WIRING declarations for ${id} (verbatim from ${WIRING}):\n${wiringQuotes(id).map((l) => `> ${l}`).join("\n") || "> (none name this plan)"}` : "No WIRING contract for this phase.",
     carried.length ? `Open skeleton warnings for this plan:\n${carried.map((w) => `- ${w}`).join("\n")}` : "",
   ].filter(Boolean).join("\n\n");
-  const { result: r, reason } = await plannerCall(`planner:${id}`, `plan-${id}`, body, "freeze", freezeHash);
+  const { result: r, reason } = await plannerCall(`planner:${id}`, `plan-${id}`, body, "freeze", freezeHash, { judges: await plansJudges([id]) });
   if (fatal(reason)) return { stop: failedCall(`planner ${id}`, reason) };
   if (ownerMarker(r)) return { stop: ownerStop("Plan", r) };
   if (!knownMarker(r)) {
@@ -541,7 +546,7 @@ async function structureFix(id, session) {
   setStructureWarnings(id, st.json?.warnings);
   if (st.code === 0) return null;
   const errors = st.json?.errors ?? [st.json?.error ?? `exit ${st.code}`];
-  const { result: r, reason } = await plannerCall(session, `fix-${id}`, `Fix ${planPath(id)} in place. verify plan-structure reported exactly these errors:\n${errors.map((e) => `- ${typeof e === "string" ? e : JSON.stringify(e)}`).join("\n")}`, "freeze", freezeHash);
+  const { result: r, reason } = await plannerCall(session, `fix-${id}`, `Fix ${planPath(id)} in place. verify plan-structure reported exactly these errors:\n${errors.map((e) => `- ${typeof e === "string" ? e : JSON.stringify(e)}`).join("\n")}`, "freeze", freezeHash, { judges: await plansJudges([id]) });
   if (fatal(reason)) return failedCall(`structure fixer ${id}`, reason);
   if (ownerMarker(r)) return ownerStop("Plan", r);
   st = await gsd(["verify", "plan-structure", planPath(id)]);
@@ -632,7 +637,7 @@ async function checkerLoop(scopeIds, gapScoped) {
       // The checker judges PLAN contents, which the freeze key does not cover (CR-GSF-19).
       digestLine("checked", (await gsd(["revisions", "hash", phaseDir, "checked", "--settings", settingsDigest.checked])).json?.hash ?? "none"),
     ].filter(Boolean).join("\n\n");
-    const opts = { label: `checker-${iter}`, agentType: agentFor("checker", "gsd-plan-checker"), readOnly: true, schema: ISSUES_SCHEMA, ...roleOpts("checker") };
+    const opts = { label: `checker-${iter}`, agentType: agentFor("checker", "gsd-plan-checker"), readOnly: true, schema: ISSUES_SCHEMA, judges: await plansJudges(scopeIds), ...roleOpts("checker") };
     let c = await call(prompt, opts);
     if (c.result === null && !fatal(c.reason)) c = await call(prompt, opts);
     if (c.result === null) return { stop: failedCall("plan checker", c.reason) };
@@ -674,7 +679,7 @@ async function checkerLoop(scopeIds, gapScoped) {
     }
     const perPlan = [...revise].filter(([key]) => key !== null);
     const phaseLevel = revise.get(null) ?? [];
-    const revised = await parallel(perPlan.map(([id, list]) => () => plannerCall(gapScoped ? "planner:gaps" : `planner:${id}`, `revise-${id}-${iter}`, [planningContext("revision"), revisionContext([planPath(id)], list)].join("\n\n"), "freeze", freezeHash)));
+    const revised = await parallel(perPlan.map(([id, list]) => async () => plannerCall(gapScoped ? "planner:gaps" : `planner:${id}`, `revise-${id}-${iter}`, [planningContext("revision"), revisionContext([planPath(id)], list)].join("\n\n"), "freeze", freezeHash, { judges: await plansJudges([id]) })));
     // G015: each revision that answered is fixed and recorded when it returns, so an owner or failed stop of a sibling does not drop it.
     // A revision that returned nothing or stopped for an owner is never recorded as revised (G008).
     const answered = perPlan.filter((_, i) => revised[i] && revised[i].result !== null && !ownerMarker(revised[i].result)).map(([id]) => id);
@@ -686,7 +691,7 @@ async function checkerLoop(scopeIds, gapScoped) {
     if (missed !== -1) return { stop: failedCall(`planner revision ${perPlan[missed][0]} (checker iteration ${iter})`, revised[missed]?.reason ?? null) };
     if (stop) return { stop };
     if (phaseLevel.length) {
-      const r = await plannerCall(gapScoped ? "planner:gaps" : "planner:outline", `revise-phase-${iter}`, [planningContext("revision"), revisionContext(scopeIds.map(planPath), phaseLevel)].join("\n\n"), "freeze", freezeHash);
+      const r = await plannerCall(gapScoped ? "planner:gaps" : "planner:outline", `revise-phase-${iter}`, [planningContext("revision"), revisionContext(scopeIds.map(planPath), phaseLevel)].join("\n\n"), "freeze", freezeHash, { judges: await plansJudges(scopeIds) });
       if (ownerMarker(r.result)) return { stop: ownerStop("Checker", r.result) };
       if (r.result === null) return { stop: failedCall(`phase-level planner revision (checker iteration ${iter})`, r.reason) };
       // The phase-level revision can change any plan, so every plan is checked and recorded again.
@@ -753,7 +758,7 @@ async function gapMode() {
     kept.length ? `Gap plans already written by this attempt (keep them; write only the missing ones): ${kept.map(planPath).join(", ")}` : "",
     "</gap_context>",
   ].filter(Boolean).join("\n");
-  const { result: r, reason } = await plannerCall("planner:gaps", "gaps", body, "verification", inputDigest);
+  const { result: r, reason } = await plannerCall("planner:gaps", "gaps", body, "verification", inputDigest, { judges: await outlineJudges() });
   if (fatal(reason)) return failedCall("gap planner", reason);
   if (ownerMarker(r)) return ownerStop("Gaps", r);
   const after = await index();

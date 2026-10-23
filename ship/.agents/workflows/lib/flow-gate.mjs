@@ -104,8 +104,13 @@ export function inputsOf(root, scopes) {
 const RUN_RECORD = /^\.planning\/(phases|quick)\/[^/]+\/(evidence|review|transfers|transfers-pending)\/|^\.planning\/(phases|quick)\/[^/]+\/([^/]+-REVIEW\.md|deferred\.md|execute-progress\.json|execute-baseline\.json|commits\.json|[^/]+-HALT\.json|halt-answers\.json)$/;
 export const runRecord = (rel) => RUN_RECORD.test(toSlash(rel));
 
-// Digest line value of an agent call: the current content of the files it judges and the effective settings
-// (GSDF-03, CR-GSF-19). HEAD is left out: the content is the identity, and an unrelated commit is no new input (G076).
+// The adapter and gsd settings a judgment reads: the owns forms and the lens, stack-skill, agent and role tables. Gate
+// commands shape no judgment, and the planning settings reach a judgment through its prompt, so neither is hashed (G125).
+const judgmentSettings = (cfg) => ({ ownership: cfg.adapter.ownership, review_lenses: cfg.adapter.review_lenses ?? [], stack_skill: cfg.adapter.stack_skill ?? null, agents: cfg.adapter.agents ?? {}, roles: cfg.gsd.roles ?? {} });
+
+// Digest line value of an agent call: the current content of the files and owned paths it judges and the settings a
+// judgment reads (GSDF-03, CR-GSF-19). A call names only what it judges, so an edit elsewhere keeps its cache entry (G125).
+// HEAD is left out: the content is the identity, and an unrelated commit is no new input (G076).
 export function digest(root, { files = [], owns = [] }) {
   const cfg = loadConfig(root);
   const prefixes = ownsPrefixes(root);
@@ -114,7 +119,7 @@ export function digest(root, { files = [], owns = [] }) {
   const now = inputsOf(root, scopes);
   for (const rel of Object.keys(now.files)) if (rel.startsWith("_workspace/") || rel.startsWith(`${cfg.worktree_dir}/`) || runRecord(rel)) delete now.files[rel];
   const missing = files.filter((f) => !fs.existsSync(resolveInside(root, f))).sort();
-  return { hash: sha256(JSON.stringify({ files: now.files, missing, adapter: cfg.adapter, gsd: cfg.gsd })) };
+  return { hash: sha256(JSON.stringify({ files: now.files, missing, settings: judgmentSettings(cfg) })) };
 }
 
 // The next evidence number of a wave, taken by creating its logs directory exclusively: two gate runs of one wave

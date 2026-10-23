@@ -49,9 +49,9 @@ async function fileSha(path) { const r = await flow(["read", path]); return r.js
 // ---- end shared helpers ----
 
 const rawCall = call;
-call = async (prompt, opts) => {
-  // GSDF-03: bind judgments and repairs to current code, planning artifacts and adapter settings.
-  const identity = await flow(["digest"], { files: ["."] });
+call = async (prompt, { judges = {}, ...opts } = {}) => {
+  // GSDF-03: bind judgments and repairs to the files and owned paths the call judges (`judges`) and to the adapter settings.
+  const identity = await flow(["digest"], judges);
   if (identity.code !== 0 || !identity.json?.hash) throw new Error("agent input digest unavailable");
   const researchPolicy = prompt.includes("<research_input_policy>") ? "" : policyBlock(null);
   prompt = [prompt, researchPolicy, digestLine("stage", identity.json.hash)].filter(Boolean).join("\n\n");
