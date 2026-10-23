@@ -6,6 +6,35 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Kit feedback 77-85 from the Flutter port, phase 3 execute waves 1-2 (owner 2026-10-23: "coi feedback xong fix
+  tiếp"; every item verified against 41b7117 first, kit-bughunt/fb6/VERIFY.md; one Sonnet 5.5 agent per area, design
+  notes in kit-bughunt/fb6/design/). Resume (78, 83 F2): gsd-execute seeds its integration files from
+  execute-progress.json, saves them before the integration fixer runs, and the resume gate reconciles an unrecorded wave
+  commit holding integration files; one resume test per stop point (after code, transfer, shared, gate, review).
+  Unowned paths (77, 80; `gsd.unowned_outside_roots`, default `report`, `stop` is the old rule): a main-tree change
+  outside every plan's owns and outside `adapter.ownership.source_roots` is listed in `outsideRoots`, left out of the
+  wave commit and no longer stops the run; a path inside the roots still stops, with "commit them separately" as the
+  first option; an ownerless tracked file whose only change is line endings is listed in `eolOnly`, never a stop or a
+  commit; kit-adapter.md states the EOL contract. Executor (79; `gsd.pending_request_tasks`, default true): task status
+  `pending-request` with `blockedBy`, accepted when every path is a request the plan routed; a partial task waiting
+  only for routed requests is no owner decision; `ph gsd halt clear --resume` transfers a halted plan's finished
+  worktree instead of re-dispatching it; executor observations about the kit go to `kitNotes`, and a request against
+  a kit-feedback document is refused into a kit note. Shared step and requests (82, 85, 83 F3; `gsd.request_check`
+  auto|tree|off, default `auto`): the shared fixer reports per change and a change it reports applied counts whatever
+  the status, its brief bounds checks to the shared files and leaves other failures to the gate; before Commit an open
+  request closes when its path changed since the request, when a shared change to that path was applied or cleared,
+  or when one read-only resolver finds it present; new verbs `ph gsd shared.clear` and `ph gsd request.clear`, and
+  every owner answer (halt, shared, request) goes to owner-answers.json, is logged by the next run and counted by
+  `ph review-stats`. Hooks (84): `ph doctor` reports a problem per registered batch-writer MCP server while the file mod
+  is off, `kit.mjs install|update` without `--enable-plugin` print that and the hook consequence, and syntax_check
+  matches any `mcp__*__(edit|write)_multiple_files`. Stack commands (81; `adapter.command_probes`, default []):
+  kit-adapter.md requires every command the stack skill prescribes to be an `adapter.commands` entry or a real wrapper
+  subcommand, one sanctioned invocation per tool sharing one pinned SDK; `ph harness lint` runs the probes (fails on a
+  rejected command) and warns for a prescribed `node <wrapper> <sub>` no probe or command covers. Prompt text:
+  gsd-executor overlay, gsd-execute executor/shared/fixer/resolver prompts, skills gsd-execute, harness reference
+  kit-adapter.md, hook syntax_check. Measured check: tests/fb6/ (each test fails before its change), full offline
+  suite 2167: 2156 pass, 0 fail, 11 skipped; not run on a live phase.
+
 - Kit feedback 67-76 from the Flutter port, phase 3 planning and wave 1 (owner 2026-10-23: "verify bug rồi sửa lại kit
   cho phù hợp", "giao cho con sonnet 5.5 fix"; every item verified against 0709747 first, kit-bughunt/fb5/VERIFY.md;
   one Sonnet 5.5 agent per area, design notes in kit-bughunt/fb5/design/). Contracts (67, 76 F1; `gsd.contract_check`,
