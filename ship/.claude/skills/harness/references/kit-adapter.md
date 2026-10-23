@@ -52,7 +52,9 @@ asks for one.
 
 Write each entry you set **whole**: an overlay entry replaces the kit default entry entirely, and closed
 validation names any missing nested key (ADPT-14). Omit an entry to keep the kit default. Every command is an argv
-array run without a shell from the code root (`["npm", "test"]`, never `"npm test"`).
+array run without a shell from the code root (`["npm", "test"]`, never `"npm test"`). On Windows a bare name is found on
+PATH with its PATHEXT extension, so `["npm", "test"]` runs `npm.cmd`; the tool must be on PATH, and a `.cmd` or `.bat`
+tool needs no node wrapper.
 
 | Entry | ID | What to write |
 | --- | --- | --- |
@@ -117,7 +119,8 @@ Example (a Node web service):
 
 Scripts the adapter names (resolver, parser, evidence parser, shared predicate, attribution) are project files,
 usually under a project folder such as `tools/adapter/`. The core runs them without a shell: a `.mjs`/`.js` path
-with the current node, any other path directly; cwd = the code root; timeout `adapter.hook_timeout_s`. The request
+with the current node, a `.ps1` path on Windows with `powershell.exe -NoProfile -ExecutionPolicy Bypass -File`, any
+other path directly; cwd = the code root; timeout `adapter.hook_timeout_s`. The request
 is one JSON object on stdin `{v: 1, op, codeRoot, phaseDir?, ...}`; the response is one JSON line on stdout
 `{v: 1, ...}`:
 

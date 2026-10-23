@@ -71,10 +71,13 @@ const REQUEST_ARRAYS = { resolve: ["targets", "filesModified"], shared: ["paths"
 
 export const HOOK_OPS = Object.freeze(Object.keys(REQUESTS));
 
-// `.mjs`/`.js` run with the current node; any other script runs directly.
+// `.mjs`/`.js` run with the current node; on Windows a `.ps1` runs with powershell.exe (G164: CreateProcess cannot start
+// it, and -ExecutionPolicy Bypass keeps a Restricted machine policy from refusing it); any other script runs directly.
 export function hookArgv(codeRoot, scriptRel) {
   const abs = path.resolve(codeRoot, scriptRel);
-  return /\.(mjs|js)$/i.test(abs) ? [process.execPath, abs] : [abs];
+  if (/\.(mjs|js)$/i.test(abs)) return [process.execPath, abs];
+  if (process.platform === "win32" && /\.ps1$/i.test(abs)) return ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", abs];
+  return [abs];
 }
 
 function requestProblem(op, fields) {

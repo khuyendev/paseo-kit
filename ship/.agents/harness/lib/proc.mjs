@@ -1,5 +1,7 @@
 // Processes and time: pid liveness, the real clock, and argv commands run without a shell (INV-52).
 import { spawn, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 
 export function pidAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -47,11 +49,29 @@ function killTree(child) {
   }
 }
 
-// CreateProcess cannot start a .cmd/.bat shim directly; it goes through cmd.exe as one quoted command line.
+const envValue = (env, key) => env[Object.keys(env).find((k) => k.toUpperCase() === key)] ?? "";
+
+// G164: a bare name is looked up on PATH with each PATHEXT extension, as cmd.exe does (npm -> npm.cmd); the current
+// directory is not searched. A name with a directory part is tried as given. Null when nothing matches.
+export function winPathFile(name, env = process.env) {
+  const exts = (envValue(env, "PATHEXT") || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+  const dirs = /[\\/]/.test(name) ? [""] : envValue(env, "PATH").split(path.delimiter).filter(Boolean);
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      const file = path.join(dir, name + ext);
+      if (fs.existsSync(file)) return file;
+    }
+  }
+  return null;
+}
+
+// CreateProcess cannot start a .cmd/.bat shim directly; it goes through cmd.exe as one quoted command line. An
+// extensionless name on Windows is first resolved to its PATHEXT file; a name that matches nothing spawns as given.
 function spawnArgv(argv, options) {
-  const [cmd, ...args] = argv;
+  const [name, ...args] = argv;
+  const cmd = process.platform === "win32" && !path.extname(name) ? (winPathFile(name, options.env ?? process.env) ?? name) : name;
   if (process.platform === "win32" && /\.(cmd|bat)$/i.test(cmd)) {
-    const shim = cmdShim(argv);
+    const shim = cmdShim([cmd, ...args]);
     return spawn(shim.file, shim.args, { ...options, ...shim.options });
   }
   return spawn(cmd, args, options);
