@@ -6,6 +6,16 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Kit feedback 88 (owner 2026-10-24: "làm cái pause stop luôn đi"; one Opus agent, note kit-bughunt/r87/design/R88.md):
+  a clean stop at a wave boundary. Runtime: `ph workflow stop <runId> [--at wave-boundary] [--reason <text>]` writes
+  `<runDir>/stop.json` and kills nothing; `ph runs` shows a pending request; a script that returns `paused` ends the run
+  with the new status `paused` (run.json, log `next:` line, watch, metrics; `--prune` keeps it). Flow verb
+  `stop-requested [runId]`. Default composition: gsd-execute checks before each wave with work left (graph schedule:
+  before each plan start; started plans still commit) and takes `stopAfterWave: N`; gsd-plan checks between planner
+  waves and before checker rounds 2+; the paused result says the wave reached and answers `rerun`. Batch mode refuses
+  `stopAfterWave`; the streams checker join and review streams run to their end. Prompt text: ph, gsd-execute and
+  gsd-plan skills. Measured check: tests/r87/R88*, full offline suite; not run on a live phase.
+
 - Kit rework after feedback 87, plus 86 (owner 2026-10-23/24: "Ok mày làm luôn abc đi, cần subagent thì dùng
   opus"; design kit-bughunt/r87/DESIGN.md; one Opus agent per part, notes in kit-bughunt/r87/design/). The kit owns the
   runtime, the verbs and the invariants; each project owns its workflow composition. Composition (A): kit.json lists
