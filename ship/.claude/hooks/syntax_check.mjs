@@ -59,17 +59,36 @@ export function parseDiagnostics(text) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// A guard older than the stale bound was left by a reclaimer that died between creating and removing it. One waiter
+// renames it away and then claims as usual; the token check in removeLock still keeps a successor's slot (CR-HOK-03).
+function claimGuard(guard, olderThanMs) {
+  const create = () => {
+    try {
+      fs.writeFileSync(guard, "", { flag: "wx" });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (create()) return true;
+  try {
+    if (olderThanMs < 0 || Date.now() - fs.statSync(guard).mtimeMs <= olderThanMs) return false;
+    const taken = `${guard}.${randomUUID()}`;
+    fs.renameSync(guard, taken);
+    fs.rmSync(taken, { force: true });
+  } catch {
+    return false;
+  }
+  return create();
+}
+
 // Machine-wide slot cap per checker (HOOK-27): a slot is a lock published whole by an exclusive link and holding
 // its acquirer's unique token. Only the winner of `<lock>.reclaim-<token>` may remove the lock of that token, the
 // owner on release or anyone once it is stale; the token never recurs, so a late release or a reclaim based on an
 // old look never frees a successor's slot (CR-HOK-03).
 export function removeLock(lock, token, olderThanMs = -1) {
   const guard = `${lock}.reclaim-${token}`;
-  try {
-    fs.writeFileSync(guard, "", { flag: "wx" });
-  } catch {
-    return;
-  }
+  if (!claimGuard(guard, olderThanMs)) return;
   try {
     if (readTextFile(lock) === token && Date.now() - fs.statSync(lock).mtimeMs > olderThanMs) fs.rmSync(lock);
   } catch {
@@ -98,6 +117,21 @@ export async function acquireSlot(dir, max, deadline, staleMs) {
   }
 }
 
+// HOOK-27: the checker's own files inside its tree (its script, the config it names) are part of its identity, so
+// replacing one in place at the same argv invalidates its cached results. Files outside the tree are not read.
+function checkerFiles(tree, argv) {
+  return argv.flatMap((arg) => {
+    const abs = path.resolve(tree, arg);
+    const rel = path.relative(tree, abs);
+    if (path.isAbsolute(rel) || rel.split(path.sep)[0] === "..") return [];
+    try {
+      return [[rel, sha256(fs.readFileSync(abs))]];
+    } catch {
+      return [];
+    }
+  });
+}
+
 function createChecker(ctx) {
   const { stateDir, limits, runArgv } = ctx;
   const budgetEnd = ctx.startedAt + limits.budgetMs;
@@ -112,7 +146,7 @@ function createChecker(ctx) {
     } catch {
       return { status: "absent" };
     }
-    const identity = [checker.argv, checker.timeout_s ?? null, sha256(JSON.stringify(checker))];
+    const identity = [checker.argv, checker.timeout_s ?? null, sha256(JSON.stringify(checker)), checkerFiles(tree, checker.argv)];
     const cacheFile = path.join(cacheDir, `${sha256(JSON.stringify([fold(tree), fold(file), identity, sha256(content)]))}.json`);
     try {
       return readJsonFile(cacheFile);
