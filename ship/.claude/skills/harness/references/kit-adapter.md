@@ -363,3 +363,8 @@ and fix calls caused by a plan defect; for code the non-blocking findings later 
   <numbers after>` or with `not measured (<why>)`; never call an unmeasured change an improvement.
 Lessons that apply to every project go back to the kit with `node <kit>/kit.mjs pull <project> <files> --kit
 <kit dir>`.
+- A gsd workflow script (`.agents/workflows/gsd-*.js`, the project's composition) and its skill change together: the
+  project section of `.claude/skills/gsd-*/SKILL.md` (below the kit markers: args, switches, stages, result fields)
+  follows the script in the same change. The text between the kit markers is the kit's contract: `kit.mjs update`
+  replaces it, so a lesson for it goes back with `kit.mjs pull`. A composition policy (`.agents/harness/gsd/policies.mjs`) the
+  script no longer reads is dropped from `.agents/harness.config.json` too; `ph doctor` notes one that is still set.

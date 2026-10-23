@@ -5,9 +5,25 @@ description: "Debugs one failure with a persistent .planning/debug session and a
 
 # gsd-debug
 
-Method text: follow `.agents/gsd/generated/workflows/debug-session-manager.md` (generated upstream text, unchanged; its prompt blocks, `.agents/gsd/generated/debug-prompts.md`, reach the debugger through its role include), then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win). The supervised debug engine of earlier ports is not part of the kit.
+<!-- PASEO-HARNESS-KIT START: kit-owned; project text belongs outside these markers -->
+## Kit contract
 
-## Kit overlay (GSDF-64..67)
+Method text: follow `.agents/gsd/generated/workflows/debug-session-manager.md` (generated upstream text, unchanged; its prompt blocks, `.agents/gsd/generated/debug-prompts.md`, reach the debugger through its role include), then apply `.agents/workflows/gsd-overlay.md` and the project section below (overlays win). The supervised debug engine of earlier ports is not part of the kit.
+
+The workflow is the project's composition `.agents/workflows/gsd-debug.js`: a script of kit verbs that the project owns and evolves. This block is the kit's contract for every composition; the project section below the markers describes what this project's script takes and returns.
+
+Run: write the args file `_workspace/args/gsd-debug.json` (its fields are in the project section), run `node .agents/harness/ph.mjs workflow --name gsd-debug --args-file _workspace/args/gsd-debug.json --detach` and wait as its `next:` line says. A run that died is continued with `node .agents/harness/ph.mjs workflow --resume <runId>` (finished agent calls replay from the journal); a stopped run is answered, then run again with the same args.
+
+Result statuses (the success statuses, stages and fields of this script are in the project section):
+- `needs-owner`: show `stage`, `reason` and the numbered `options`, with the items the result lists for that stage. The answer is the verb the result names (an option, or the answer line of the stop, such as a `ph gsd ... clear` verb): run it as written, then run again with the same args. A stop that names no verb is answered by fixing the tree or the inputs it names, then running again. Quota or rate limits never offer retry-now: report the reset time.
+- `refused`: another run holds the lease or lock the reason names; nothing was dispatched. Wait for it to end, then run again.
+- `failed`: report the reason and the problems the result lists.
+- Never edit the flow's state or record files by hand (progress, transfer, halt, request, answer and revision records, run journals under `_workspace/_runs/`): only the run and the `ph gsd` / `gsd-flow.mjs` verbs write them. Never edit the workflow script to get past a stop: composition changes go through harness-evolve between runs.
+<!-- PASEO-HARNESS-KIT END -->
+
+## Project composition (GSDF-64..67)
+
+This section is the project's (outside the kit markers; kit updates never change it). It describes `.agents/workflows/gsd-debug.js` as this project runs it: args, switches, stages and result fields. harness-evolve changes it together with the script; seeded from the kit default.
 
 Subcommands: `list` (`ph gsd debug list`; exit 66 = none), `status <slug>` (`ph gsd debug status <slug>`), `continue <slug>`, or a new failure.
 

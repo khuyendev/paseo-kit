@@ -67,11 +67,14 @@ function copyBytes(from, to) {
   fs.writeFileSync(to, fs.readFileSync(from));
 }
 
+// A seeded block part (kit feedback 87) gets its whole shipped file unless the project file has markers to fill.
 export function copyToProject(kit, project, key) {
   const unit = kit.units.get(key);
   const file = projectFileOf(project, key);
   if (unit.kind === "file") return copyBytes(unit.src, file);
-  const next = putBlock(readIf(file), shippedBlockBody(unit));
+  const text = readIf(file);
+  if (unit.seed && (text == null || findBlock(text).status === "none")) return copyBytes(unit.src, file);
+  const next = putBlock(text, shippedBlockBody(unit));
   if (next == null) throw new Error(`${key}: malformed kit block markers`);
   writeTextAtomic(file, next);
 }
@@ -79,7 +82,8 @@ export function copyToProject(kit, project, key) {
 export function copyToKit(kit, project, key) {
   const unit = kit.units.get(key);
   if (unit.kind === "file") return copyBytes(projectFileOf(project, key), unit.src);
-  writeTextAtomic(unit.src, `${projectBlockBody(project, key).replace(/\r\n/g, "\n")}\n`);
+  const body = projectBlockBody(project, key).replace(/\r\n/g, "\n");
+  writeTextAtomic(unit.src, unit.seed ? putBlock(readText(unit.src), body) : `${body}\n`);
 }
 
 // Deletes a retired part proven kit-owned by its recorded digest (INST-07, INV-03).

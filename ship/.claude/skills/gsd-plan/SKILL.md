@@ -5,9 +5,25 @@ description: "Plans one GSD phase (outline, skeleton review, per-plan planners, 
 
 # gsd-plan
 
-Method text: the orchestration of upstream `plan-phase` is the workflow script below; its step 8 and step 12 contracts are generated unchanged in `.agents/gsd/generated/plan-phase-contracts.md` and reach the planner through its role include, then apply `.agents/workflows/gsd-overlay.md` and the overlay below (overlays win). The researcher, planner and checker are always separate agents; planning never creates, renames or switches git branches.
+<!-- PASEO-HARNESS-KIT START: kit-owned; project text belongs outside these markers -->
+## Kit contract
 
-## Kit overlay
+Method text: the orchestration of upstream `plan-phase` is the workflow script below; its step 8 and step 12 contracts are generated unchanged in `.agents/gsd/generated/plan-phase-contracts.md` and reach the planner through its role include, then apply `.agents/workflows/gsd-overlay.md` and the project section below (overlays win). The researcher, planner and checker are always separate agents; planning never creates, renames or switches git branches.
+
+The workflow is the project's composition `.agents/workflows/gsd-plan.js` and `.agents/workflows/gsd-plan-review.js`: a script of kit verbs that the project owns and evolves. This block is the kit's contract for every composition; the project section below the markers describes what this project's script takes and returns.
+
+Run: write the args file `_workspace/args/gsd-plan.json` (its fields are in the project section), run `node .agents/harness/ph.mjs workflow --name gsd-plan --args-file _workspace/args/gsd-plan.json --detach` and wait as its `next:` line says. A run that died is continued with `node .agents/harness/ph.mjs workflow --resume <runId>` (finished agent calls replay from the journal); a stopped run is answered, then run again with the same args.
+
+Result statuses (the success statuses, stages and fields of this script are in the project section):
+- `needs-owner`: show `stage`, `reason` and the numbered `options`, with the items the result lists for that stage. The answer is the verb the result names (an option, or the answer line of the stop, such as a `ph gsd ... clear` verb): run it as written, then run again with the same args. A stop that names no verb is answered by fixing the tree or the inputs it names, then running again. Quota or rate limits never offer retry-now: report the reset time.
+- `refused`: another run holds the lease or lock the reason names; nothing was dispatched. Wait for it to end, then run again.
+- `failed`: report the reason and the problems the result lists.
+- Never edit the flow's state or record files by hand (progress, transfer, halt, request, answer and revision records, run journals under `_workspace/_runs/`): only the run and the `ph gsd` / `gsd-flow.mjs` verbs write them. Never edit the workflow script to get past a stop: composition changes go through harness-evolve between runs.
+<!-- PASEO-HARNESS-KIT END -->
+
+## Project composition
+
+This section is the project's (outside the kit markers; kit updates never change it). It describes `.agents/workflows/gsd-plan.js` and `.agents/workflows/gsd-plan-review.js` as this project runs it: args, switches, stages and result fields. harness-evolve changes it together with the script; seeded from the kit default.
 
 ### Phase (GSDF-35, GSDF-33)
 - Without a phase argument pick the first phase (lowest first, `ph gsd roadmap analyze`) whose status is `NOT_STARTED` or that is discussed or researched but unplanned; when none fits, ask.

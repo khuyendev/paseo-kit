@@ -35,6 +35,13 @@ node kit.mjs help
   project and are never overwritten; install never edits Paseo settings. `--force` never overrides removed-local
   parts, seeds, project-owned files, foreign settings keys or hooks, `CLAUDE.md` lines, `.gitignore` lines outside
   the kit block, user-scope Claude config or version gates.
+- Block parts: a shipped skill whose text holds the kit markers (the gsd workflow skills `gsd-map-codebase`,
+  `gsd-new-project`, `gsd-research`, `gsd-plan`, `gsd-execute`, `gsd-verify`, `gsd-quick`, `gsd-debug`) is installed
+  whole once; afterwards the kit owns only the text between the markers (the generic contract of running the workflow
+  and answering its stops), and the front matter and the project section below the markers (that project's script:
+  args, switches, result fields) belong to the project, evolved by harness-evolve with the script. `update` rewrites an
+  unedited whole-file copy from an older kit into block plus project section and keeps an edited one (listed, exit 2)
+  until its text is moved below the markers or `--force` replaces it; `pull` copies only the block back.
 - `--enable-plugin` activates the harness-files mod with `claude plugin install --scope project`; the kit never
   toggles an owner's plugin selection otherwise. Without it, when the mod is not selected, `install` and `update` print
   the `ph doctor` line and what that costs the hooks, and a `problem` line for each MCP server that still looks like a

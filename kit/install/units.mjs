@@ -6,6 +6,7 @@ import { fileDigest, textDigest } from "../../ship/.agents/harness/lib/hash.mjs"
 import { isMain } from "../../ship/.agents/harness/lib/cli.mjs";
 import { fileURLToPath } from "node:url";
 import { fail, KitFailure } from "./failure.mjs";
+import { findBlock } from "./text.mjs";
 
 export const BLOCK_SUFFIX = "#paseo-harness-kit";
 export const KIT_SIDE_DIRS = ["blocks", "templates"];
@@ -55,6 +56,15 @@ function checkListed(kitDir, rel) {
   if (!fs.statSync(path.join(kitDir, "ship", rel), { throwIfNoEntry: false })?.isFile()) fail(`kit.json lists a missing file: ${rel}`);
 }
 
+// A listed `.md` unit whose shipped text holds a kit block is a seeded block part (kit feedback 87, seeded.mjs): broken
+// markers fail the self-check.
+function holdsBlock(src, rel) {
+  if (!rel.endsWith(".md")) return false;
+  const status = findBlock(readText(src)).status;
+  if (status === "malformed") fail(`kit.json lists ${rel} with malformed kit block markers`);
+  return status === "ok";
+}
+
 // Script names a hook template registers: `command` hooks referencing `.claude/hooks/<name>.mjs` (HOOK-02).
 export function templateScripts(template) {
   const names = new Set();
@@ -90,7 +100,9 @@ export function loadKit(kitDir) {
   const units = new Map();
   for (const rel of kitJson.units) {
     checkListed(kitDir, rel);
-    units.set(rel, { key: rel, kind: "file", rel, src: path.join(kitDir, "ship", rel) });
+    const src = path.join(kitDir, "ship", rel);
+    if (holdsBlock(src, rel)) units.set(`${rel}${BLOCK_SUFFIX}`, { key: `${rel}${BLOCK_SUFFIX}`, kind: "block", rel, src, seed: true });
+    else units.set(rel, { key: rel, kind: "file", rel, src });
   }
   const blocksDir = path.join(kitDir, "ship", "blocks");
   for (const entry of fs.existsSync(blocksDir) ? fs.readdirSync(blocksDir, { withFileTypes: true }) : []) {
@@ -106,7 +118,7 @@ export function loadKit(kitDir) {
   return { dir: kitDir, version: kitJson.version, units, template, templatesDir: path.join(kitDir, "ship", "templates") };
 }
 
-export const shippedBlockBody = (unit) => readText(unit.src).trim();
+export const shippedBlockBody = (unit) => (unit.seed ? findBlock(readText(unit.src)).body : readText(unit.src)).trim();
 
 export const kitDigest = (unit) => (unit.kind === "block" ? textDigest(shippedBlockBody(unit)) : fileDigest(unit.src));
 
