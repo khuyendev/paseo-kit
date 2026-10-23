@@ -23,7 +23,8 @@ export function planText(id, { wave = 1, gap = false, depends = [] } = {}) {
 export function makeWorld(opts = {}) {
   const project = makeTempProject({
     files: { [`${PHASE_DIR}/01-CONTEXT.md`]: "<decisions>\n- **D-01:** keep it small\n</decisions>\n", ...(opts.research === false ? {} : { [`${PHASE_DIR}/01-RESEARCH.md`]: "research\n" }), ...(opts.files ?? {}) },
-    overlay: opts.overlay,
+    // Kit feedback 72: the flow tests written for the fresh-review cycle keep it; the tests of the resolve check set `plan_review_check` themselves.
+    overlay: { ...opts.overlay, gsd: { plan_review_check: "fresh", ...opts.overlay?.gsd } },
   });
   const P = (rel) => path.join(project.root, rel);
   const read = (rel) => (fs.existsSync(P(rel)) ? fs.readFileSync(P(rel), "utf8") : "");

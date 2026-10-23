@@ -148,6 +148,8 @@ export const SCHEMA = obj({
     research: bool(),
     research_ahead: bool(),
     plan_review: bool(),
+    // Kit feedback 72: resolve = the staged plan review judges convergence by its open issues; fresh = by fresh-review counts.
+    plan_review_check: str({ oneOf: ["resolve", "fresh"] }),
     plan_flow: str({ oneOf: ["staged", "streams"] }),
     skeleton_lanes: arr(obj({ lens: str({ nonEmpty: true }), model: str({ nonEmpty: true }), effort: effort() }, ["model", "effort"]), 1),
     max_skeleton_passes: int(1, 3),
