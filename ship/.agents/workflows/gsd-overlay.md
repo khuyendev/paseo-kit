@@ -18,7 +18,7 @@ Every `gsd-*` skill carries a generated upstream GSD method text unchanged (D-11
 
 ## Conversation
 - Talk to the owner in the owner's language; every artifact is written in English.
-- Questions are numbered plain text; wait for the answer; an empty reply is not approval.
+- Questions are numbered plain text; wait for the answer; an empty reply is not approval; the one exception is a delegated discuss (gsd-discuss), where the main session answers within the owner's recorded delegation.
 - Interactive stages (discuss, approval loops, UAT, owner decisions) run in the main session; everything else runs in workers.
 
 ## Not carried
