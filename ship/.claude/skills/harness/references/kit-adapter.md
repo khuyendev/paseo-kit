@@ -271,7 +271,7 @@ JSON) on `circle/gpt-6-luna-fast[1m]` unless the owner names another model. Reco
  "precision": 1.0, "recall": 0.9}
 ```
 
-and put precision and recall in the history row. With-skill versus baseline runs and the blind A/B workflow of the
+Derive precision and recall from those requests: precision = TP / (TP + FP) and recall = TP / (TP + FN), where TP is a should-trigger request that triggered, FP a near miss that triggered and FN a should-trigger request that did not. Precision is 0 when nothing triggered. Lint rejects a value outside [0, 1] or more than 0.005 away from the derived one, so round to two decimals at most. Put precision and recall in the history row. With-skill versus baseline runs and the blind A/B workflow of the
 skill-testing guide stay optional; when you run them, the records follow the guide's exact field names:
 `eval_metadata.json {eval_id, eval_name, prompt, assertions}`, `grading.json {expectations: [{text, passed,
 evidence}], summary: {passed, failed, total, pass_rate}}`, `timing.json {total_tokens, duration_ms,

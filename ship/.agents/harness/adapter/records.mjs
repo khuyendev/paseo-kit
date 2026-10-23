@@ -108,6 +108,27 @@ export function validateEvalRecord(kind, rec) {
   throw new Error(`unknown eval record ${kind}`);
 }
 
+// Two-decimal records round by at most 0.005; the epsilon absorbs float error at that edge.
+const METRIC_TOLERANCE = 0.005 + 1e-9;
+const ratio = (n, d) => (d === 0 ? 0 : n / d);
+const hundredths = (x) => Math.round(x * 100) / 100;
+
+// precision and recall lie in [0, 1] and follow from the requests: a should-trigger request that fired is a true
+// positive, a near miss that fired a false positive, a should-trigger request that did not fire a false negative.
+// With no positive predictions precision is 0, so a skill that never fires cannot record a perfect precision.
+function metricErrors(rec) {
+  const count = (shouldTrigger, triggered) => rec.requests.filter((r) => r?.should_trigger === shouldTrigger && r?.triggered === triggered).length;
+  const tp = count(true, true);
+  const fp = count(false, true);
+  const fn = count(true, false);
+  const derived = { precision: ratio(tp, tp + fp), recall: ratio(tp, tp + fn) };
+  return ["precision", "recall"].flatMap((name) => {
+    if (rec[name] < 0 || rec[name] > 1) return [`${name} ${rec[name]} is outside [0, 1]`];
+    if (Math.abs(rec[name] - derived[name]) > METRIC_TOLERANCE) return [`${name} ${rec[name]} does not match the requests, which give ${hundredths(derived[name])}`];
+    return [];
+  });
+}
+
 // HARN-10: a trigger record holds at least 10 should-trigger and 10 near-miss requests with their results.
 export function validateTriggerRecord(rec, skill) {
   const errs = closed(rec, ["skill", "date", "model", "requests", "precision", "recall"], "triggers");
@@ -122,5 +143,6 @@ export function validateTriggerRecord(rec, skill) {
   const near = rec.requests.filter((r) => r?.should_trigger === false).length;
   if (should < 10 || near < 10) errs.push(`needs 10 should-trigger and 10 near-miss requests (has ${should} and ${near})`);
   if (!isNum(rec.precision) || !isNum(rec.recall)) errs.push("precision and recall must be numbers");
+  else errs.push(...metricErrors(rec));
   return errs;
 }
