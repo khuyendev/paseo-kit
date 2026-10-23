@@ -34,6 +34,15 @@ before any new agent or skill (step 3, step 4-0), model choice (step 3), skill w
 (step 6), and the history table (step 7). Building a generic agent team is not a kit goal; do it only when the owner
 asks for one.
 
+Layers (kit feedback 87). The kit owns the runtime (`ph workflow`, agents, journal and resume, tiers, worktrees), the
+verbs (`node .agents/workflows/lib/gsd-flow.mjs <verb>` and `ph gsd <verb>`: one job and one on-disk record each, with
+stable names and shapes) and the invariants (rules no workflow switches off from inside a run). The project owns its
+workflow composition: the `.agents/workflows/gsd-*.js` scripts, that is the step order, when to stop or go on, and
+which verbs run with which policy. The kit ships the default composition; the project changes its copy only between
+runs, through harness-evolve, never to get past the stop a run is in. A script cannot import modules, so it reaches
+the kit only through the verbs; `ph harness lint` fails a verb the kit does not serve. `kit.mjs update` keeps an
+edited composition (also with `--force`) and `kit.mjs pull` offers it back as the kit default.
+
 ## 2. When to run
 
 - After `gsd-map-codebase` wrote `.planning/codebase/*.md`, before `gsd-new-project` plans anything.
@@ -278,7 +287,8 @@ file in a skill folder; a generated file under `.claude/commands/`; agent front 
 use of in-session primitives (`Agent(`, `Workflow(`, `SendMessage(`, `Task*`, `TeamCreate`, `TeamDelete`, team
 flags); workflow scripts with `Date.now()`, `Math.random()` or a non-literal `meta`, `phase()` titles missing from
 `meta.phases`; orchestrator skills without an execution mode at the top, an unlabelled stage of a mixed one, or no
-`## Test scenarios` with a normal and an error flow; malformed history rows and eval records. Warnings (exit 0):
+`## Test scenarios` with a normal and an error flow; malformed history rows and eval records; a flow or gsd verb a
+`.agents/workflows/*.js` composition calls that the kit does not serve (unknown, or named but not ported). Warnings (exit 0):
 bare mentions of primitives, an agent with Write but not Edit, unguarded `agent()`/`parallel()` results used as
 arrays, a generated skill without a trigger record, a git-ignored path the adapter uses that `worktree_setup` does not set up (with `gsd.isolation: worktree`), a `node <script> <subcommand>` the stack skill prescribes that no `adapter.commands` argv or `adapter.command_probes` entry runs. `ph harness lint` also runs every `adapter.command_probes` argv (read-only, short timeout) and fails when the wrapper rejects one (`--no-probes` skips them). `--all` also reports other owner content, as warnings only.
 Fix every failure before reporting; never change provider settings to satisfy lint.

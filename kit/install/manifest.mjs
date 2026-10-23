@@ -14,9 +14,15 @@ export const manifestFile = (project) => path.join(project, MANIFEST_REL);
 
 const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
+// Kit feedback 87: a composition entry {seeded: digest of the kit default the project copy started from, version: the
+// kit version it came with, null when an older manifest did not record it}.
+const isCompositionEntry = (e) => isPlainObject(e) && typeof e.seeded === "string" && DIGEST.test(e.seeded)
+  && (e.version === null || typeof e.version === "string");
+
 export function isCurrentFormat(m) {
   return isPlainObject(m) && !Object.hasOwn(m, "kit") && typeof m.version === "string" && isPlainObject(m.files)
-    && Object.values(m.files).every((d) => typeof d === "string" && DIGEST.test(d));
+    && Object.values(m.files).every((d) => typeof d === "string" && DIGEST.test(d))
+    && (m.composition === undefined || (isPlainObject(m.composition) && Object.values(m.composition).every(isCompositionEntry)));
 }
 
 // null when absent; an older-format manifest is refused without being used (INST-31).
@@ -31,7 +37,7 @@ export function readManifest(project) {
   }
   if (!isCurrentFormat(m)) fail(OLDER_MANIFEST);
   // A corrupted record must not authorize a delete or rewrite outside the project (CR-INS-01, INV-03).
-  const bad = Object.keys(m.files).filter((key) => !isPartKey(key));
+  const bad = [...Object.keys(m.files), ...Object.keys(m.composition ?? {})].filter((key) => !isPartKey(key));
   if (bad.length) fail(`${MANIFEST_REL} records paths outside the project: ${bad.map((k) => JSON.stringify(k)).join(", ")}; fix or remove it by hand`);
   return m;
 }
@@ -40,8 +46,12 @@ export function requireManifest(project) {
   return readManifest(project) ?? fail("not installed; use install");
 }
 
-export function writeManifest(project, { version, installedAt, files }, now = new Date()) {
-  const sorted = Object.fromEntries(Object.keys(files).sort(byCodePoint).map((k) => [k, files[k]]));
+const sortedOf = (obj) => Object.fromEntries(Object.keys(obj).sort(byCodePoint).map((k) => [k, obj[k]]));
+
+// `composition` is written only when it has entries, so a kit without composition parts keeps the manifest's key list.
+export function writeManifest(project, { version, installedAt, files, composition = {} }, now = new Date()) {
   const updatedAt = now.toISOString();
-  writeJsonAtomic(manifestFile(project), { _notes: NOTES, version, installedAt: installedAt ?? updatedAt, updatedAt, files: sorted });
+  const record = { _notes: NOTES, version, installedAt: installedAt ?? updatedAt, updatedAt, files: sortedOf(files) };
+  if (Object.keys(composition).length) record.composition = sortedOf(composition);
+  writeJsonAtomic(manifestFile(project), record);
 }

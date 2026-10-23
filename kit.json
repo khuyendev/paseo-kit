@@ -348,6 +348,7 @@
     ".agents/harness/gsd/tools.mjs",
     ".agents/harness/gsd/upstream.mjs",
     ".agents/harness/gsd/validation-strategy.mjs",
+    ".agents/harness/gsd/verb-check.mjs",
     ".agents/harness/gsd/verb-table.mjs",
     ".agents/harness/gsd/verbs.mjs",
     ".agents/harness/gsd/workflow-args.mjs",
@@ -482,5 +483,16 @@
     ".claude/skills/harness/references/team-patterns.md",
     ".claude/skills/harness/references/workflow-recipes.md",
     ".claude/skills/ph/SKILL.md"
+  ],
+  "composition": [
+    ".agents/workflows/gsd-debug.js",
+    ".agents/workflows/gsd-execute.js",
+    ".agents/workflows/gsd-map-codebase.js",
+    ".agents/workflows/gsd-new-project.js",
+    ".agents/workflows/gsd-plan-review.js",
+    ".agents/workflows/gsd-plan.js",
+    ".agents/workflows/gsd-quick.js",
+    ".agents/workflows/gsd-research.js",
+    ".agents/workflows/gsd-verify.js"
   ]
 }

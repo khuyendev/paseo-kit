@@ -73,6 +73,8 @@ function warnModOff(ctx) {
   const state = filePluginState(ctx.project, ctx.env);
   if (modSelected(state)) return;
   ctx.out(`harness-files mod: not selected (ph doctor: note file mod not selected, enabledPlugins has no ${FILE_PLUGIN_ID}); ${MOD_OFF_HOOK_CONSEQUENCE}`);
+  // Kit feedback 86 (addendum to 84): --force replaces kit files, never the mod selection; say so plainly.
+  if (ctx.force) ctx.out(`harness-files mod: stays unselected: --force replaces kit files but never selects the mod; to select it: node "${ctx.kitScript}" update "${toSlash(ctx.project)}" --enable-plugin`);
   const { servers } = batchWriterServers(ctx.project, ctx.env);
   for (const server of servers) ctx.out(`problem ${batchWriterProblem(server)}`);
 }

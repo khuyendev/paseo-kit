@@ -405,7 +405,7 @@ Built-ins in `ph.mjs`: `help` / `--help` / `-h` / no command (usage + public com
 
 ## 9. `kit.mjs` (kit CLI; INST-01, MACH-01)
 
-`node kit.mjs install|update|status|pull ...` -> `run(argv, io)` of `kit/install/index.mjs` with argv starting at the verb; `node kit.mjs machine check|apply|export ...` -> `run(argv, io)` of `kit/machine/index.mjs` with argv after `machine`. `io = {out(line), err(line), env}`; `run` returns the exit code. Unknown verb or none: usage on stderr, exit 1. No `adopt` verb (D-110: generic adopt is LATER).
+`node kit.mjs install|update|status|pull ...` -> `run(argv, io)` of `kit/install/index.mjs` with argv starting at the verb (composition parts, kit feedback 87: kit.json `composition` lists the workflow scripts a project owns once it edits them; the manifest's optional `composition` map holds `{<part>: {seeded, version}}`; update keeps an edited one even with `--force`, see section 13 for the verbs they may call); `node kit.mjs machine check|apply|export ...` -> `run(argv, io)` of `kit/machine/index.mjs` with argv after `machine`. `io = {out(line), err(line), env}`; `run` returns the exit code. Unknown verb or none: usage on stderr, exit 1. No `adopt` verb (D-110: generic adopt is LATER).
 
 ## 10. Test fakes and helpers (`tests/fakes/`, `tests/helpers/`)
 
@@ -487,3 +487,125 @@ Test naming: each v1 requirement of a coder's prefixes has at least one test who
 ## 12. Integration requests
 
 A change in a file another coder owns is requested, never made: append `- <your agent name> -> <owner>: <file>: <what and why>` to `.planning/integration/requests.md`, code against the requested shape with a `TODO(integration)` comment, and list it in your report `.planning/integration/<your agent name>.md`.
+
+## 13. Kit verbs (stable API)
+
+Kit feedback 87. The kit owns the runtime, the verbs and the invariants; the project owns its workflow composition
+(the `.agents/workflows/gsd-*.js` scripts, kit.json `composition`). A workflow script cannot import a module, so it
+reaches the kit only through these verbs: `flow([...])` runs `node .agents/workflows/lib/gsd-flow.mjs <verb> ...`,
+`gsd([...])` runs `node .agents/harness/ph.mjs gsd <verb> ...` (besides the runtime globals `agent`, `shell`, `log`).
+The verbs below are the API the kit keeps stable for compositions.
+
+Rule: a verb is renamed or changes the shape of its input, output or record only with a CHANGELOG line that names the
+old and the new form and a compatibility alias for one release (the old name or shape is still accepted). A new verb
+gets a row here in the same change: `tests/r87/RA-verbs.test.mjs` fails when a verb of the tables (`COMMAND_NAMES` of
+gsd-flow.mjs, `verbHandlers` of gsd/verbs.mjs) has no row. `kit.mjs update`, `ph doctor` and `ph harness lint` scan
+every top-level `.agents/workflows/*.js` that defines the helpers for `flow(["<verb>"...])` and `gsd(["<verb>"...])`
+calls with a literal verb and report a verb the kit does not serve (`gsd/verb-check.mjs`); a computed verb is counted,
+not checked.
+
+Output convention of both: one JSON document on the last stdout line; flow verbs exit 0 (ok) or 1 (negative verdict or
+error, `{status: "error", error}`); `ph gsd` verbs exit 0, 1, 66 (nothing matched) or 69 (unavailable, with reason).
+`<phaseDir>` is `.planning/phases/<NN>-<slug>`; `{...}` in the input column is JSON on stdin.
+
+### Flow verbs (`gsd-flow.mjs <verb>`)
+
+| verb | input | output | record |
+| --- | --- | --- | --- |
+| `exists` | `<path>...` | `{exists: {<path>: bool}}` | none |
+| `read` | `<path>` | `{exists, text}` | none |
+| `write` | `<path>`, text on stdin | `{written}` | the file (atomic; refuses PROJECT, STATE, ROADMAP and REQUIREMENTS.md: single writer) |
+| `append` | `<path>`, text on stdin | `{appended}` | the file (same guard) |
+| `json-push` | `<path>`, one JSON entry | `{pushed, count}` | the JSON array file (atomic) |
+| `remove` | `<path>` | `{removed}` (null when absent) | the file is deleted (same guard) |
+| `lock` | `<name> <runId> [kind]` | `{locked, token}` or `{locked: false, holder, holderKind}` | `_workspace/locks/<name>.lock` |
+| `unlock` | `<name> <token>` | `{unlocked}` | the lock file is removed |
+| `lock-check` | `<name>` | `{held, holder?, holderKind?}` | none |
+| `head` | none | `{commit}` | none |
+| `digest` | `{files, owns}` | `{hash}`: the content identity of an agent call's inputs | none |
+| `secrets` | `<path>...` | findings (file, line, kind; never the value) | none |
+| `stamp` | `[doc...]` (default: the map docs) | the stamped docs | `last_mapped_commit` and `last_mapped_at` of `.planning/codebase/*.md` |
+| `drift` | `<threshold>` | the drift report; `skipped` without a baseline | none |
+| `map-check` | `[doc...]` | problems of the map docs (Known Bug status and evidence) | none |
+| `draft-check` | none | problems of `.planning/drafts/` against `traceability.json` | none |
+| `summary-heal` | `[--stale]`, the synthesizer reply on stdin | `{ok, healed, path}` | `.planning/research/SUMMARY.md` |
+| `quick-dir` | `<slugSource>` | `{id, dir}` | `.planning/quick/.ids/<id>` reservation |
+| `quick-verification` | `<dir> <action>` | status and fingerprint of a quick report | none |
+| `forensics-path` | the topic on stdin | `{path}` under `.planning/forensics/` | none |
+| `anti-patterns` | `<phaseDir>` | blocking `.continue-here.md` anti-patterns without answers | none |
+| `cwd-guard` | `<worktreeDir>` | ok, or the refusal of a run started inside a worktree | none |
+| `baseline` | `<phaseDir>` | the dirty and untracked state at the first execute | `<phaseDir>/execute-baseline.json` (kept for the phase) |
+| `resume-gate` | `<phaseDir>`, `{plans, integration?}` | `{ok, problems, head, reconciled, accepted}` for a moved HEAD | `<phaseDir>/commits.json` (reconciled commits) |
+| `transfer` | `<phaseDir>`, `{plan, worktree, owns, summary, files_deleted?}` | `{ok, ...record}` (files, dropped), or `{ok: false, refused}` | `<phaseDir>/transfers/<plan>.json` (through `transfers-pending/`) |
+| `pending-transfers` | `<phaseDir>` | plans whose transfer started and never finished | none |
+| `adopt` | `<phaseDir> <plan> <path>` | `{ok, plan, path, adopted}` | `<phaseDir>/transfers/<plan>.json` |
+| `discard-worktree` | `{plan, worktree, reason: landed or halted}` | `{ok, reason?}` | the worktree is removed |
+| `leftover-worktrees` | none | `{total, removable, names}` | none |
+| `owned-changes` | `<phaseDir>`, `{plans, pending?, integration?, ignore?}` | changed paths per plan, `removed`, `integration`, `unowned`, `eolOnly`, `outside` | none |
+| `owners` | `{paths, plans}` | `{owners: {<path>: [plan]}}` | none |
+| `dirty-owned` | `<phaseDir>`, `{plans}` | owned paths edited before the baseline | none |
+| `smoke-due` | `{files, globs}` | the files matching `adapter.smoke_triggers` | none |
+| `schedule-graph` | `{plans}` | start order and waits of `gsd.execute_schedule: graph` | none |
+| `execution-inputs` | none | content-addressed planning inputs for worktree agents | snapshot files under `_workspace/` |
+| `dependency-seed` | `<phaseDir>`, `{plans}` | the `worktreeSeed` of accepted earlier transfers | none |
+| `gate` | `<phaseDir>`, `{waveId, plans, testArgv?, skipObligations?, suite?, context?}` | `{green, evidence, failures, failureCount, notes, timedOut, ...attribution}` | `<phaseDir>/evidence/<waveId>*.json` and its `.logs/` |
+| `evidence-check` | `<evidence path>`, `{plans}` | whether the evidence still matches the inputs and obligations, else the problems | none |
+| `spot-check` | `<summary path>` | the SUMMARY's claims checked against the tree | none |
+| `review-scope` | `<phaseDir>`, `{plan, files?, filterExplicit?, summary?, evaluation?}` | `{plan, source, scope, excluded, log}`: the files a code review covers | none |
+| `changed-lines` | `<phaseDir>`, `{plan, files}` | `{plan, files}`: changed line ranges per file (`all`, ranges or null) | none |
+| `review-record` | `<phaseDir>`, `{waveId, record}` | `{ok, record, review}` or `{ok: false, errors}` | `<phaseDir>/review/<name>.json` and `<NN>-REVIEW.md` |
+| `prereview-record` | `<phaseDir>`, the record | `{ok, ...}` or `{ok: false, errors}` | `<phaseDir>/prereview/<name>.json` |
+| `validation-strategy` | `<phaseDir>` | `{ok, status}` | `<phaseDir>/<NN>-VALIDATION.md` |
+
+### `ph gsd` verbs
+
+| verb | input | output | record |
+| --- | --- | --- | --- |
+| `init.project`, `init.plan-phase`, `init.phase-op`, `init.execute-phase`, `init.verify` | `[<phase>]` | the initialization payload of the workflow (paths, flags, phase facts) | none |
+| `state.load` | none | the STATE.md fields | none |
+| `state.init`, `state.position`, `state.planned-phase`, `state.wave`, `state.decision`, `state.override`, `state.session-note`, `state.rederive` | the options of the usage (`ph gsd <verb> -h`); `state.wave` and `state.override` also take JSON | `{status, ...}` of the write | `.planning/STATE.md` (single writer, `STATE.md.lock`) |
+| `roadmap.get-phase`, `roadmap.analyze` | `<N>`, none | the phase section; the phases with status and progress | none |
+| `roadmap.annotate-dependencies`, `roadmap.install-draft` | `<N>`, none | `{status, ...}` | `.planning/ROADMAP.md` (install-draft: REQUIREMENTS.md too) |
+| `requirements.list` | none | requirement ids with their status | none |
+| `requirements.mark-complete`, `requirements.revert` | `<ids...>`, `<N>` | `{status, ids}` | `.planning/REQUIREMENTS.md` |
+| `find-phase` | `<ref>` | `{found, directory, status}` | none |
+| `phase.add`, `phase.insert`, `phase.remove`, `phase.complete` | `<name...>`, `<after> <name...>`, `<phase>`; `[--goal]` | `{status, phase}` | ROADMAP.md, STATE.md, the phase directory |
+| `phase.uat-passed` | `<phase> [--require-verification] [--uat-only]` | `{passed, ...}` | none |
+| `phase.list-plans`, `phase.list-artifacts`, `phase-plan-index` | `<phase>` (`--type`) | plan ids; artifacts; the plan index (waves, owns, status) | none |
+| `halt.clear` | `<phase> [--plan] [--reason] [--resume]` | the owner answer `{id: OA-<n>, kind: halt, ...}` | `<phase>/owner-answers.json` (and `halt-answers.json`) |
+| `shared.clear` | `<phase> <wave> [--path] --reason` | the owner answer `{id, kind: shared, ...}` | `<phase>/owner-answers.json` |
+| `request.clear` | `<phase> --plan --path --reason` | the owner answer `{id, kind: request, ...}` | `<phase>/owner-answers.json` |
+| `grant` | `<phase> --path [--plan]` | the grant | `<phase>/grants.json` |
+| `verify.plan-structure`, `verify.artifacts`, `verify.key-links` | `<phase or NN-MM-PLAN.md> [--plans]` | `{valid, ...}` per plan | none |
+| `verify.contracts` | `<phase> [--plans] [--complete]` | contract errors of the plans against the outline manifest | none |
+| `contracts.show` | `<phase> --plan` | the plan's produced and consumed contracts | none |
+| `contracts.change` | `<phase>`, `{plan, symbol, old, new, reason}` | `{status, change}` | `<NN>-PLAN-OUTLINE.manifest.json` (its one writer after the outline) |
+| `verification.status`, `verification.fingerprint` | `<phase> [files...]` | report status and path; `{covered_files, covered_digest}` | none |
+| `verification.parts` | `<phase>`, `{attemptKey, parts}` | each part's problems | none |
+| `verification.merge` | `<phase>`, `{attemptKey, parts}` | the merged report, or each part's problems | `<NN>-VERIFICATION.md` |
+| `check.coverage`, `check.decision-coverage`, `check.decision-coverage-plan`, `check.decision-coverage-verify`, `check.verify-command-paths`, `check.verify-failure-directions`, `check.owns`, `check.dependencies`, `check.smoke` | `<phase> [--plans]` (`check.smoke`: none) | `{passed, ...}` with the problems; exit 1 when blocking | none |
+| `check.evaluation-scope` | `--phase, --plan or --quick [--since] [--commits-only] [--max-commits]` | the commits and files a review or verify evaluates | none |
+| `outline.parse`, `outline.check` | `<phase>` (`outline.check`: its options) | the parsed outline; its errors | none |
+| `waves`, `handoff` | `<phase> [--plans] ...` | the execution waves; the handoff plan list (tracer split) | none |
+| `hand-edit.scan`, `hand-edit.record`, `hand-edit.list` | `<phase>` (`record`: `<HE-n, plan:<id> or file> --category --note`) | pending hand edits; the logged entry; the log | `<phase>/hand-edits.json` |
+| `revisions.record`, `revisions.check`, `revisions.hash`, `revisions.show` | `<phase> <key> [--settings]` | the key's hashes and whether its inputs changed | `<phase>/revisions.json` (`record` only, under `revisions.json.lock`) |
+| `supersede` | `<phase> --keep <ids>` | the superseded plans | the plan files of the phase |
+| `attempt.record`, `attempt.show` | `<phase> --kind gap, verify or research` (+ options or JSON) | the attempt `{attemptKey, runId, done, ...}` | `<phase>/<kind>-attempt.json` (`record` only) |
+| `write` | `<phase> <NAME>`, text on stdin | `{written}` | the named phase artifact |
+| `hash` | text on stdin | `{hash}` | none |
+| `research.status`, `research.prompt` | `<phase>` | the research state (complete, provisional, code-stale); the research prompt | none |
+| `frontmatter.get`, `frontmatter.validate` | `<file> <key>`, `<file> --schema` | the value; `{valid, errors}` | none |
+| `summary-extract` | `<glob...> [--fields]` | fields of the SUMMARY files | none |
+| `history-digest` | none | the digest of the phase history | none |
+| `commit` | `<message...> --files <paths...> [--files-removed]` | `{committed, hash, files, removed, skipped?, reason?}` | a git commit (under `git-writer.lock`) |
+| `select-revert-commits` | `--phase or --plan, --range` | the commits to revert | none |
+| `run-with-timeout` | `<seconds> -- <command...>` | the exit code, output tail and whether it timed out | none |
+| `normalize-test-command` | `<command...>` | `{command}` | none |
+| `health` | `[--repair]` | planning health problems | the repaired files with `--repair` |
+| `debug.create`, `debug.checkpoint`, `debug.budget`, `debug.extend`, `debug.close` | `<slug>` + JSON or options | the session state | `.planning/debug/<slug>.md` |
+| `debug.status`, `debug.list` | `<slug>`, none | the session; the sessions | none |
+| `upstream.vendor`, `upstream.build`, `upstream.check`, `upstream.bump` | `--from`, `--commit`, `--target` | the vendoring report and its problems | `.agents/gsd/upstream/`, `.agents/gsd/generated/` (`check`: none) |
+| `verbs` | none | `{ported: [verb]}` | none |
+
+Upstream verbs the kit names but does not serve (`gsd/verb-table.mjs` `NOT_PORTED`) answer exit 69 with their reason;
+a composition that calls one is reported by the verb check.
