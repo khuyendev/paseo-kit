@@ -273,9 +273,14 @@ async function runArchitect(label, why) {
     POLICY,
     digestLine("inputs", await inputsDigest()),
   ].join("\n\n");
-  const { result: r, reason } = await call(prompt, { label, agentType: architect, schema: ARCHITECT_SCHEMA, ...roleOpts("architect") });
+  const opts = { label, agentType: architect, schema: ARCHITECT_SCHEMA, ...roleOpts("architect") };
+  let attempt = await call(prompt, opts);
+  // A null reply is retried once, as the skeleton lane does. An existing WIRING.md never stands in for the reply (G011).
+  if (attempt.result === null && !fatal(attempt.reason)) attempt = await call(prompt, opts);
+  const { result: r, reason } = attempt;
   if (fatal(reason)) return { stop: failedCall("architect", reason) };
   if (r?.status === "conflict") return { stop: owner("Wiring", "architect reported a conflict", { conflict: r.conflicts ?? [], options: ["decide and rerun", "abandon"] }) };
+  if (r?.status !== "complete") return { stop: result("failed", { reason: `architect ${r ? `ended with status ${r.status}` : "returned nothing"}${reason ? ` (${reason})` : ""}` }) };
   if (!(await wiringExists())) return { stop: result("failed", { reason: `architect wrote no ${WIRING}${reason ? ` (${reason})` : ""}` }) };
   sharedChanges.push(...(r?.sharedChanges ?? []));
   return { changes: (r?.outlineChanges ?? []).map((c, i) => ({ id: `W${i + 1}`, plan: c.plan ?? null, severity: "blocker", description: typeof c === "string" ? c : c.description ?? JSON.stringify(c), target: "outline", evidence: "architect outlineChanges", lane: "integration" })) };
