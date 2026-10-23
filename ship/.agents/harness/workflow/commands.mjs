@@ -9,7 +9,7 @@ import { REVIEW_STATS_OPTIONS, REVIEW_STATS_USAGE, reviewStatsCommand } from "./
 export const commands = [
   {
     name: "workflow",
-    summary: "run a workflow script (agent/pipeline/parallel) with journal and resume; --detach returns at once",
+    summary: "run a workflow script (agent/pipeline/parallel) with journal and resume; --detach returns at once; `workflow stop RUNID` pauses a run at its next wave boundary",
     usage: WORKFLOW_USAGE,
     options: WORKFLOW_OPTIONS,
     config: "required",

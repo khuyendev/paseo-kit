@@ -575,6 +575,7 @@ error, `{status: "error", error}`); `ph gsd` verbs exit 0, 1, 66 (nothing matche
 | `review-record` | `<phaseDir>`, `{waveId, record}` | `{ok, record, review}` or `{ok: false, errors}` | `<phaseDir>/review/<name>.json` and `<NN>-REVIEW.md` |
 | `prereview-record` | `<phaseDir>`, the record | `{ok, ...}` or `{ok: false, errors}` | `<phaseDir>/prereview/<name>.json` |
 | `validation-strategy` | `<phaseDir>` | `{ok, status}` | `<phaseDir>/<NN>-VALIDATION.md` |
+| `stop-requested` | `[runId]` (default: the current run, `PASEO_HARNESS_WORKFLOW_RUN` / `_RUN_DIR`, which `ph workflow` sets) | `{stop, runId, at?, requestedAt?, reason?}`: whether `ph workflow stop` asked the run to stop at its next wave boundary (`stop: false, runId: null` outside a run) | none (reads `<runDir>/stop.json`) |
 
 ### `ph gsd` verbs
 

@@ -110,7 +110,8 @@ export async function runScript(name, opts) {
     else if (argv[0] === "node" && argv[1] === ".agents/harness/ph.mjs" && argv[2] === "config") res = { code: 0, stdout: `${JSON.stringify(configMod.loadConfig(root), null, 2)}\n` };
     else if (argv[0] === "node" && argv[1] === ".agents/workflows/lib/gsd-flow.mjs") {
       let stdout = "";
-      const code = await flowMod.main(argv.slice(2), { root, input: o.input ?? "", out: (l) => { stdout += `${l}\n`; } });
+      // As the engine: the run is named in the env (kit feedback 88, stop-requested), never one the test process inherited.
+      const code = await flowMod.main(argv.slice(2), { root, input: o.input ?? "", out: (l) => { stdout += `${l}\n`; }, env: { ...process.env, PASEO_HARNESS_WORKFLOW_RUN: runId, PASEO_HARNESS_WORKFLOW_RUN_DIR: "", ...env } });
       res = { code, stdout };
     } else {
       const r = spawnSync(argv[0], argv.slice(1), { cwd: o.cwd ? path.resolve(root, o.cwd) : root, input: o.input, encoding: "utf8", windowsHide: true, env: { ...process.env, ...env } });

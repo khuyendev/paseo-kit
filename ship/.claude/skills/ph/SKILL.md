@@ -55,7 +55,7 @@ or config error (nothing done), 2 done with failed items or problems.
 | `ph task add\|update\|list\|get --ws D ...` | the team's shared task list `<ws>/tasks.json` (see below). |
 | `ph freeze --ws D --phase P [--check]` | sha256 record of `<ws>/P_*` files; `--check` reports `modified`, `missing`, `new` (exit 2). |
 | `ph worktrees [--prune] [--runs-dir D]` | harness git worktrees and their state; `--prune` removes only merged-and-clean and `transferred` ones (gsd-execute copied the whole delta to the main tree; its transfer record has every changed path with the same hash) and registrations whose directory is gone. `ph doctor` notes leftovers of finished runs. |
-| `ph workflow`, `ph watch-run`, `ph run-stats`, `ph evolve-stats`, `ph review-stats`, `ph runs` | workflow scripts (see the workflow section). |
+| `ph workflow`, `ph workflow stop`, `ph watch-run`, `ph run-stats`, `ph evolve-stats`, `ph review-stats`, `ph runs` | workflow scripts (see the workflow section). |
 | `ph gsd <verb>` | GSD state verbs used by the GSD skills. |
 
 Options are `--key value` only; a value may itself start with `--`. Prompts: exactly one of `--prompt` and
@@ -141,6 +141,14 @@ until dry, budget-aware loop, custom type + schema + effort, tier choice).
   `ph archive --run <runId> [--reason "<why>"]` stops a run for good; the reason goes into `run.json` and the metrics
   ledger, so give one. It stops the runner with the shell commands the run started; a runner that already died leaves
   those commands running.
+- `ph workflow stop <runId> [--at wave-boundary] [--reason "<why>"]` (kit feedback 88) asks a running run to stop cleanly:
+  it writes `stop.json` in the run dir and kills nothing. A composition that has wave boundaries (gsd-execute, gsd-plan)
+  reads it there with the flow verb `stop-requested`, lets the running wave finish and commit, and ends the run `paused`
+  (run.json status, `workflow paused <runId>: ...` and a `next:` line); `ph runs` shows `stop requested` while it is
+  pending. Continue a paused run as its result's `answer` says (a rerun with the same args, or `ph workflow --resume
+  <runId>`; gsd-execute's `stopAfterWave` arg pauses the same way and is removed or raised for the rerun). Use it
+  instead of killing a runner to update the kit between waves; `ph archive --run` is the hard stop. A paused run is
+  kept by `ph runs --prune`.
 - Every ended run appends one line to `_workspace/harness-metrics.jsonl`, which pruning keeps. `ph evolve-stats
   [--agent A] [--workflow N] [--since YYYY-MM-DD]` prints it per agent version (agent, role-text hash, model,
   effort) and per workflow, with a suggested `--budget` (4 x the median output tokens of a run), then every project
@@ -194,7 +202,7 @@ not hold lines back, and match both forms: `ph watch-run RUNID --all | grep --li
 | `agent done #<n> <label> ok\|null (<reason>) tokens=<n> cost=<usd\|?> <s>s` | a call finished |
 | `agent cached #<n> <label>` | a resumed run reused a recorded result |
 | `shell start #<n> <command>` / `shell done #<n> code=<c> <s>s` | a `shell()` call |
-| `workflow done <runId>: ...` / `workflow failed <runId>: ...` | the run ended |
+| `workflow done <runId>: ...` / `workflow failed <runId>: ...` / `workflow paused <runId>: ...` | the run ended (paused: stopped at a wave boundary by `ph workflow stop` or the script's own args; the `next:` line after it says how to continue) |
 | `workflow failed <runId>: runner exited with code <n> ...` / `uncaught error: ...` / `signal <SIG>` | the runner ended by itself with the run still running; its reason is also in run.json `error` |
 | `` next: resume with `ph workflow --resume <runId> --detach`; ... `` | printed after a failed or interrupted run; resume it with that command (the journal keeps the agents that finished) |
 

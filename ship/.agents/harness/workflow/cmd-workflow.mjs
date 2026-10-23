@@ -6,9 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import { PH_FILE, UsageError, errText } from "../lib/cli.mjs";
 import { readText, writeJsonAtomic, readJsonIf } from "../lib/io.mjs";
-import { samePath } from "../lib/paths.mjs";
+import { resolveInside, samePath } from "../lib/paths.mjs";
+import { pidAlive } from "../lib/proc.mjs";
 import { runWorkflow } from "./engine.mjs";
-import { RUN_FILES, checkRunId, loadInFlight, loadJournalCache, newRunId, parseBudget, readJournal, runsDirOf, runsDirSuffix } from "./journal.mjs";
+import { RUN_FILES, STOP_AT, checkRunId, loadInFlight, loadJournalCache, newRunId, parseBudget, readJournal, readStopRequest, runsDirOf, runsDirSuffix } from "./journal.mjs";
 import { METRICS_REL, appendRecords, runRecord } from "./metrics.mjs";
 import { createPaseoHost } from "./runner.mjs";
 import { runtime as kitRuntime } from "./runtime-bridge.mjs";
@@ -16,8 +17,11 @@ import { parseScript } from "./script.mjs";
 
 export const WORKFLOW_OPTIONS = Object.freeze({
   script: "string", name: "string", args: "string", "args-file": "string", resume: "string", budget: "string", "runs-dir": "string", detach: "bool", "run-id": "string",
+  at: "string", reason: "string",
 });
-export const WORKFLOW_USAGE = "ph workflow [--script F | --name N] [--args JSON | --args-file F] [--resume RUNID] [--budget N|Nk|N.Nm] [--runs-dir D] [--detach] [--run-id ID]";
+export const WORKFLOW_USAGE = "ph workflow [--script F | --name N] [--args JSON | --args-file F] [--resume RUNID] [--budget N|Nk|N.Nm] [--runs-dir D] [--detach] [--run-id ID] | ph workflow stop RUNID [--at wave-boundary] [--reason TEXT] [--runs-dir D]";
+const STOP_USAGE = "ph workflow stop RUNID [--at wave-boundary] [--reason TEXT] [--runs-dir D]";
+const STOP_REASON_MAX_CHARS = 300;
 // Same text as Session.requireCaller (PCLI-06); checked here before any daemon contact.
 const NO_CALLER = "PASEO_AGENT_ID is not set: run ph from an agent inside Paseo, so every agent is created as its subagent";
 // The detached child runs in the directory its parent claimed; this names it, nothing else may reuse a run dir.
@@ -262,8 +266,9 @@ async function runForeground(ctx, p) {
     // Calls the killed run created and never finished may still be running: stopped before any replacement starts (G123).
     for (const agentId of p.inFlight) await host.stop(agentId);
     const r = await runWorkflow({
-      source: p.script.source, scriptPath: p.script.scriptPath, args: p.args, runId: p.runId, attemptRunId: p.attemptRunId, root: ctx.root, env: { ...ctx.env, PASEO_HARNESS_WORKFLOW_RUN: p.runId },
+      source: p.script.source, scriptPath: p.script.scriptPath, args: p.args, runId: p.runId, attemptRunId: p.attemptRunId, root: ctx.root,
       limits: { maxConcurrent: ctx.cfg.max_subagents, maxAgents: ctx.cfg.max_agents_per_workflow, budgetTotal: p.budgetTotal, shellTimeoutS: ctx.cfg.wait_timeout_s },
+      env: { ...ctx.env, PASEO_HARNESS_WORKFLOW_RUN: p.runId, PASEO_HARNESS_WORKFLOW_RUN_DIR: p.runDir },
       journalPath, cache: p.cache, out,
       resolveChild: (ref) => resolveScript(ctx.root, ref),
       extraSpent: () => (session.usage.get(caller)?.output ?? 0) - callerBase,
@@ -272,10 +277,17 @@ async function runForeground(ctx, p) {
     await host.finish();
     const resultFile = path.join(p.runDir, RUN_FILES.result);
     writeJsonAtomic(resultFile, withRoles(r.result, r.roles));
-    info = { ...info, status: "done", endedAt: new Date(ctx.clock.now()).toISOString(), agents: r.stats };
+    // Kit feedback 88: a script that stopped at a wave boundary returns {status: "paused"}; the run ends paused, to be continued.
+    const paused = r.result?.status === "paused";
+    const stopRequest = paused ? readStopRequest(p.runDir) : null;
+    info = { ...info, status: paused ? "paused" : "done", endedAt: new Date(ctx.clock.now()).toISOString(), agents: r.stats, ...(stopRequest ? { stopRequest } : {}) };
     writeJsonAtomic(runFile, info);
     recordMetrics(ctx, p, info, journalPath, r.result, out);
-    out(`workflow done ${p.runId}: ${resultFile} (ok ${r.stats.ok}, null ${r.stats.null}, cached ${r.stats.cached}, tokens ${r.stats.tokens}, cost ${fmtCost(r.stats.costUsd)})`);
+    const stats = `ok ${r.stats.ok}, null ${r.stats.null}, cached ${r.stats.cached}, tokens ${r.stats.tokens}, cost ${fmtCost(r.stats.costUsd)}`;
+    if (paused) {
+      out(`workflow paused ${p.runId}: ${resultFile} (${typeof r.result.reason === "string" ? `${r.result.reason}; ` : ""}${stats})`);
+      out(`next: ${typeof r.result.answer?.command === "string" ? r.result.answer.command : `continue with \`${ctx.ph} workflow --resume ${p.runId} --detach${runsDirSuffix(ctx.root, p.runsDir)}\``}`);
+    } else out(`workflow done ${p.runId}: ${resultFile} (${stats})`);
     return 0;
   } catch (e) {
     await host?.finish().catch(() => {});
@@ -289,8 +301,33 @@ async function runForeground(ctx, p) {
   }
 }
 
+// Kit feedback 88: `ph workflow stop RUNID` asks a running run to stop at its next wave boundary. It kills nothing: it writes
+// stop.json in the run dir, which the composition reads between waves (flow verb stop-requested) and then ends the run paused.
+function stopCommand(ctx) {
+  const [, runId, ...extra] = ctx.args;
+  if (!runId || extra.length) throw new UsageError(`name one run id: ${STOP_USAGE}`);
+  checkRunId(runId, "run id");
+  const at = ctx.opts.at ?? "wave-boundary";
+  if (!STOP_AT.includes(at)) throw new UsageError(`--at ${at} is not a stop point; one of ${STOP_AT.join(", ")}`);
+  for (const k of ["script", "name", "args", "args-file", "resume", "budget", "detach", "run-id"]) if (ctx.opts[k] !== undefined) throw new UsageError(`--${k} does not apply to workflow stop: ${STOP_USAGE}`);
+  const runsDir = runsDirOf(ctx.root, ctx.opts["runs-dir"]);
+  const runDir = resolveInside(runsDir, runId);
+  const info = readJsonIf(path.join(runDir, RUN_FILES.run));
+  if (!info) throw new UsageError(`no run ${runId} in ${runsDir}`);
+  if (info.status !== "running") throw new UsageError(`run ${runId} is not running (status ${info.status}); nothing to stop`);
+  if (!pidAlive(info.pid)) throw new UsageError(`the runner of ${runId} (pid ${info.pid}) is gone; end the run with ${ctx.ph} archive --run ${runId}${runsDirSuffix(ctx.root, runsDir)}`);
+  const reason = typeof ctx.opts.reason === "string" && ctx.opts.reason.trim() ? ctx.opts.reason.replace(/\s+/g, " ").trim().slice(0, STOP_REASON_MAX_CHARS) : null;
+  writeJsonAtomic(path.join(runDir, RUN_FILES.stop), { at, requestedAt: new Date(ctx.clock.now()).toISOString(), reason });
+  ctx.out(`stop requested ${runId} at the next ${at}: the running agents finish, the wave commits, then the run ends paused`);
+  ctx.out(`next: wait with Monitor running \`${ctx.ph} watch-run ${runId} --quiet${runsDirSuffix(ctx.root, runsDir)}\`; a workflow that has no wave boundary runs to its end`);
+  return 0;
+}
+
 // deps (tests): {runtime, spawn}.
 export async function workflowCommand(ctx, deps = {}) {
+  if (ctx.args?.[0] === "stop") return stopCommand(ctx);
+  if (ctx.args?.length) throw new UsageError(`unexpected argument '${ctx.args[0]}': ${WORKFLOW_USAGE}`);
+  for (const k of ["at", "reason"]) if (ctx.opts[k] !== undefined) throw new UsageError(`--${k} belongs to ph workflow stop: ${STOP_USAGE}`);
   const p = await prepare(ctx, deps);
   return ctx.opts.detach ? detach(ctx, p, deps) : runForeground(ctx, p);
 }

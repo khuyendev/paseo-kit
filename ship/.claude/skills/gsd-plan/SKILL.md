@@ -31,6 +31,10 @@ This section is the project's (outside the kit markers; kit updates never change
 - The run refuses a `phaseDir` whose number matches a phase but whose directory is not that phase's directory (`refused`, naming both paths): pass the directory `find-phase` reports; it never plans into a stale slug.
 - The run holds the phase lease `phase-<NN>` for its whole run, not the code-root writer lease, so planning phase N+1 can run while phase N executes. It is `refused` while another plan of this phase or an execute of this phase holds the lease; the reason names the holder's workflow and run.
 
+### Pause on a stop request (kit feedback 88)
+- `node .agents/harness/ph.mjs workflow stop <runId>` asks a running plan run to stop at its next boundary; it kills nothing. The run checks between planner waves (staged: after the wave's plans are recorded and its contract gate ran; streams: after the wave's join, contract gate and interface propagation) and before each checker round after the first of the checker loop (the round's revisions are recorded). The streams checker join and the review streams run on to their end.
+- Result `paused` (stage `Plans` with `pausedAt {by: stop-request, afterWave, nextWave}`, or `Checker` with `pausedAt {by: stop-request, round}`) and `answer` verb `rerun`: run again with the same args; the recorded plans are kept and the checker judges them again.
+
 ### Owns grammar (kit feedback 74)
 - `owns` is a path, a directory or a glob (`Path:lib/i18n/strings*.g.dart`); the plan checker, outline check, waves and the execute transfer read it with one matcher, so what the checks accept the transfer accepts. Output of a generator whose file set depends on its configuration: own the output directory, or a glob, or list the files the configuration fixes. `files_modified` holds files only: a `*` or `?` there is a blocker (`glob-files-modified`), and an owns glob with an unpaired `[` or `{` is `invalid-owns-glob`.
 

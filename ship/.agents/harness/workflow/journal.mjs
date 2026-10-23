@@ -2,12 +2,20 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { readText } from "../lib/io.mjs";
+import { readJsonIf, readText } from "../lib/io.mjs";
 import { sha256 } from "../lib/hash.mjs";
 import { UsageError } from "../lib/cli.mjs";
 
 export const DEFAULT_RUNS_DIR = path.join("_workspace", "_runs");
-export const RUN_FILES = Object.freeze({ script: "script.js", args: "args.json", run: "run.json", journal: "journal.jsonl", log: "log.txt", result: "result.json" });
+export const RUN_FILES = Object.freeze({ script: "script.js", args: "args.json", run: "run.json", journal: "journal.jsonl", log: "log.txt", result: "result.json", stop: "stop.json" });
+
+// Kit feedback 88: `ph workflow stop` writes a stop request into the run dir; the composition asks for it between waves
+// (flow verb stop-requested) and ends the run `paused`. Only the wave boundary exists today.
+export const STOP_AT = Object.freeze(["wave-boundary"]);
+export function readStopRequest(runDir) {
+  const r = readJsonIf(path.join(runDir, RUN_FILES.stop));
+  return r !== null && typeof r === "object" && !Array.isArray(r) ? r : null;
+}
 
 // Options that change what the agent does; label, phase, keep, role and session are not part of the key (FLOW-15).
 // model is not one either: identity.model is the resolved model, so `pro` and its provider/model share an entry.
