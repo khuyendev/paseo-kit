@@ -144,6 +144,7 @@ export const SCHEMA = obj({
     protected_branches: strs(),
     requirement_id_regex: str({ nonEmpty: true }),
     research: bool(),
+    research_ahead: bool(),
     plan_review: bool(),
     skeleton_lanes: arr(obj({ lens: str({ nonEmpty: true }), model: str({ nonEmpty: true }), effort: effort() }, ["model", "effort"]), 1),
     max_skeleton_passes: int(1, 3),

@@ -201,6 +201,7 @@ Paths in the adapter are repo-relative script paths (validated at load: no drive
 | `protected_branches` | string[] | `[]` |
 | `requirement_id_regex` | string, valid RegExp source | `^[A-Z][A-Z0-9]*-\d+$` |
 | `research` | bool | true |
+| `research_ahead` | bool (true: gsd-research of a phase whose earlier phases are not COMPLETE writes an ahead report: `ahead_of` in its frontmatter, every claim about the project's own code in `## Code APIs`, `[PENDING: phase <n>]` on claims resting on code those phases still build; research status reads it `provisional` until they are COMPLETE, then `code-stale`; a report whose only changed research inputs lie under `adapter.ownership.source_roots` is `code-stale`, not `stale`; `refresh: "code"` re-verifies only `## Code APIs`. false: today's research, one `stale` for any changed input) | false |
 | `plan_review` | bool (true: gsd-plan runs the plan-review stage; the built-in `source-grounding` lens always runs in plan review, see `review_lenses`) | false |
 | `skeleton_lanes` | non-empty `[{lens, model?, effort?}]`; lens is `fidelity`, `integration` or an `adapter.review_lenses` entry of stage `skeleton` | `[{lens: "fidelity"}, {lens: "integration"}]` |
 | `max_skeleton_passes` | int 1..3 | 3 |

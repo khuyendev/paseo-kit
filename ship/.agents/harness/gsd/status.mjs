@@ -7,8 +7,8 @@ import { sha256, textDigest } from "../lib/hash.mjs";
 import { isInside } from "../lib/paths.mjs";
 import { asArray, done, fail, lf, mentions, none, nowIso, readIf, rel, unavailable } from "./common.mjs";
 import { headOf } from "./git.mjs";
-import { haltIds, listFiles, phaseFile, planIds, summaryIds } from "./planning.mjs";
-import { keyHash, readAttempt, readRevisions } from "./revisions.mjs";
+import { findPhase, haltIds, listFiles, phaseFile, planIds, summaryIds } from "./planning.mjs";
+import { checkRevision, keyHash, readAttempt, readRevisions } from "./revisions.mjs";
 import { loadRoadmap, roadmapPhase } from "./roadmap.mjs";
 import { frontmatter } from "./yaml.mjs";
 
@@ -233,6 +233,30 @@ const researchBlockers = (body) => (/<research_blockers>([\s\S]*?)<\/research_bl
   .map((line) => line.trim().replace(/^(?:[-*]|\d+[.)])\s+/, ""))
   .filter(Boolean);
 
+// O66D (gsd.research_ahead): a report written while earlier phases were not COMPLETE lists them in `ahead_of` and keeps
+// every claim about the project's own code in `## Code APIs`, the part a code refresh re-verifies alone.
+const CODE_SECTION = /^##\s+Code APIs\b/m;
+const slashPath = (p) => String(p).replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
+const underRoot = (label, roots) => roots.some((r) => {
+  const root = slashPath(r);
+  return Boolean(root) && (label === root || label.startsWith(`${root}/`));
+});
+
+// The changed research inputs when every one lies under adapter.ownership.source_roots, else null: decided on the parts
+// revisions.json recorded with this report's digest (F40), so a report recorded before parts were kept is plain stale.
+function sourceOnlyChanges(g, phase, digest) {
+  const roots = g.cfg.adapter.ownership?.source_roots ?? [];
+  if (!roots.length) return null;
+  let r;
+  try {
+    r = checkRevision(g, phase, "research");
+  } catch {
+    return null;
+  }
+  if (r.recorded !== digest || !r.changed?.length) return null;
+  return r.changed.every((label) => underRoot(slashPath(label), roots)) ? r.changed : null;
+}
+
 export function researchStatus(g, phase) {
   const file = phaseFile(phase, "RESEARCH.md");
   const text = readIf(file);
@@ -248,6 +272,8 @@ export function researchStatus(g, phase) {
     if (!HEX64.test(String(fm.attempt_key ?? ""))) problems.push("attempt_key is not 64 hex");
   }
   const body = parsed.body;
+  const attempt = readAttempt(phase, "research");
+  const aheadOf = Array.isArray(fm.ahead_of) ? fm.ahead_of.map(String) : [];
   if (text.includes("<!-- gsd:write-continue -->")) problems.push("write-continue sentinel present (report unfinished)");
   if (!problems.length && fm.status === "complete") {
     const lastLine = body.trimEnd().split("\n").pop().trim();
@@ -259,13 +285,27 @@ export function researchStatus(g, phase) {
     const reqs = roadmapPhase(loadRoadmap(g.codeRoot, g.cfg), phase.number)?.requirements ?? [];
     if (reqs.length && reqBlock === null) problems.push("missing <phase_requirements>");
     else for (const id of reqs) if (reqBlock !== null && !mentions(reqBlock, id)) problems.push(`phase requirement ${id} missing from <phase_requirements>`);
+    // O66D: the attempt record says which phases the run was ahead of; the report must say the same and keep its code part apart.
+    const asked = attempt && attempt.key === fm.attempt_key && Array.isArray(attempt.aheadOf) ? attempt.aheadOf.map(String) : null;
+    if (fm.ahead_of !== undefined && (!Array.isArray(fm.ahead_of) || !aheadOf.every((n) => /^\d+(\.\d+)*$/.test(n)))) problems.push("ahead_of must be a list of phase numbers");
+    else if (asked && [...asked].sort().join() !== [...aheadOf].sort().join()) problems.push(`ahead_of must be ${JSON.stringify(asked)} (the earlier phases not complete when this research started)`);
+    if (aheadOf.length && !CODE_SECTION.test(body)) problems.push("missing section ## Code APIs (ahead_of is set)");
+    if (g.cfg.gsd.research_ahead && !aheadOf.length && /\[PENDING:/.test(body)) problems.push("[PENDING: ...] claims in a report without ahead_of");
   }
   if (!problems.length && fm.status === "blocked" && !/<research_blockers>/.test(body)) problems.push("blocked report without <research_blockers>");
   if (problems.length) return done({ status: "invalid", ...base, problems }, 1);
   const current = keyHash(g, phase, "research").hash;
   const out = { ...base, written_status: fm.status, input_digest: fm.input_digest, attempt_key: fm.attempt_key, current_digest: current, sha: textDigest(text) };
-  if (fm.input_digest !== current) return done({ ...out, status: "stale" }, 1);
-  const attempt = readAttempt(phase, "research");
+  const ahead = aheadOf.length ? { ahead_of: aheadOf } : {};
+  const pending = aheadOf.filter((n) => phaseStatus(g.codeRoot, findPhase(g.codeRoot, n)).status !== "COMPLETE");
+  if (fm.input_digest !== current) {
+    // O66D: with gsd.research_ahead, a change of source files only is not a change of what was decided: the report is
+    // provisional while the phases it ran ahead of are still building them, then its code part alone needs a refresh.
+    const changed = g.cfg.gsd.research_ahead ? sourceOnlyChanges(g, phase, fm.input_digest) : null;
+    if (changed && pending.length) return done({ ...out, ...ahead, status: "provisional", pending_phases: pending, changed }, 1);
+    if (changed) return done({ ...out, ...ahead, status: "code-stale", reason: aheadOf.length ? "ahead" : "source", changed }, 1);
+    return done({ ...out, status: "stale" }, 1);
+  }
   if (attempt && attempt.inputDigest === current && attempt.key !== fm.attempt_key) {
     if (attempt.result?.status === "blocked") return done({ ...out, status: "blocked", attempt: attempt.key, blockers: researchBlockers(body) }, 1);
     if (!attempt.done) return done({ ...out, status: "incomplete", attempt: attempt.key }, 1);
@@ -273,6 +313,8 @@ export function researchStatus(g, phase) {
   // A report edited after its attempt was accepted is not that attempt's output: changed, so the default run asks for a refresh.
   if (attempt && attempt.key === fm.attempt_key && attempt.done && typeof attempt.result === "string" && attempt.result !== out.sha) return done({ ...out, status: "changed", attempt: attempt.key }, 1);
   if (fm.status === "blocked") return done({ ...out, status: "blocked", blockers: researchBlockers(body) }, 1);
+  if (pending.length) return done({ ...out, ...ahead, status: "provisional", pending_phases: pending }, 1);
+  if (aheadOf.length) return done({ ...out, ...ahead, status: "code-stale", reason: "ahead" }, 1);
   // A code commit alone is reported, not stale (GSDC-28): headChanged compares HEAD with the research revision's record.
   const recorded = readRevisions(phase).keys.research;
   return done({ ...out, status: "complete", headChanged: recorded ? recorded.head !== headOf(g.codeRoot) : null });

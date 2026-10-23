@@ -205,6 +205,9 @@ export function recordAttempt(phase, kind, input) {
   } else {
     if (old && !old.done) abandoned.push({ key: old.key, runId: old.runId, inputDigest: old.inputDigest, before: old.before ?? null, at: old.at });
     current = { key, runId, inputDigest, before: input.before ?? null, done: Boolean(input.done), result: input.result ?? null, at: nowIso() };
+    // O66D: what a research attempt asked for (ahead phases, full or code part, the section digests a code refresh must
+    // keep) is set once; a resumed run reads it back instead of deriving it again from a report it may have rewritten.
+    Object.assign(current, pick(input, ["aheadOf", "part", "base"]));
   }
   const record = { kind, ...current, abandoned: abandoned.slice(-10) };
   writeJsonAtomic(attemptFile(phase, kind), record);

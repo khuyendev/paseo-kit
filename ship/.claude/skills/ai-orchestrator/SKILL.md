@@ -15,6 +15,8 @@ You are responsible for ensuring the final integrated result passes verification
 
 Project work in a repository with `.planning/` goes through the GSD skills (`gsd-plan`, `gsd-execute`, `gsd-verify`, `gsd-quick`, `gsd-debug`); they are workflows already. For other work, pick the execution mode with the decision tree in `.claude/skills/harness/references/execution-modes.md` (section 4), the team pattern from `references/team-patterns.md`, and for a workflow script the recipes in `references/workflow-recipes.md`. Doing the work yourself is a valid choice: more agents must earn their coordination cost.
 
+Overlapping phases: while `gsd-execute N` runs, phase N+1 can be discussed (main session, `gsd-discuss`, skipping its STATE step) and researched (`gsd-research`, its own per-phase lock). With `gsd.research_ahead` on, that research is an ahead report (`provisional`); once phase N is COMPLETE, run `gsd-research` with `refresh: "code"` (re-verifies only `## Code APIs`), then `gsd-plan N+1`. Phase order stays the join point: phase N+1 plans on research that matches the finished code of phase N, and executes after phase N completes.
+
 ## Accepting an agent's work
 
 An agent's "done" is a claim, not a result. Ask each agent for evidence you can check (the files and lines it changed or read, the commands it ran and their output) and check that evidence before you accept the result: open the cited lines, rerun the deciding command or read its log.

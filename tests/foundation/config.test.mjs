@@ -298,6 +298,7 @@ const GOLDEN = {
     protected_branches: [],
     requirement_id_regex: "^[A-Z][A-Z0-9]*-\\d+$",
     research: true,
+    research_ahead: false,
     plan_review: false,
     skeleton_lanes: [{ lens: "fidelity" }, { lens: "integration" }],
     max_skeleton_passes: 3,

@@ -20,6 +20,13 @@ Method text: follow `.agents/gsd/generated/workflows/discuss-phase.md` (generate
 - Refused modes (one line each, no partial run): `--power`, `--auto`, `--chain`, advisor, `--ws`, `--batch`, `--analyze`.
 - Next: `gsd-research <N>` (when `gsd.research` is on) or `gsd-plan <N>`.
 
+## Discussing ahead of a running phase
+
+Phase N+1 may be discussed while phase N executes (discuss takes no lease and writes only phase N+1's files). Then:
+- Skip the STATE step while `node .agents/harness/ph.mjs gsd roadmap analyze` shows an earlier phase not COMPLETE; the position moves when that phase completes or N+1 is planned.
+- Decide behaviour, scope and libraries; do not lock the API of code phase N is still writing (cite it in `<canonical_refs>` or `<code_context>` as pending instead). A decision that only the finished code can settle goes back to the owner after phase N completes, or into `<deferred>`.
+- Next: `gsd-research <N+1>`; with `gsd.research_ahead` it runs ahead and its `## Code APIs` part is refreshed (`refresh: "code"`) after phase N completes.
+
 ## Delegated discuss
 
 Entered only when the owner's message for this phase delegates the answers in plain words (for example "decide the gray areas yourself"); never by a default, an empty reply or an earlier run. `--auto` and `--chain` stay refused (above), so they never enter this mode.
