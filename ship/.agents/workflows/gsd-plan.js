@@ -70,7 +70,7 @@ const knownMarker = (r) => KNOWN_MARKERS.some((m) => markerOf(r).includes(m));
 const isInt13 = (v) => Number.isInteger(v) && v >= 1 && v <= 3;
 const PLANNER_SCHEMA = {
   type: "object",
-  properties: { marker: { type: "string" }, summary: { type: "string" }, question: { type: "string" }, plans: { type: "array", items: { type: "string" } }, conflict: { type: "object" }, changes: { type: "array" } },
+  properties: { marker: { type: "string" }, summary: { type: "string" }, question: { type: "string" }, plans: { type: "array", items: { type: "string" }, description: "with an owner marker: the proposal, one string per proposed split group (PHASE SPLIT RECOMMENDED) or per audit option (SOURCE AUDIT)" }, conflict: { type: "object" }, changes: { type: "array" } },
   required: ["marker"],
 };
 const ISSUE = { type: "object", properties: { plan: { type: ["string", "null"] }, dimension: { type: "string" }, severity: { type: "string" }, required_property: { type: "string" }, description: { type: "string" }, evidence: { type: "string" }, fix_hint: { type: "string" }, target: { type: "string" } }, required: ["severity", "description"] };
@@ -192,7 +192,7 @@ const planningContext = (planMode) => [
 ].join("\n");
 // GSDF-17: no SPEC sections exist in the kit, so every plan-mode prompt carries the specless block.
 const SPECLESS = "<specless_edges>\nNo SPEC defines edge cases or prohibitions for this phase. List the edge cases you plan for in must_haves.truths and the must-not items in must_haves.prohibitions, or record `edges_skipped: <reason>` in the plan frontmatter. Never neither.\n</specless_edges>";
-const RETURN_NOTE = "Never ask the owner. Return JSON {marker, summary, question?, conflict?, plans?}: marker is one of OUTLINE COMPLETE, PLANNING COMPLETE, REVISION COMPLETE, or an owner marker (REVISION_CONFLICT, PHASE SPLIT RECOMMENDED, SOURCE AUDIT, CHECKPOINT REACHED, PLANNING INCONCLUSIVE) with the question or conflict. Do not commit; do not write STATE, ROADMAP or REQUIREMENTS.";
+const RETURN_NOTE = "Never ask the owner. Return JSON {marker, summary, question?, conflict?, plans?}: marker is one of OUTLINE COMPLETE, PLANNING COMPLETE, REVISION COMPLETE, or an owner marker (REVISION_CONFLICT, PHASE SPLIT RECOMMENDED, SOURCE AUDIT, CHECKPOINT REACHED, PLANNING INCONCLUSIVE) with the question or conflict. For PHASE SPLIT RECOMMENDED and SOURCE AUDIT, summary states the proposal and plans lists its options, one string each. Do not commit; do not write STATE, ROADMAP or REQUIREMENTS.";
 const revisionContext = (plans, issues) => [
   "<revision_context>",
   `Existing plans: ${plans.join(", ") || "none"}`,
@@ -207,7 +207,7 @@ async function plannerCall(session, label, body, digestKey, digest, extra = {}) 
   const prompt = [body, POLICY, RETURN_NOTE, digestLine(digestKey, digest)].join("\n\n");
   return call(prompt, { label, session, agentType: agentFor("planner", "gsd-planner"), schema: PLANNER_SCHEMA, ...roleOpts(session === "planner:outline" ? "outline" : "planner"), ...extra });
 }
-const ownerStop = (stage, r) => owner(stage, `planner returned ${ownerMarker(r)}`, { marker: ownerMarker(r), question: r?.question ?? r?.summary ?? null, conflict: r?.conflict ?? null, options: ["answer and rerun with the same args", "adjust CONTEXT and rerun", "abandon"] });
+const ownerStop = (stage, r) => owner(stage, `planner returned ${ownerMarker(r)}`, { marker: ownerMarker(r), question: r?.question ?? r?.summary ?? null, summary: r?.summary ?? null, plans: r?.plans ?? null, conflict: r?.conflict ?? null, options: ["answer and rerun with the same args", "adjust CONTEXT and rerun", "abandon"] });
 const failedCall = (what, reason) => result("failed", { reason: `${what}${reason ? `: ${reason}` : " returned nothing"}` });
 
 const sharedChanges = [];
