@@ -137,16 +137,21 @@ try {
 const anti = await flow(["anti-patterns", phaseDir]);
 if (anti.code !== 0) return owner("Execute", `blocking anti-patterns need three written answers each in ${anti.json?.answersFile}: ${(anti.json?.unanswered ?? []).join(", ")}; run gsd-discuss ${N} to write them (it reads CONTEXT), or write them with node ${FLOW} write ${anti.json?.answersFile} (JSON on stdin)`, { rows: anti.json?.unanswered ?? [] });
 const prefix = a.gapsOnly ? "gap-" : "";
+// A malformed handoff file throws here and the callers return it as a failed status naming the file (G098).
 async function readHandoff() {
   const list = [];
   for (let k = 1; ; k++) {
-    const r = await flow(["read", `${phaseDir}/handoff/${prefix}w${k}.args.json`]);
+    const file = `${phaseDir}/handoff/${prefix}w${k}.args.json`;
+    const r = await flow(["read", file]);
     if (!r.json?.exists) break;
-    list.push({ k, waveId: `${prefix}w${k}`, ...JSON.parse(r.json.text) });
+    let h;
+    try { h = JSON.parse(r.json.text); } catch (e) { throw new Error(`${file} is not valid handoff JSON: ${e.message}`); }
+    list.push({ k, waveId: `${prefix}w${k}`, ...h });
   }
   return list;
 }
-const handoff = await readHandoff();
+let handoff;
+try { handoff = await readHandoff(); } catch (e) { return result("failed", { reason: e.message }); }
 if (!handoff.length) return result("refused", { reason: `no handoff files in ${phaseDir}/handoff/ (${prefix}w1.args.json); plan the phase first` });
 const index = async () => (await gsd(["phase-plan-index", N])).json ?? { plans: [] };
 let idx = await index();
@@ -215,7 +220,9 @@ if (g.branching === "phase") {
     const sw = await shell(exists ? ["git", "switch", branch] : ["git", "switch", "--no-track", "-c", branch, `origin/${def}`]);
     if (sw.code !== 0) return result("failed", { reason: `could not switch to ${branch}: ${sw.stderr.split(/\r?\n/)[0]}` });
     log(`branch ${branch} from origin/${def}`);
-    if (JSON.stringify(await readHandoff()) !== JSON.stringify(handoff)) return result("refused", { reason: `the handoff files differ on ${branch}; plan the phase on that branch` });
+    let again;
+    try { again = await readHandoff(); } catch (e) { return result("failed", { reason: e.message }); }
+    if (JSON.stringify(again) !== JSON.stringify(handoff)) return result("refused", { reason: `the handoff files differ on ${branch}; plan the phase on that branch` });
     idx = await index();
   }
 }

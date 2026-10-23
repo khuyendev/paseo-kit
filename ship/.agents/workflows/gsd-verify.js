@@ -72,10 +72,13 @@ phase("Evidence");
 // The planned obligations of every handoff wave: the expected steps of each evidence file come from the plans, not
 // from the evidence (CR-GSF-11).
 const planned = [];
+// A malformed handoff file fails the verify here, before any write, and names the file (G098).
 for (const pre of ["", "gap-"]) for (let k = 1; ; k++) {
-  const r = await flow(["read", `${phaseDir}/handoff/${pre}w${k}.args.json`]);
+  const file = `${phaseDir}/handoff/${pre}w${k}.args.json`;
+  const r = await flow(["read", file]);
   if (!r.json?.exists) break;
-  const h = JSON.parse(r.json.text);
+  let h;
+  try { h = JSON.parse(r.json.text); } catch (e) { return { status: "failed", reason: `${file} is not valid handoff JSON: ${e.message}` }; }
   for (const t of h.tasks ?? []) planned.push({ id: t.plan, owns: t.owns ?? [], verify: t.verify ?? [], waveId: h.waveId ?? `${pre}w${k}`, batch: `${pre}batch` });
 }
 const checkedEvidence = [];
