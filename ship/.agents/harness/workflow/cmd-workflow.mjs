@@ -262,7 +262,7 @@ async function runForeground(ctx, p) {
     // Calls the killed run created and never finished may still be running: stopped before any replacement starts (G123).
     for (const agentId of p.inFlight) await host.stop(agentId);
     const r = await runWorkflow({
-      source: p.script.source, scriptPath: p.script.scriptPath, args: p.args, runId: p.runId, attemptRunId: p.attemptRunId, root: ctx.root, env: ctx.env,
+      source: p.script.source, scriptPath: p.script.scriptPath, args: p.args, runId: p.runId, attemptRunId: p.attemptRunId, root: ctx.root, env: { ...ctx.env, PASEO_HARNESS_WORKFLOW_RUN: p.runId },
       limits: { maxConcurrent: ctx.cfg.max_subagents, maxAgents: ctx.cfg.max_agents_per_workflow, budgetTotal: p.budgetTotal, shellTimeoutS: ctx.cfg.wait_timeout_s },
       journalPath, cache: p.cache, out,
       resolveChild: (ref) => resolveScript(ctx.root, ref),

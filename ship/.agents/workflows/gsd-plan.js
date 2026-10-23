@@ -142,7 +142,9 @@ let flowReport = null;
 let streamed = null;
 // O67: what the dependent streams did, returned with the streams flow's results.
 const dependents = [];
-const result = (status, extra = {}) => ({ status, phaseDir, mode, warnings, advisories, ...(flowReport ?? {}), ...extra });
+// Kit feedback 68: plans, artifacts and owned files changed outside the flow since their last record, from `ph gsd hand-edit scan`.
+let handEdits = null;
+const result = (status, extra = {}) => ({ status, phaseDir, mode, warnings, advisories, ...(flowReport ?? {}), ...(handEdits ? { handEdits } : {}), ...extra });
 const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reason, ...extra });
 // G017: the effective settings each gated judgment reads, hashed into its revision key (`--settings`). A changed lane,
 // role or limit reruns the judgments it decides; each key takes only the settings its own judgments read. The inputs
@@ -170,6 +172,16 @@ const lease = await flow(["lock", `phase-${nn}`, runId, "gsd-plan"]);
 if (lease.code !== 0) return result("refused", { reason: `${leaseText(lease.json, `phase ${N}`)}; plan after it ends` });
 try {
 const found = (await gsd(["find-phase", N])).json;
+// Kit feedback 68 (gsd.review_metrics, measurement only): what changed by hand since the last record is listed in the log and the
+// result, with the verb that logs its cause; nothing stops and no later step reads it.
+const handScan = g.review_metrics ? await gsd(["hand-edit", "scan", phaseDir]) : null;
+if (handScan?.code === 0 && (handScan.json?.pending?.length || handScan.json?.candidates?.length)) {
+  const { pending = [], candidates = [], ask } = handScan.json;
+  handEdits = { pending, candidates, ...(ask ? { ask } : {}) };
+  for (const e of pending) log(`hand edit ${e.id} (${e.key}): ${e.files.join(", ")}`);
+  if (ask) log(`warning: ${pending.length} hand edits since the last record; ${ask}`);
+  for (const c of candidates) log(`warning: ${c}`);
+}
 // G010: the number names the phase directory; a phaseDir with another slug would plan into a stale directory.
 if (found?.directory && found.directory !== phaseDir) return result("refused", { reason: `phaseDir ${phaseDir} is not the directory of phase ${N} (${found.directory}); pass ${found.directory}` });
 if (found?.status === "COMPLETE") {

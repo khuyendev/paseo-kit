@@ -117,11 +117,13 @@ const keptTrees = {};
 const seeds = {};
 const integrationFiles = new Set();
 const ev = (e) => { events.push(e); log(`event ${e}`); };
+// Kit feedback 68: plans, artifacts and owned files changed outside the flow since their last record, from `ph gsd hand-edit scan`.
+let handEdits = null;
 const treeReport = () => {
   const left = Object.entries(worktrees).filter(([plan]) => !discarded.includes(plan)).map(([plan, path]) => ({ plan, path, ...(keptTrees[plan] ? { why: keptTrees[plan] } : {}) }));
   return discarded.length || left.length ? { discarded, kept: left } : null;
 };
-const result = (status, extra = {}) => ({ status, phaseDir, mode: execMode, isolation: g.isolation, waves: waveResults, sharedChanges, ...(Object.keys(pendingRequests).length ? { requests: pendingRequests } : {}), ...(skipped.length ? { skipped } : {}), ...(treeReport() ? { worktrees: treeReport() } : {}), events, ...extra });
+const result = (status, extra = {}) => ({ status, phaseDir, mode: execMode, isolation: g.isolation, waves: waveResults, sharedChanges, ...(Object.keys(pendingRequests).length ? { requests: pendingRequests } : {}), ...(skipped.length ? { skipped } : {}), ...(treeReport() ? { worktrees: treeReport() } : {}), ...(handEdits ? { handEdits } : {}), events, ...extra });
 const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reason, ...extra });
 const digestOf = async (input) => (await flow(["digest"], input)).json?.hash ?? "none";
 
@@ -242,6 +244,15 @@ if (lease.code !== 0) {
   return result("refused", { reason: `${leaseText(lease.json)}; execute starts after it ends` });
 }
 try {
+// Kit feedback 68 (gsd.review_metrics, measurement only): the hand edits since the last record are listed in the log and the result.
+const handScan = g.review_metrics ? await gsd(["hand-edit", "scan", phaseDir]) : null;
+if (handScan?.code === 0 && (handScan.json?.pending?.length || handScan.json?.candidates?.length)) {
+  const { pending = [], candidates = [], ask } = handScan.json;
+  handEdits = { pending, candidates, ...(ask ? { ask } : {}) };
+  for (const e of pending) log(`hand edit ${e.id} (${e.key}): ${e.files.join(", ")}`);
+  if (ask) log(`warning: ${pending.length} hand edits since the last record; ${ask}`);
+  for (const c of candidates) log(`warning: ${c}`);
+}
 const anti = await flow(["anti-patterns", phaseDir]);
 if (anti.code !== 0) return owner("Execute", `blocking anti-patterns need three written answers each in ${anti.json?.answersFile}: ${(anti.json?.unanswered ?? []).join(", ")}; run gsd-discuss ${N} to write them (it reads CONTEXT), or write them with node ${FLOW} write ${anti.json?.answersFile} (JSON on stdin)`, { rows: anti.json?.unanswered ?? [] });
 const prefix = a.gapsOnly ? "gap-" : "";

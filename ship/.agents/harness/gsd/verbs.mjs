@@ -14,6 +14,7 @@ import { checkDependencies, checkOwns, checkSmokeBuilds, coverage, decisionCover
 import { findPhaseVerb, phaseAdd, phaseComplete, phaseInsert, phaseRemove, planIndex, requirementsVerb, roadmapVerb, uatPassed } from "./phases.mjs";
 import { normPlanId, planIds, readPlan, readPlans, requirePhase } from "./planning.mjs";
 import { ATTEMPT_KINDS, readAttempt, recordAttempt, revisionsVerb } from "./revisions.mjs";
+import { captureBeforeRecord, listHandEdits, recordHandEdit, scanHandEdits } from "./hand-edits.mjs";
 import { stateVerb } from "./state.mjs";
 import { fingerprint, researchStatus, verificationParts, verificationStatusVerb } from "./status.mjs";
 import { health, normalizeTestCommand, runWithTimeout } from "./tools.mjs";
@@ -74,7 +75,17 @@ function multi(args, names) {
 const state = (sub, usage, options = {}) => ({ usage, options: { phase: "string", status: "string", plan: "string", activity: "string", plans: "string", name: "string", wave: "string", text: "string", "text-file": "string", by: "string", milestone: "string", ...options }, run: (g, a, o) => stateVerb(g, sub, o) });
 const init = (workflow) => ({ usage: `ph gsd init.${workflow} <phase>`, options: {}, run: (g, a) => initPayload(g, workflow, a[0]) });
 // `--settings <digest>`: the effective settings of the key's judgments (the workflow's digest; absent = files only).
-const revisions = (sub) => ({ usage: `ph gsd revisions.${sub} <phase> <key> [--settings <digest>]`, options: { settings: "string" }, run: (g, a, o) => revisionsVerb(g, sub, phaseOf(g, a), a[1], o.settings ?? null) });
+// Without --settings a record of a key the workflow checks with settings reuses the earlier digest (kit feedback 73). A record made
+// by hand (outside a workflow run) first keeps what changed in the key's plans and artifacts as hand edits (kit feedback 68).
+const revisions = (sub) => ({
+  usage: `ph gsd revisions.${sub} <phase> <key> [--settings <digest>]`,
+  options: { settings: "string" },
+  run: (g, a, o) => {
+    const phase = phaseOf(g, a);
+    if (sub === "record" && a[1]) captureBeforeRecord(g, phase, a[1]);
+    return revisionsVerb(g, sub, phase, a[1], o.settings ?? null);
+  },
+});
 
 export const verbHandlers = {
   "init.project": { usage: "ph gsd init.project", options: {}, run: (g) => initProject(g) },
@@ -174,6 +185,13 @@ export const verbHandlers = {
   },
   waves: { usage: "ph gsd waves <phase> [--plans <ids>]", options: { plans: "string" }, run: (g, a, o) => wavesVerb(g, phaseOf(g, a), subset(o, phaseOf(g, a))) },
   handoff: { usage: "ph gsd handoff <phase> [--plans <ids>] [--prefix <text>] [--no-tracer-split]", options: { plans: "string", prefix: "string", "no-tracer-split": "bool" }, run: (g, a, o) => handoff(g, phaseOf(g, a), { subset: subset(o, phaseOf(g, a)), prefix: o.prefix, noTracerSplit: o["no-tracer-split"] === true }) },
+  "hand-edit.scan": { usage: "ph gsd hand-edit.scan <phase>", options: {}, run: (g, a) => scanHandEdits(g, phaseOf(g, a)) },
+  "hand-edit.record": {
+    usage: "ph gsd hand-edit.record <phase> <HE-n|plan:<id>|file> --category <contract-drift|wrong-api|owns-reach|test-fixture|other> --note <one line>",
+    options: { category: "string", note: "string" },
+    run: (g, a, o) => recordHandEdit(g, phaseOf(g, a), a[1], { category: o.category, note: o.note }),
+  },
+  "hand-edit.list": { usage: "ph gsd hand-edit.list <phase>", options: {}, run: (g, a) => listHandEdits(g, phaseOf(g, a)) },
   "revisions.record": revisions("record"),
   "revisions.check": revisions("check"),
   "revisions.hash": revisions("hash"),
