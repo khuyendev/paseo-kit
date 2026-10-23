@@ -21,6 +21,7 @@ const writeJson = (file, value) => {
 export function makeMachine({ live = { agents: { providers: {} } }, template, defaults, plugins, env = {} } = {}) {
   const kitDir = makeTempDir("paseo kit copy ");
   const logs = makeTempDir("paseo kit logs ");
+  const lockDir = makeTempDir("paseo kit lock ");
   writeJson(path.join(kitDir, "paseo", "providers.json"), template ?? readJson(SHIPPED_TEMPLATE));
   const shipped = readJson(path.join(KIT_DIR, "ship", ".agents", "harness.defaults.json"));
   writeJson(path.join(kitDir, "ship", ".agents", "harness.defaults.json"), defaults ? defaults(shipped) : shipped);
@@ -47,6 +48,7 @@ export function makeMachine({ live = { agents: { providers: {} } }, template, de
   return {
     kitDir,
     home,
+    lockDir,
     env: e,
     config,
     skillDir: path.join(kitDir, "user", "skills", "kit-init"),
@@ -59,7 +61,7 @@ export function makeMachine({ live = { agents: { providers: {} } }, template, de
       const err = [];
       const runEnv = { ...e, ...envOverrides };
       for (const [k, v] of Object.entries(envOverrides)) if (v === undefined) delete runEnv[k];
-      const code = await run(argv, { out: (l) => out.push(l), err: (l) => err.push(l), env: runEnv, kitDir });
+      const code = await run(argv, { out: (l) => out.push(l), err: (l) => err.push(l), env: runEnv, kitDir, lockDir });
       return { code, out, err, stdout: out.join("\n") };
     },
   };

@@ -101,12 +101,14 @@ test("MACH-16 --unlink-user-skills removes only the kit's links (A, D) and their
   assert.ok(fs.existsSync(m.skillDir), "the kit skill itself is never removed");
 });
 
-// Fails the atomic rename onto the link record (a persistent Windows sharing error); other renames pass.
-function failRecordWrite(t, record) {
+// Fails the atomic rename onto the link record once `passes` record writes have gone through (a persistent Windows
+// sharing error); other renames pass.
+function failRecordWrite(t, record, passes = 0) {
   const rename = fs.renameSync;
+  let seen = 0;
   t.after(() => (fs.renameSync = rename));
   fs.renameSync = (from, to) => {
-    if (path.resolve(String(to)) === record) throw Object.assign(new Error("injected record failure"), { code: "EIO" });
+    if (path.resolve(String(to)) === record && seen++ >= passes) throw Object.assign(new Error("injected record failure"), { code: "EIO" });
     return rename(from, to);
   };
   return () => (fs.renameSync = rename);
@@ -114,8 +116,9 @@ function failRecordWrite(t, record) {
 
 test("MACH-16 a failed link-record write undoes the created and re-pointed links; a retry then succeeds (CR-MAC-03)", async (t) => {
   const { m, dest, oldKit, record } = await fixture();
-  const recordBefore = fs.readFileSync(record, "utf8");
-  const restore = failRecordWrite(t, record);
+  const linksBefore = readRecord(record).links;
+  // The first record write, the pending entries, passes; the commit after the disk changes fails.
+  const restore = failRecordWrite(t, record, 1);
   const r = await m.run(["apply", "--no-reload", "--link-user-skills"]);
   restore();
   assert.equal(r.code, 2, r.stdout);
@@ -125,7 +128,8 @@ test("MACH-16 a failed link-record write undoes the created and re-pointed links
   assert.equal(fs.existsSync(dest("A")), false);
   assert.equal(readLinkClean(dest("D")), oldKit);
   assert.deepEqual(fs.readdirSync(path.dirname(dest("D"))), ["kit-init"]);
-  assert.equal(fs.readFileSync(record, "utf8"), recordBefore);
+  // The pending entries of the undone run stay in the record until the next apply drops them.
+  assert.deepEqual(readRecord(record).links, linksBefore);
   const retry = await m.run(["apply", "--no-reload", "--link-user-skills"]);
   assert.equal(retry.code, 0, retry.stdout);
   assert.equal(readLinkClean(dest("A")), m.skillDir);

@@ -23,6 +23,8 @@ export function linkDirs(tpl, home) {
   return dirs;
 }
 
+const isEntry = (l) => typeof l?.dest === "string" && typeof l?.target === "string";
+
 export function readRecord(file) {
   let record;
   try {
@@ -30,7 +32,8 @@ export function readRecord(file) {
   } catch (e) {
     throw new Fail(`cannot read the link record ${file}: ${e.message}`);
   }
-  const valid = record?.version === 1 && Array.isArray(record.links) && record.links.every((l) => typeof l?.dest === "string" && typeof l?.target === "string");
+  const pendingOk = record?.pending === undefined || (Array.isArray(record.pending) && record.pending.every(isEntry));
+  const valid = record?.version === 1 && Array.isArray(record.links) && record.links.every(isEntry) && pendingOk;
   if (!valid) throw new Fail(`the link record ${file} is not {version: 1, links: [{dest, target}]}`);
   return record;
 }
@@ -47,6 +50,18 @@ function readLink(dest) {
     throw e;
   }
   return stat.isSymbolicLink() ? { exists: true, link: cleanTarget(fs.readlinkSync(dest)) } : { exists: true, link: null };
+}
+
+// A pending entry is a link change that a run recorded before making it, and that the run may have been killed during.
+// When the disk link already points at its target, the change committed, so the entry becomes a link entry; otherwise
+// it did not happen. The pending list is kept as read, so the next write of the record drops it.
+export function settleRecord(record) {
+  let links = record.links;
+  for (const p of record.pending ?? []) {
+    const { link } = readLink(p.dest);
+    if (link && samePath(link, p.target)) links = [...links.filter((l) => !samePath(l.dest, p.dest)), { dest: p.dest, target: p.target }];
+  }
+  return { ...record, links };
 }
 
 // One state per dir: missing | kit (current target) | kit-old (recorded, older target) | owner.
@@ -101,16 +116,39 @@ function undo({ kind, dest, aside, target }) {
   }
 }
 
-// mode "link" or "unlink"; returns {lines, failures}. The record is written only when it changed; when that write
-// fails every disk change of this run is undone, so disk and record never disagree about a kit-made link (INV-03).
+// Removes the old link copies that a killed run left beside a dest (`<dest>.kit-old-<pid>`); the machine lock keeps
+// the copy of a live run out of reach.
+function sweepAsides(dest, lines) {
+  const dir = path.dirname(dest);
+  if (!fs.existsSync(dir)) return;
+  for (const name of fs.readdirSync(dir)) {
+    if (!name.startsWith(`${path.basename(dest)}.kit-old-`)) continue;
+    fs.unlinkSync(path.join(dir, name));
+    lines.push(`link: removed leftover ${path.join(dir, name)}`);
+  }
+}
+
+// mode "link" or "unlink"; returns {lines, failures}. The record is written only when it changed or still holds pending
+// entries; when that write fails every disk change of this run is undone, so disk and record never disagree about a
+// kit-made link (INV-03). Links this run creates or re-points are recorded as pending before any disk change, so a run
+// killed after a change still leaves a record that tells the kit's link from the owner's.
 export function applyLinks(states, { record, recordFile, target, mode }) {
   const lines = [];
   const done = [];
   let failures = 0;
   let links = record.links.slice();
   const forget = (dest) => (links = links.filter((l) => !samePath(l.dest, dest)));
+  const planned = mode === "link" ? states.filter((s) => s.state === "missing" || s.state === "kit-old") : [];
+  if (planned.length) {
+    try {
+      writeJsonAtomic(recordFile, { version: 1, links, pending: planned.map(({ dest }) => ({ dest, target })) });
+    } catch (e) {
+      return { lines: [`failed link record ${recordFile}: ${errText(e)}; no link was changed`], failures: 1 };
+    }
+  }
   for (const { dest, state, link } of states) {
     try {
+      if (state !== "owner") sweepAsides(dest, lines);
       if (state === "owner") lines.push(`note ${dest}: owner entry kept`);
       else if (mode === "unlink") {
         if (state === "missing") continue;
@@ -137,7 +175,7 @@ export function applyLinks(states, { record, recordFile, target, mode }) {
     }
   }
   try {
-    if (JSON.stringify(links) !== JSON.stringify(record.links)) writeJsonAtomic(recordFile, { version: 1, links });
+    if (planned.length || record.pending?.length || JSON.stringify(links) !== JSON.stringify(record.links)) writeJsonAtomic(recordFile, { version: 1, links });
   } catch (e) {
     failures++;
     lines.push(`failed link record ${recordFile}: ${errText(e)}; undoing the link changes of this run`);

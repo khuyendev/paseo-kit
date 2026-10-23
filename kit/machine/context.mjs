@@ -11,7 +11,8 @@ export { Fail };
 
 export const KIT_DIR = fileURLToPath(new URL("../../", import.meta.url));
 
-// io.kitDir is a test seam: tests run against a temp copy of the kit files they need.
+// io.kitDir and io.lockDir are test seams: tests run against a temp copy of the kit files they need, and against a
+// temp folder for the machine lock (undefined = the OS temp folder).
 export function machineContext(io = {}) {
   const env = io.env ?? process.env;
   const kitDir = path.resolve(io.kitDir ?? KIT_DIR);
@@ -20,6 +21,7 @@ export function machineContext(io = {}) {
     env,
     home,
     kitDir,
+    lockDir: io.lockDir,
     out: io.out ?? ((line) => process.stdout.write(`${line}\n`)),
     templateFile: path.join(kitDir, "paseo", "providers.json"),
     defaultsFile: path.join(kitDir, "ship", ".agents", "harness.defaults.json"),

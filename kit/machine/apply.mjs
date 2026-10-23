@@ -1,14 +1,19 @@
 // `machine apply`: every gate and the whole patch in memory first, then backup, pending-reload marker, atomic write, links,
 // reload, check (MACH-07..12, MACH-15, MACH-16, MACH-18). Never starts, stops or restarts the daemon.
 import fs from "node:fs";
+import { withMutex } from "../../ship/.agents/harness/adapter/mutex.mjs";
 import { writeJsonAtomic } from "../../ship/.agents/harness/lib/io.mjs";
 import { claudeGate, nodeGate, runCheck } from "./check.mjs";
 import { loadInputs, readLive, Fail } from "./context.mjs";
 import { npmCi, paseoReload } from "./external.mjs";
-import { applyLinks, linkDirs, linkStates, readRecord } from "./links.mjs";
+import { applyLinks, linkDirs, linkStates, readRecord, settleRecord } from "./links.mjs";
 import { dropDeps, kitPlugins, markDeps, needsDeps, patchPlugins } from "./plugins.mjs";
 import { patchProviders } from "./providers.mjs";
 import { secretResolver } from "./template.mjs";
+
+// The machine-wide lock over the Paseo config and the link record, so two kit applies never read, patch and write them
+// at once. A Paseo app or daemon writing config.json is not covered by it.
+export const MACHINE_LOCK = "paseo-kit machine";
 
 const pad = (n) => String(n).padStart(2, "0");
 const stamp = (d) => `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}-${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}`;
@@ -21,12 +26,8 @@ function backupPath(file) {
   return candidate;
 }
 
-export async function runApply(ctx, opts) {
-  const node = nodeGate();
-  if (!node.ok) throw new Fail(node.text);
-  const { cfg, tpl } = loadInputs(ctx);
-  const claude = claudeGate(ctx, tpl);
-  if (!claude.ok) throw new Fail(claude.text);
+// The reads, the config write and the link changes of one apply; runs under the machine lock.
+function writeMachine(ctx, opts, { cfg, tpl, linkMode }) {
   const live = readLive(ctx);
   const { next, changes } = patchProviders(live, tpl, cfg, { home: ctx.home, secret: secretResolver(live, ctx.env) });
   let plugins = { changes: [], conflicts: [], registered: [] };
@@ -36,11 +37,9 @@ export async function runApply(ctx, opts) {
     if (broken) throw new Fail(`kit Paseo plugin folder ${broken.folder}: ${broken.error}`);
     plugins = patchPlugins(next, found);
   }
-  const linkMode = opts.link ? "link" : opts.unlink ? "unlink" : null;
-  const record = linkMode ? readRecord(ctx.linksRecord) : null;
+  const record = linkMode ? settleRecord(readRecord(ctx.linksRecord)) : null;
   const states = linkMode ? linkStates(linkDirs(tpl, ctx.home), record, ctx.skillDir) : [];
 
-  let problems = 0;
   const allChanges = [...changes, ...plugins.changes];
   const written = allChanges.length > 0 && JSON.stringify(next) !== JSON.stringify(live);
   if (written) {
@@ -57,6 +56,26 @@ export async function runApply(ctx, opts) {
     for (const change of allChanges) ctx.out(`paseo: ${change}`);
     ctx.out(`paseo: backup ${backup}`);
   } else ctx.out("paseo: every template provider, model and policy entry is present");
+  let linkFailures = 0;
+  if (linkMode) {
+    const { lines, failures } = applyLinks(states, { record, recordFile: ctx.linksRecord, target: ctx.skillDir, mode: linkMode });
+    for (const line of lines) ctx.out(line);
+    linkFailures = failures;
+  }
+  return { plugins, written, linkFailures };
+}
+
+export async function runApply(ctx, opts) {
+  const node = nodeGate();
+  if (!node.ok) throw new Fail(node.text);
+  const { cfg, tpl } = loadInputs(ctx);
+  const claude = claudeGate(ctx, tpl);
+  if (!claude.ok) throw new Fail(claude.text);
+  const linkMode = opts.link ? "link" : opts.unlink ? "unlink" : null;
+  const locked = () => writeMachine(ctx, opts, { cfg, tpl, linkMode });
+  const { plugins, written, linkFailures } = await withMutex(MACHINE_LOCK, locked, { log: ctx.out, tmp: ctx.lockDir });
+
+  let problems = linkFailures;
   for (const line of plugins.conflicts) {
     problems++;
     ctx.out(line);
@@ -74,11 +93,6 @@ export async function runApply(ctx, opts) {
       ctx.out(`paseo: plugin ${p.id}: npm ci done`);
     }
     ctx.out(`paseo: to load it now: paseo plugin reload ${p.id}`);
-  }
-  if (linkMode) {
-    const { lines, failures } = applyLinks(states, { record, recordFile: ctx.linksRecord, target: ctx.skillDir, mode: linkMode });
-    for (const line of lines) ctx.out(line);
-    problems += failures;
   }
   // A marker left by an earlier write whose reload never finished makes this run reload again (G176).
   const reload = written || fs.existsSync(ctx.reloadPending);

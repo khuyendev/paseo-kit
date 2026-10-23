@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import { claudeVersion, MIN_CLAUDE_VERSION, NODE_REQUIREMENT, nodeRuntimeProblem, versionAtLeast } from "../../ship/.agents/harness/platform.mjs";
 import { claudeConfigDir, loadInputs, readLive } from "./context.mjs";
-import { linkDirs, linkLines, linkStates, readRecord } from "./links.mjs";
+import { linkDirs, linkLines, linkStates, readRecord, settleRecord } from "./links.mjs";
 import { kitPlugins, pluginLines } from "./plugins.mjs";
 import { modelPlan, policyLines, retiredModels } from "./providers.mjs";
 
@@ -23,7 +23,7 @@ export const nodeGate = () => {
 export function runCheck(ctx, { enablePlugins = false } = {}) {
   const { cfg, tpl } = loadInputs(ctx);
   const live = readLive(ctx);
-  const record = readRecord(ctx.linksRecord);
+  const record = settleRecord(readRecord(ctx.linksRecord));
   let problems = 0;
   const say = (level, text) => {
     if (level === "problem") problems++;
