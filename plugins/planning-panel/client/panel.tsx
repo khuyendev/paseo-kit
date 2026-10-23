@@ -109,6 +109,7 @@ export function PlanningBody({ workspaceId }: { workspaceId: string }) {
       {section === "Roadmap" ? (
         <>
           <StatsView index={index} nowMs={nowMs} />
+          {boardQ.isError ? <T tone="danger" size={12}>{`${boardQ.data ? "Board may be out of date; the last refresh failed" : "Could not load the board"}: ${boardQ.error.message}`}</T> : null}
           {boardQ.data?.ok ? <BoardView board={boardQ.data} onShowPhase={showPhase} /> : boardQ.data ? <T tone="danger">{boardQ.data.message}</T> : null}
         </>
       ) : null}

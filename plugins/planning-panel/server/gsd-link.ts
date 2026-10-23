@@ -2,7 +2,7 @@
 // so the board and `ph gsd roadmap analyze` agree; ROADMAP checkboxes carry no authority. Nothing is imported from
 // the workspace: its files are read as data only (CR-PNL-02).
 import { type PhaseStatus, phaseStatusSchema } from "../shared/planning.ts";
-import { DigestCache, listPhaseDirs, phaseStatus } from "./ladder.ts";
+import { listPhaseDirs, phaseStatus } from "./ladder.ts";
 
 export type PhaseStatusFn = (phaseDir: string) => PhaseStatus | Promise<PhaseStatus>;
 
@@ -12,10 +12,8 @@ export interface StatusSource {
 }
 
 export class LadderStatusSource implements StatusSource {
-  private readonly digests = new DigestCache();
-
   async forWorkspace(directory: string): Promise<PhaseStatusFn> {
     const dirs = listPhaseDirs(directory);
-    return (phaseDir) => phaseStatusSchema.parse(phaseStatus(directory, dirs.find((d) => d.dir === phaseDir) ?? null, this.digests));
+    return (phaseDir) => phaseStatusSchema.parse(phaseStatus(directory, dirs.find((d) => d.dir === phaseDir) ?? null));
   }
 }

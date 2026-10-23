@@ -219,6 +219,8 @@ export const planDetailSchema = z.object({
       keyFiles: z.object({ created: z.array(z.string()), modified: z.array(z.string()) }),
     })
     .nullable(),
+  // The PLAN or its SUMMARY was cut at the read cap (DOCUMENT_MAX_BYTES); the tasks and text after the cut are missing.
+  truncated: z.boolean(),
 });
 export type PlanDetail = z.infer<typeof planDetailSchema>;
 

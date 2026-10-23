@@ -72,21 +72,27 @@ export class PlanningService {
   plan(paseo: Paseo, { workspaceId, planId }: { workspaceId: string; planId: string }) {
     return this.guard(paseo, workspaceId, async (dir): Promise<PlanDetail> => {
       const root = await planningRoot(dir);
-      const files = (await this.indexer.index(root)).files;
+      const { files, unreadable } = await this.indexer.index(root);
       const planFile = files.find((f) => f.kind === "plan" && f.planId === planId);
+      // A partial listing cannot tell a missing plan from one in a directory that could not be read (G197).
+      if (!planFile && unreadable) throw new PlanningError("unreadable", `could not read ${unreadable} in .planning/, so plan ${planId} cannot be looked up`);
       if (!planFile) throw new PlanningError("not_found", `no plan ${planId} in .planning/`);
-      const parsed = parsePlan((await readDocument(await resolveInPlanning(root, planFile.path))).text);
+      const planDoc = await readDocument(await resolveInPlanning(root, planFile.path));
+      const parsed = parsePlan(planDoc.text);
       if ("error" in parsed) throw new PlanningError("parse_error", `${planFile.path}:${parsed.line}: ${parsed.error}`);
       // The SUMMARY is the plan's exact sibling, never a retired copy under superseded/ (CR-PNL-05).
       const summaryPath = planFile.path.replace(/-PLAN\.md$/i, "-SUMMARY.md");
       const summaryFile = files.find((f) => f.kind === "summary" && f.path.toLowerCase() === summaryPath.toLowerCase());
       let summary: PlanDetail["summary"] = null;
+      let truncated = planDoc.truncated;
       if (summaryFile) {
-        const s = parseSummary((await readDocument(await resolveInPlanning(root, summaryFile.path))).text);
+        const summaryDoc = await readDocument(await resolveInPlanning(root, summaryFile.path));
+        const s = parseSummary(summaryDoc.text);
         if ("error" in s) throw new PlanningError("parse_error", `${summaryFile.path}:${s.line}: ${s.error}`);
         summary = { path: summaryFile.path, status: s.status, done: summaryDone(s.status), text: s.text, keyFiles: s.keyFiles };
+        truncated ||= summaryDoc.truncated;
       }
-      return { ok: true, workspaceId, directory: dir, planId, path: planFile.path, phase: planFile.phase ?? "", ...parsed, summary };
+      return { ok: true, workspaceId, directory: dir, planId, path: planFile.path, phase: planFile.phase ?? "", ...parsed, summary, truncated };
     });
   }
 

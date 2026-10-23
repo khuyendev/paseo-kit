@@ -4,7 +4,7 @@
 // `ship/.agents/harness/gsd/status.mjs` (`phaseStatus`, `readVerification`, `fingerprint`) and the roster of
 // `roadmap analyze`; tests/ui compare it with the kit on every ladder state.
 import { createHash } from "node:crypto";
-import { type Dirent, readdirSync, readFileSync, statSync } from "node:fs";
+import { type Dirent, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { PhaseStatus } from "../shared/planning.ts";
 import { parseFrontmatter, type Yaml } from "./frontmatter.ts";
@@ -78,11 +78,15 @@ function readJsonIf(file: string): unknown {
   return text === null ? null : (JSON.parse(text) as unknown);
 }
 
+// A missing directory has no entries; any other listing failure (EACCES, EPERM) propagates, as the kit's listFiles
+// does, so the phase reads as unknown and never as NOT_STARTED (G197).
 function entries(dir: string): Dirent[] {
   try {
     return readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return [];
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return [];
+    throw e;
   }
 }
 
@@ -115,29 +119,16 @@ function listFiles(phase: PhaseDir, kind: keyof typeof KINDS): string[] {
 const idOf = (name: string) => name.replace(/-(PLAN\.md|SUMMARY\.md|HALT\.json)$/, "");
 const phaseFile = (phase: PhaseDir, suffix: string) => join(phase.dir, `${phase.padded}-${suffix}`);
 
-// Covered-file digests by (mtime, size), so repeated polls stat instead of rereading unchanged files (PANL-07);
-// any change of a covered file, inside `.planning/` or not, is seen on the next poll (CR-PNL-03).
-export class DigestCache {
-  private readonly digests = new Map<string, { mtimeMs: number; size: number; digest: string }>();
-
-  digest(file: string): string {
-    const st = statSync(file);
-    const hit = this.digests.get(file);
-    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.digest;
-    const digest = textDigest(readFileSync(file, "utf8"));
-    this.digests.set(file, { mtimeMs: st.mtimeMs, size: st.size, digest });
-    return digest;
-  }
-}
-
-function fingerprint(codeRoot: string, phase: PhaseDir, extraFiles: string[], cache: DigestCache): string {
+// Covered files are read on every poll, as the kit's fingerprint reads them (CR-PNL-03): an unchanged mtime and size
+// do not prove unchanged content, since a same-size rewrite with its mtime restored would keep a stale COMPLETE (G197).
+function fingerprint(codeRoot: string, phase: PhaseDir, extraFiles: string[]): string {
   const own = [...listFiles(phase, "plan"), ...listFiles(phase, "summary")].map((name) => rel(codeRoot, join(phase.dir, name)));
   const verification = rel(codeRoot, phaseFile(phase, "VERIFICATION.md"));
   const files = [...new Set([...extraFiles.map((f) => f.replace(/\\/g, "/").replace(/^\.\//, "")), ...own])].filter((f) => f !== verification).sort();
   const lines = files.map((f) => {
     const abs = resolve(codeRoot, f);
     if (!isInside(abs, codeRoot)) throw new Error(`covered file outside the code root: ${f}`);
-    return `${f}\0${cache.digest(abs)}\n`;
+    return `${f}\0${textDigest(readFileSync(abs, "utf8"))}\n`;
   });
   return `${DIGEST_PREFIX}${sha256(lines.join(""))}`;
 }
@@ -150,7 +141,7 @@ const behaviorCount = (fm: Record<string, Yaml>) => {
 };
 
 // The verification report read back: valid only when its frontmatter is consistent; stale when a covered file changed.
-function readVerification(codeRoot: string, phase: PhaseDir, cache: DigestCache): { exists: boolean; valid: boolean; status: string; sha: string | null } {
+function readVerification(codeRoot: string, phase: PhaseDir): { exists: boolean; valid: boolean; status: string; sha: string | null } {
   const text = readIf(phaseFile(phase, "VERIFICATION.md"));
   if (text === null) return { exists: false, valid: false, status: "missing", sha: null };
   const parsed = parseFrontmatter(text);
@@ -175,7 +166,7 @@ function readVerification(codeRoot: string, phase: PhaseDir, cache: DigestCache)
   let stale: boolean;
   try {
     const extra = (fm.covered_files as Yaml[]).map(String).filter((f) => !PLAN_OR_SUMMARY.test(f));
-    stale = fingerprint(codeRoot, phase, extra, cache) !== fm.covered_digest;
+    stale = fingerprint(codeRoot, phase, extra) !== fm.covered_digest;
   } catch {
     stale = true;
   }
@@ -183,13 +174,13 @@ function readVerification(codeRoot: string, phase: PhaseDir, cache: DigestCache)
 }
 
 // GSDC-13: first matching row wins; a ROADMAP checkbox never changes the answer.
-export function phaseStatus(codeRoot: string, phase: PhaseDir | null, cache: DigestCache): PhaseStatus {
+export function phaseStatus(codeRoot: string, phase: PhaseDir | null): PhaseStatus {
   if (!phase) return "NOT_STARTED";
   const plans = listFiles(phase, "plan").map(idOf);
   const planSet = new Set(plans);
   const summaries = listFiles(phase, "summary").map(idOf).filter((id) => planSet.has(id));
   const halted = listFiles(phase, "halt").map(idOf).filter((id) => planSet.has(id));
-  const v = plans.length && summaries.length === plans.length ? readVerification(codeRoot, phase, cache) : null;
+  const v = plans.length && summaries.length === plans.length ? readVerification(codeRoot, phase) : null;
   const completion = readJsonIf(join(phase.dir, "complete.json")) as { verification_sha?: unknown } | null;
   if (v && v.valid && v.status === "passed" && completion && completion.verification_sha === v.sha) return "COMPLETE";
   if (plans.length === 0) return "NOT_STARTED";

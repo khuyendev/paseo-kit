@@ -119,6 +119,7 @@ export function PlanPane(props: PaneProps & { planId: string }) {
           <Markdown source={d.summary.text} ctx={linkContext(index, d.summary.path)} onOpen={(t) => props.onOpen(t, d.summary!.path)} />
         </Section>
       ) : null}
+      {d.truncated ? <T tone="muted" size={11}>Plan or summary cut at 1 MiB; later tasks and text are not shown.</T> : null}
     </View>
   );
 }
