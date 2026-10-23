@@ -245,6 +245,9 @@ test("GSDF-27 REVISION_CONFLICT in the checker loop stops at once with the confl
 test("GSDF-28 forceProceed at the cap records the override in the result and STATE; a conflict is never forced", async () => {
   const w = makeWorld();
   const issue = () => ({ issues: [{ plan: "01-01", severity: "blocker", description: "still open" }] });
+  // F40: the plans this run wrote are not forced in this run; the rerun keeps them and accepts the stuck plan.
+  const first = await plan(w, { forceProceed: { reason: "owner accepts" }, maxCheckIterations: 1 }, { "checker-": issue });
+  assert.equal(first.result.status, "needs-owner");
   const r = await plan(w, { forceProceed: { reason: "owner accepts" }, maxCheckIterations: 1 }, { "checker-": issue });
   assert.equal(r.result.status, "planned");
   assert.equal(r.result.override.reason, "owner accepts");

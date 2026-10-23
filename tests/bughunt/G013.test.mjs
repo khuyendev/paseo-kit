@@ -32,14 +32,16 @@ test("G013 a plan that converges is not stalled by the count of another plan", a
 });
 
 test("G013 a plan that stalls leaves the checker loop alone; the others keep being revised and the stop names only it", async () => {
-  const r = await plan(makeWorld(), { maxCheckIterations: 3 }, { "checker-": scriptedChecker({ "01-01": [1, 1, 1], "01-02": [2, 1, 0] }) });
+  const w = makeWorld();
+  const r = await plan(w, { maxCheckIterations: 3 }, { "checker-": scriptedChecker({ "01-01": [1, 1, 1], "01-02": [2, 1, 0] }) });
   assert.equal(r.result.status, "needs-owner");
   assert.equal(r.result.stage, "Checker");
   assert.equal(r.result.reason, "01-01: stalled: 1 issues, not below 1");
   assert.deepEqual(r.result.issues.map((i) => i.plan), ["01-01"]);
   assert.ok(labels(r).includes("revise-01-02-2"), labels(r).join(" "));
   assert.doesNotMatch(r.calls.filter((c) => c.opts.label.startsWith("checker-")).pop().prompt, /01-01-PLAN\.md/);
-  const forced = await plan(makeWorld(), { maxCheckIterations: 3, forceProceed: { reason: "owner accepts 01-01" } }, { "checker-": scriptedChecker({ "01-01": [1, 1, 1], "01-02": [2, 1, 0] }) });
+  // F40: the rerun keeps the plans the stopped run wrote, so the stalled plan can be forced there (not in the run that wrote it).
+  const forced = await plan(w, { maxCheckIterations: 3, forceProceed: { reason: "owner accepts 01-01" } }, { "checker-": scriptedChecker({ "01-01": [1, 1, 1], "01-02": [2, 1, 0] }) });
   assert.equal(forced.result.status, "planned");
   assert.deepEqual(forced.result.override.remaining.map((i) => i.plan), ["01-01"]);
 });

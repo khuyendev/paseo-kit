@@ -92,11 +92,9 @@ function digestOf(entry) {
   }
 }
 
-// Hash of a key: its files (deduplicated, sorted) plus this phase's ROADMAP section without its generated block, never
-// another phase's section. Files outside the code root are not hashed; they are listed in `skipped` so the caller can report them.
-// A workflow passes `settings`, the digest of the effective settings its judgments of this key read (G017): a changed
-// lane, role or limit then changes the key even when no file did.
-export function keyHash(g, phase, key, settings = null) {
+// The digest of each part of a key, in hash order: its files (deduplicated, sorted), this phase's ROADMAP section without its
+// generated block, and the settings digest. A record keeps the parts, so a check can name the part that changed (F40).
+function keyParts(g, phase, key, settings = null) {
   const seen = new Map();
   const outside = new Set();
   for (const f of keyFiles(g, phase, key)) {
@@ -104,12 +102,31 @@ export function keyHash(g, phase, key, settings = null) {
     else seen.set(f.label, f);
   }
   const labels = [...seen.keys()].sort();
-  const lines = labels.map((label) => `${label}\0${digestOf(seen.get(label))}\n`);
+  const parts = labels.map((label) => [label, digestOf(seen.get(label))]);
   const section = roadmapPhase(loadRoadmap(g.codeRoot, g.cfg), phase.number)?.section ?? null;
-  lines.push(`roadmap\0${section === null ? "missing" : textDigest(sectionContent(section))}\n`);
-  if (settings !== null) lines.push(`settings\0${settings}\n`);
+  parts.push(["roadmap", section === null ? "missing" : textDigest(sectionContent(section))]);
+  if (settings !== null) parts.push(["settings", settings]);
   const skipped = [...outside].filter((label) => !seen.has(label)).sort();
-  return { hash: sha256(lines.join("")), files: labels, skipped };
+  return { parts, files: labels, skipped };
+}
+
+const hashOf = (parts) => sha256(parts.map(([label, digest]) => `${label}\0${digest}\n`).join(""));
+
+// Hash of a key: its files (deduplicated, sorted) plus this phase's ROADMAP section without its generated block, never
+// another phase's section. Files outside the code root are not hashed; they are listed in `skipped` so the caller can report them.
+// A workflow passes `settings`, the digest of the effective settings its judgments of this key read (G017): a changed
+// lane, role or limit then changes the key even when no file did.
+export function keyHash(g, phase, key, settings = null) {
+  const { parts, files, skipped } = keyParts(g, phase, key, settings);
+  return { hash: hashOf(parts), files, skipped };
+}
+
+// The parts whose digest differs from the record (a removed part included); null for a record written before parts were kept.
+function changedParts(recorded, parts) {
+  if (!recorded?.parts) return null;
+  const now = new Map(parts);
+  const was = new Map(Object.entries(recorded.parts));
+  return [...new Set([...was.keys(), ...now.keys()])].filter((label) => was.get(label) !== now.get(label)).sort();
 }
 
 const revisionsFile = (phase) => path.join(phase.dir, "revisions.json");
@@ -117,14 +134,15 @@ const revisionsFile = (phase) => path.join(phase.dir, "revisions.json");
 export const readRevisions = (phase) => readJsonIf(revisionsFile(phase), null) ?? { v: 1, keys: {}, lists: {} };
 
 export function recordRevision(g, phase, key, settings = null) {
-  const { hash, files, skipped } = keyHash(g, phase, key, settings);
+  const { parts, files, skipped } = keyParts(g, phase, key, settings);
+  const hash = hashOf(parts);
   const head = headOf(g.codeRoot);
   const list = sha256(files.join("\n")).slice(0, 16);
   // G046: the read, merge and write of revisions.json run under one lock, so a record never replaces another's keys.
   withFileLock(`${revisionsFile(phase)}.lock`, () => {
     const data = readRevisions(phase);
     data.lists[list] = files;
-    data.keys[key] = { hash, list, at: nowIso(), head };
+    data.keys[key] = { hash, list, at: nowIso(), head, parts: Object.fromEntries(parts) };
     const used = new Set(Object.values(data.keys).map((k) => k.list));
     for (const id of Object.keys(data.lists)) if (!used.has(id)) delete data.lists[id];
     writeJsonAtomic(revisionsFile(phase), data);
@@ -135,9 +153,10 @@ export function recordRevision(g, phase, key, settings = null) {
 export function checkRevision(g, phase, key, settings = null) {
   const recorded = readRevisions(phase).keys[key];
   if (!recorded) throw none(`revisions key ${key} was never recorded`, { key });
-  const { hash, skipped } = keyHash(g, phase, key, settings);
+  const { parts, skipped } = keyParts(g, phase, key, settings);
+  const hash = hashOf(parts);
   const head = headOf(g.codeRoot);
-  return { key, same: hash === recorded.hash, recorded: recorded.hash, current: hash, skipped, headChanged: recorded.head !== head, recordedHead: recorded.head, head };
+  return { key, same: hash === recorded.hash, recorded: recorded.hash, current: hash, changed: changedParts(recorded, parts), skipped, headChanged: recorded.head !== head, recordedHead: recorded.head, head };
 }
 
 export function revisionsVerb(g, sub, phase, key, settings = null) {

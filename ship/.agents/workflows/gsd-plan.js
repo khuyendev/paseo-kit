@@ -237,6 +237,8 @@ const ownerStop = (stage, r) => owner(stage, `planner returned ${ownerMarker(r)}
 const failedCall = (what, reason) => result("failed", { reason: `${what}${reason ? `: ${reason}` : " returned nothing"}` });
 
 const sharedChanges = [];
+// F40 (kit-feedback 40): the plans a planner wrote in this run; forceProceed does not accept them in the run that wrote them.
+const plansPlanned = new Set();
 // Digest line of plan and checker prompts: the freeze hash, or the verification report in gap mode.
 let freezeHash = "none";
 if (mode === "gaps") return await gapMode();
@@ -260,7 +262,10 @@ async function fixOutline(turns, stage) {
   return { check };
 }
 const parsed = await gsd(["outline", "parse", N]);
-const inputsSame = (await gsd(["revisions", "check", phaseDir, "inputs"])).code === 0;
+const inputsCheck = await gsd(["revisions", "check", phaseDir, "inputs"]);
+const inputsSame = inputsCheck.code === 0;
+// F40 (kit-feedback 40): name the input that changed, so a regenerated outline has a visible cause.
+if (!inputsSame) log(`inputs changed: ${inputsCheck.json?.changed?.length ? inputsCheck.json.changed.join(", ") : inputsCheck.json?.error ?? "unknown (the record has no per-input digests)"}`);
 let outlineReused = false;
 if (parsed.json?.complete && inputsSame && !a.replan) {
   outlineReused = true;
@@ -521,6 +526,7 @@ for (const ids of wavesOf(rows)) {
   if (recorded) return recorded;
 }
 async function planOne(id) {
+  plansPlanned.add(id);
   const entry = manifestOf(id);
   const carried = warnings.filter((w) => w.includes(`(${id})`));
   const body = [
@@ -716,6 +722,12 @@ async function checkerLoop(scopeIds, gapScoped) {
   const why = [...stuck.values()].map((s) => s.why).join("; ");
   const remaining = [...stuck.values()].flatMap((s) => s.issues);
   if (a.forceProceed) {
+    // F40 (kit-feedback 40): forceProceed accepts the stuck plans unchecked, so it may not accept a plan this run planned (a planner
+    // call, e.g. a re-plan after the outline or skeleton changed). Checker revisions of plans the loop already checked do not count.
+    // A rerun accepts the stuck plan once it is kept and the checker judges it again.
+    const accepted = [...stuck.keys()].flatMap((key) => (key === null ? scopeIds : [key]));
+    const fresh = accepted.filter((id) => plansPlanned.has(id));
+    if (fresh.length) return { stop: owner("Checker", `forceProceed refused: ${fresh.join(", ")} written by a planner in this run; a rerun can accept them`, { issues: remaining, options: ["rerun with forceProceed {reason}", "give guidance and retry", "abandon"] }) };
     const override = { reason: a.forceProceed.reason, why, remaining };
     const saved = await gsd(["state", "override", "--phase", N], { reason: a.forceProceed.reason, issues: remaining.map((x) => `${x.plan ?? "phase"}: ${x.description}`) });
     if (saved.code !== 0) return { stop: failedCall("state override failed", saved.json?.error ?? `exit ${saved.code}`) };
