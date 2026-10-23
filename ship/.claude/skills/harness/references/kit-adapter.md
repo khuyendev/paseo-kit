@@ -117,8 +117,9 @@ Example (a Node web service):
 
 ## 5. Adapter scripts
 
-Scripts the adapter names (resolver, parser, evidence parser, shared predicate, attribution) are project files,
-usually under a project folder such as `tools/adapter/`. The core runs them without a shell: a `.mjs`/`.js` path
+Scripts the adapter names (resolver, parser, evidence parser, shared predicate, attribution) are repo-relative project
+files (no absolute path, no `..`; `ph lint` fails one whose link leads outside the project), usually under a project
+folder such as `tools/adapter/`. The core runs them without a shell: a `.mjs`/`.js` path
 with the current node, a `.ps1` path on Windows with `powershell.exe -NoProfile -ExecutionPolicy Bypass -File`, any
 other path directly; cwd = the code root; timeout `adapter.hook_timeout_s`. The request
 is one JSON object on stdin `{v: 1, op, codeRoot, phaseDir?, ...}`; the response is one JSON line on stdout

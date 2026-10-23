@@ -150,7 +150,8 @@ export function classify(top, wt, { runsDir, agentLive = new Map(), git = runGit
 
 /** Removes one removable worktree, then its branch when git agrees it is merged. Returns {ok, line}. */
 export function removeWorktree(top, wt, { git = runGit } = {}) {
-  if (!wt.missing) removeSetupLinks(wt.path, git);
+  const left = wt.missing ? [] : removeSetupLinks(wt.path, git);
+  const note = left.length ? `; left ${left.length} recorded path(s) outside the worktree: ${left.join(", ")}` : "";
   // `worktree remove --force <path>` drops only this entry's registration when its directory is gone.
   const removed = git(top, wt.missing ? ["worktree", "remove", "--force", wt.path] : ["worktree", "remove", wt.path]);
   if (removed.code !== 0) {
@@ -159,6 +160,6 @@ export function removeWorktree(top, wt, { git = runGit } = {}) {
   }
   releaseLease(wt);
   const branch = git(top, ["branch", "-d", wt.branch]);
-  if (branch.code === 0) return { ok: true, removed: true, line: `removed ${wt.name} and branch ${wt.branch}` };
-  return { ok: true, removed: true, line: `removed ${wt.name}; branch ${wt.branch} kept (${errText(branch.stderr || branch.stdout)})` };
+  if (branch.code === 0) return { ok: true, removed: true, line: `removed ${wt.name} and branch ${wt.branch}${note}` };
+  return { ok: true, removed: true, line: `removed ${wt.name}; branch ${wt.branch} kept (${errText(branch.stderr || branch.stdout)})${note}` };
 }

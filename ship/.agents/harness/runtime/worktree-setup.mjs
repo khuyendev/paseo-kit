@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { readJsonIf, writeJsonAtomic } from "../lib/io.mjs";
+import { isInside } from "../lib/paths.mjs";
 
 const RECORD = "harness-setup.json";
 
@@ -83,17 +84,37 @@ export async function applyWorktreeSetup(root, wt, setup, git) {
   }
 }
 
-/** Removes the setup links of a worktree directory before git removes it; leaves anything that is no longer a link. */
+// The record is data on disk: a link counts only when it sits inside dir, also once the folders on its way are followed.
+function linkInside(dir, dest) {
+  if (!isInside(dest, dir)) return false;
+  try {
+    return isInside(fs.realpathSync.native(path.dirname(dest)), fs.realpathSync.native(dir));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Removes the setup links of a worktree directory before git removes it; leaves anything that is no longer a link.
+ * Returns the recorded paths it left alone because they are not inside dir.
+ */
 export function removeSetupLinks(dir, git) {
-  if (!fs.existsSync(dir)) return;
+  if (!fs.existsSync(dir)) return [];
   let record;
   try {
     record = readJsonIf(recordPath(dir, git), null);
   } catch {
-    return;
+    return [];
   }
-  for (const dest of record?.links ?? []) {
+  const kept = [];
+  for (const recorded of record?.links ?? []) {
+    const dest = path.resolve(dir, recorded);
+    if (!linkInside(dir, dest)) {
+      kept.push(recorded);
+      continue;
+    }
     // fs.rmSync without recursive removes the link itself, never the folder it points to.
     if (fs.lstatSync(dest, { throwIfNoEntry: false })?.isSymbolicLink()) fs.rmSync(dest);
   }
+  return kept;
 }

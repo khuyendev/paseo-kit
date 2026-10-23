@@ -1,4 +1,5 @@
 // Path helpers for Windows and POSIX: case-insensitive comparison on win32, containment without the sibling-prefix bug.
+import fs from "node:fs";
 import path from "node:path";
 import { UsageError } from "./cli.mjs";
 
@@ -17,6 +18,15 @@ export function resolveInside(root, rel) {
   const abs = path.resolve(root, rel);
   if (!isInside(abs, root)) throw new UsageError(`${rel} is outside ${root}`);
   return abs;
+}
+
+// True when the real location of an existing rel (links followed) is inside the real location of root.
+export function realInside(root, rel) {
+  try {
+    return isInside(fs.realpathSync.native(path.resolve(root, rel)), fs.realpathSync.native(root));
+  } catch {
+    return false;
+  }
 }
 
 export const safeName = (name) => String(name).replace(/[^A-Za-z0-9._-]+/g, "_");

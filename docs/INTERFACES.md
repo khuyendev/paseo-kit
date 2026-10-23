@@ -145,7 +145,7 @@ Merge column: `entry` = one-level per-entry merge; `replace` = whole value repla
 | `context_guard` | exactly `{window_tokens >= 1, start_pct 1..100, step_pct 1..100}` integers | `{1000000, 60, 5}` | entry | M8, `ph context`, M13 |
 | `io_guard` | exactly `{start_rounds >= 0, step_rounds >= 1, edit_start_rounds >= 0, edit_step_rounds >= 1}` | 2/2/2/2 | entry | M8 |
 | `read_limits` | exactly `{fileMaxChars, replyMaxChars}` integers >= 1, `fileMaxChars <= replyMaxChars <= 40000` | `{36000, 38000}` | entry | M7 |
-| `worktree_dir` | non-empty relative path | `.claude/worktrees` | replace | M5, M6 |
+| `worktree_dir` | repo-relative path inside the repo (no drive, no leading `/`, no `..`, not `.`) | `.claude/worktrees` | replace | M5, M6 |
 | `runs_keep` | integer >= 0 | 20 | replace | M6 `ph runs --prune` |
 | `first_prompt_note` | string | kit base note (PHCL-29) | kit-owned | M5 prompt assembly |
 | `project_prompt_note` | string | `""` | replace | M5 (appended after the kit note) |
@@ -164,7 +164,7 @@ Thinking levels (`THINKING_LEVELS`): `off, low, medium, high, xhigh, max`.
 | `ownership` | `{owns_forms: [{prefix, maps_to}], shared: {globs: string[], predicate: path\|null}, source_roots: string[], ignore: string[]}` | `{owns_forms: [{prefix: "Path:", maps_to: "<path>"}], shared: {globs: [], predicate: null}, source_roots: [], ignore: []}` |
 | `review_lenses` | `[{name, text, stage?: skeleton\|plan_review\|code, applies_to?: string[]}]` (stage default `code`, applies_to default all files) | `[]` (code review then uses the kit lens `correctness`, owned by gsd-flows; plan review runs the `plan_review` lenses, then the built-in `source-grounding` lens, which always runs) |
 | `syntax_checkers` | map extension (`.ext`) -> `{argv, timeout_s?: int>=1, max_parallel?: int>=1}` (consumer defaults: hook budget, 3) | `{}` |
-| `instructions` | string[] repo-relative paths | `[]` |
+| `instructions` | string[] repo-relative paths (no drive, no leading `/`, no `..`) | `[]` |
 | `envelope` | `null` or `[{axis, values?: array, range?: array, source}]` (exactly one of values/range) | `null` |
 | `stack_skill` | `null` or skill folder name `[A-Za-z0-9._-]+` | `null` |
 | `agents` | map GSD role -> agent type `[A-Za-z0-9._-]+` (role from `GSD_ROLES`) | `{}` |
@@ -174,7 +174,7 @@ Thinking levels (`THINKING_LEVELS`): `off, low, medium, high, xhigh, max`.
 | `attribution` | `null` or path | `null` |
 | `worktree_setup` | `{copy: string[], link: string[]}` (both keys required; git-ignored paths copied or linked into each new harness worktree) | `{copy: [], link: []}` |
 
-Paths in the adapter are repo-relative script paths; the adapter hook protocol (ADPT-15) is implemented by code-gsd-core in `gsd/` and documented in its report.
+Paths in the adapter are repo-relative script paths (validated at load: no drive, no leading `/`, no `..`; `ph lint` also fails a path whose link leads outside the project); the adapter hook protocol (ADPT-15) is implemented by code-gsd-core in `gsd/` and documented in its report.
 
 ### 4.2 `gsd` section (M9/M10; ADPT-11..13; entries merge per entry, an entry is replaced whole)
 

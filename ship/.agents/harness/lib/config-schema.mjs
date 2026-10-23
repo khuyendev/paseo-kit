@@ -1,5 +1,6 @@
 // Closed schema of the harness config: types and rules only. Every shipped value lives in harness.defaults.json
 // (CONF-05), so this module holds no default value.
+import path from "node:path";
 
 export class ConfigError extends Error {
   constructor(key, message, text = `invalid harness config ${key}: ${message}`) {
@@ -22,10 +23,18 @@ const NAME = /^[A-Za-z0-9._-]+$/;
 // The largest reply the file tools return in one page (FTOL-23).
 const READ_PAGE_CHARS = 40000;
 
+// A repo-relative path after normalizing: no drive, no leading slash, no `.` or `..` that leaves the repo (the docs'
+// contract; lint also checks where a link inside the repo leads).
+const leavesRepo = (v) => {
+  const p = path.posix.normalize(v.replace(/\\/g, "/"));
+  return /^[A-Za-z]:|^\//.test(p) || p === "." || p === ".." || p.startsWith("../");
+};
+const REPO_PATH_TEXT = "expected a repo-relative path (no drive, leading slash or ..)";
+
 const int = (min = 0, max) => ({ kind: "int", min, max });
 const bool = () => ({ kind: "bool" });
 const str = (rules = {}) => ({ kind: "str", ...rules });
-const strs = () => ({ kind: "strs" });
+const strs = (rules = {}) => ({ kind: "strs", ...rules });
 const arr = (of, min = 0) => ({ kind: "arr", of, min });
 const obj = (fields, optional = []) => ({ kind: "obj", fields, optional: new Set(optional) });
 const map = (of, keyPattern) => ({ kind: "map", of, keyPattern });
@@ -67,7 +76,7 @@ export const SCHEMA = obj({
   context_guard: obj({ window_tokens: int(1), start_pct: int(1, 100), step_pct: int(1, 100) }),
   io_guard: obj({ start_rounds: int(), step_rounds: int(1), edit_start_rounds: int(), edit_step_rounds: int(1) }),
   read_limits: obj({ fileMaxChars: int(1), replyMaxChars: int(1, READ_PAGE_CHARS) }),
-  worktree_dir: str({ nonEmpty: true }),
+  worktree_dir: str({ nonEmpty: true, repoPath: true }),
   runs_keep: int(),
   first_prompt_note: str(),
   project_prompt_note: str(),
@@ -83,15 +92,15 @@ export const SCHEMA = obj({
     }),
     verify_vocabulary: map(obj({
       prefix: str({ nonEmpty: true }),
-      parser: nullable(str({ nonEmpty: true })),
-      resolver: nullable(str({ nonEmpty: true })),
+      parser: nullable(str({ nonEmpty: true, repoPath: true })),
+      resolver: nullable(str({ nonEmpty: true, repoPath: true })),
       runner: nullable(str({ nonEmpty: true })),
-      evidence_parser: nullable(str({ nonEmpty: true })),
+      evidence_parser: nullable(str({ nonEmpty: true, repoPath: true })),
       exit_code_sufficient: bool(),
     })),
     ownership: obj({
       owns_forms: arr(obj({ prefix: str({ nonEmpty: true }), maps_to: str({ nonEmpty: true }) })),
-      shared: obj({ globs: strs(), predicate: nullable(str({ nonEmpty: true })) }),
+      shared: obj({ globs: strs(), predicate: nullable(str({ nonEmpty: true, repoPath: true })) }),
       source_roots: strs(),
       ignore: strs(),
     }, ["ignore"]),
@@ -102,14 +111,14 @@ export const SCHEMA = obj({
       applies_to: strs(),
     }, ["stage", "applies_to"])),
     syntax_checkers: map(obj({ argv: argv(), timeout_s: int(1), max_parallel: int(1) }, ["timeout_s", "max_parallel"]), /^\.[^./\\]+$/),
-    instructions: strs(),
+    instructions: strs({ repoPath: true }),
     envelope: nullable(arr(obj({ axis: str({ nonEmpty: true }), values: arr(null), range: arr(null), source: str({ nonEmpty: true }) }, ["values", "range"]))),
     stack_skill: nullable(str({ pattern: NAME, patternText: "a skill folder name" })),
     agents: map(str({ pattern: NAME, patternText: "an agent type name" })),
     mutex: nullable(str({ nonEmpty: true })),
     startup_globs: strs(),
     hook_timeout_s: int(1),
-    attribution: nullable(str({ nonEmpty: true })),
+    attribution: nullable(str({ nonEmpty: true, repoPath: true })),
     worktree_setup: obj({ copy: strs(), link: strs() }),
   }),
   gsd: obj({
@@ -168,6 +177,7 @@ function checkStr(node, value, key) {
   if (node.nonEmpty && !value) throw new ConfigError(key, "must not be empty");
   if (node.oneOf && !node.oneOf.includes(value)) throw new ConfigError(key, `expected one of ${node.oneOf.join("|")}`);
   if (node.pattern && !node.pattern.test(value)) throw new ConfigError(key, `expected ${node.patternText}`);
+  if (node.repoPath && leavesRepo(value)) throw new ConfigError(key, REPO_PATH_TEXT);
 }
 
 function checkFields(node, value, key) {
@@ -195,6 +205,7 @@ function check(node, value, key) {
     case "strs":
       if (!Array.isArray(value) || value.some((v) => typeof v !== "string")) throw new ConfigError(key, "expected array of strings");
       if (node.min && (value.length < node.min || value.some((v) => !v))) throw new ConfigError(key, "expected a non-empty argv array");
+      if (node.repoPath) value.forEach((v, i) => { if (leavesRepo(v)) throw new ConfigError(`${key}[${i}]`, REPO_PATH_TEXT); });
       return;
     case "arr":
       if (!Array.isArray(value)) throw new ConfigError(key, "expected array");

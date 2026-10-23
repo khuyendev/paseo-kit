@@ -5,7 +5,7 @@ import path from "node:path";
 import { GSD_ROLES, OVERLAY_REL, loadConfigLenient } from "../config.mjs";
 import { readJson, readText } from "../lib/io.mjs";
 import { errText } from "../lib/cli.mjs";
-import { isInside, toSlash } from "../lib/paths.mjs";
+import { isInside, realInside, toSlash } from "../lib/paths.mjs";
 import { runGit } from "../runtime/worktrees.mjs";
 import { setupProblems } from "../runtime/worktree-setup.mjs";
 import { isBuiltinRunnerKind } from "./contract.mjs";
@@ -41,6 +41,10 @@ function lintAdapter(root, cfg) {
   const out = [];
   const fail = (msg) => out.push({ level: "fail", file: OVERLAY_REL, line: null, msg });
   const exists = (rel) => fs.existsSync(path.resolve(root, rel));
+  // Adapter paths are repo-relative: an existing one whose link leads outside the project is a failure too.
+  const linkOut = (where, rel) => {
+    if (exists(rel) && !realInside(root, rel)) fail(`${where}: ${rel} resolves outside the project through a link`);
+  };
   const a = cfg.adapter;
   if (a.stack_skill && !exists(`${SKILLS}/${a.stack_skill}/SKILL.md`)) fail(`adapter.stack_skill ${a.stack_skill}: no ${SKILLS}/${a.stack_skill}/SKILL.md`);
   for (const [role, type] of Object.entries(a.agents)) {
@@ -50,15 +54,17 @@ function lintAdapter(root, cfg) {
   for (const [kind, entry] of Object.entries(a.verify_vocabulary)) {
     for (const key of ["parser", "resolver", "evidence_parser"]) {
       if (entry[key] && !exists(entry[key])) fail(`adapter.verify_vocabulary.${kind}.${key}: script ${entry[key]} does not exist`);
+      else if (entry[key]) linkOut(`adapter.verify_vocabulary.${kind}.${key}`, entry[key]);
     }
     if (entry.runner !== null && !a.commands.verify[entry.runner]) fail(`adapter.verify_vocabulary.${kind}.runner: ${entry.runner} is not a key of adapter.commands.verify`);
     if (entry.runner === null && !isBuiltinRunnerKind(kind)) fail(`adapter.verify_vocabulary.${kind}: no runner (only build and cmd have built-in runners)`);
   }
   for (const [where, rel] of [["adapter.ownership.shared.predicate", a.ownership.shared.predicate], ["adapter.attribution", a.attribution]]) {
     if (rel && !exists(rel)) fail(`${where}: script ${rel} does not exist`);
+    else if (rel) linkOut(where, rel);
   }
-  for (const { where, rel } of adapterArgvScripts(a)) if (!exists(rel)) fail(`${where}: script ${rel} does not exist`);
-  for (const rel of a.instructions) if (!exists(rel)) fail(`adapter.instructions: ${rel} does not exist`);
+  for (const { where, rel } of adapterArgvScripts(a)) if (!exists(rel)) fail(`${where}: script ${rel} does not exist`); else linkOut(where, rel);
+  for (const rel of a.instructions) if (!exists(rel)) fail(`adapter.instructions: ${rel} does not exist`); else linkOut("adapter.instructions", rel);
   for (const p of setupProblems(root, a.worktree_setup, runGit)) fail(p);
   for (const [role, entry] of Object.entries(cfg.gsd.roles)) {
     if (!entry.reason?.trim()) fail(`gsd.roles.${role}: no reason (every role entry states why)`);
