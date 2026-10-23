@@ -68,7 +68,8 @@ The spike thresholds that decide the zoom levels and the tint levels were fixed 
 - Sprite requests to its own server: an enumerated key, never a path or free text.
 - The one wave link: when an agent carries the `harness.run` label, the plugin server reads the run record and the
   plan and summary files of that phase under the workspace directory. The read is contained to that directory and
-  read-only; it is the only file read of the plugin.
+  read-only; it is the only file read of the plugin. A file over 1 MiB is not read: an over-size PLAN or SUMMARY
+  withholds the counts, and an over-size run.json or args.json gives no link.
 
 ## What it never does
 

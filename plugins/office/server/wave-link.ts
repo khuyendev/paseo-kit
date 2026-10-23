@@ -2,7 +2,8 @@
 // the single named, read-only exception to OFFC-05 (D-03, D-09). It reads run.json, args.json and one phase's PLAN and SUMMARY files
 // under `<project>/_workspace/_runs/<runId>` and `<project>/.planning/phases`, and nothing is ever changed on disk.
 // Every path is checked after resolving links: a junction or symlink leading out of the project is never read.
-// A SUMMARY that cannot be read or parsed withholds the counts; files are reparsed only when their mtime changes.
+// A SUMMARY that cannot be read or parsed withholds the counts; files are reparsed only when their mtime or size changes,
+// and a file over WAVE_FILE_MAX_BYTES fails to read.
 // Carried from the retired swarm plugin's wave link; frontmatter.ts is a byte copy of the planning panel's parser.
 import { promises as fs } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
@@ -18,6 +19,7 @@ import { parseFrontmatter } from "./frontmatter.ts";
 
 export const WAVE_CACHE_MAX_ENTRIES = 256;
 export const WAVE_PLANS_MAX = 64;
+export const WAVE_FILE_MAX_BYTES = 1024 * 1024;
 
 const RUNS_REL = join("_workspace", "_runs");
 const PLAN_FILE = /^(\d+(?:\.\d+)*)-(\d+)-PLAN\.md$/;
@@ -25,6 +27,7 @@ const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
 interface Cached<T> {
   mtimeMs: number;
+  size: number;
   value: T;
 }
 
@@ -40,6 +43,24 @@ function frontmatter(text: string): Record<string, unknown> {
   const fm = parseFrontmatter(text);
   if ("error" in fm) throw new Error(`line ${fm.line}: ${fm.error}`);
   return fm.data ?? {};
+}
+
+// The whole text of `file`, or a throw when it is longer than WAVE_FILE_MAX_BYTES (the caller sees "failed").
+async function readBounded(file: string): Promise<string> {
+  const handle = await fs.open(file, "r");
+  try {
+    const buffer = Buffer.alloc(WAVE_FILE_MAX_BYTES + 1);
+    let filled = 0;
+    for (;;) {
+      const { bytesRead } = await handle.read(buffer, filled, buffer.length - filled, filled);
+      if (bytesRead === 0) break;
+      filled += bytesRead;
+    }
+    if (filled > WAVE_FILE_MAX_BYTES) throw new RangeError("file is larger than the wave link reads");
+    return buffer.toString("utf8", 0, filled);
+  } finally {
+    await handle.close();
+  }
 }
 
 function isInside(child: string, parent: string, allowSame: boolean): boolean {
@@ -90,7 +111,7 @@ export class WaveLinker {
     this.files.set(file, entry);
   }
 
-  // Reads and parses `file` (contained in `root` after links) only when its mtime changed.
+  // Reads and parses `file` (contained in `root` after links) only when its mtime or size changed.
   private async cachedRead<T>(file: string, root: string, parse: (text: string) => T): Promise<Read<T>> {
     const real = await realInside(file, root);
     if (real === "missing" || real === "failed") {
@@ -98,16 +119,17 @@ export class WaveLinker {
       return real;
     }
     let mtimeMs: number;
+    let size: number;
     try {
-      mtimeMs = (await fs.stat(real)).mtimeMs;
+      ({ mtimeMs, size } = await fs.stat(real));
     } catch {
       return "failed";
     }
     const hit = this.files.get(file);
-    if (hit && hit.mtimeMs === mtimeMs) return { value: hit.value as T };
+    if (hit && hit.mtimeMs === mtimeMs && hit.size === size) return { value: hit.value as T };
     try {
-      const value = parse(await fs.readFile(real, "utf8"));
-      this.store(file, { mtimeMs, value });
+      const value = parse(await readBounded(real));
+      this.store(file, { mtimeMs, size, value });
       return { value };
     } catch {
       return "failed";
