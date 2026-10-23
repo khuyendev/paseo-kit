@@ -164,7 +164,10 @@ Trusted code, no sandbox:
 - A busy loop in a script hangs the runner (there is no body timeout).
 - Budget is checked before each new call, so agents already running can overshoot it.
 
-Log lines (`log.txt`, `ph watch-run`):
+Log lines (`log.txt`, the lines `ph watch-run` follows). `ph watch-run RUNID` prints only the `log`, `phase` and
+`workflow` lines and the `agent done ... null` lines; `ph watch-run RUNID --all` prints every line below. With several
+run ids each line starts with `[<last 4 characters of the run id>] `. Filter with `--line-buffered` so the pipe does
+not hold lines back, and match both forms: `ph watch-run RUNID --all | grep --line-buffered -E '(^|\] )(phase |agent (start|done) )'`.
 
 | line | meaning |
 | --- | --- |

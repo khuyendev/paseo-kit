@@ -9,6 +9,9 @@ export const EXIT = Object.freeze({ OK: 0, USAGE: 1, PROBLEMS: 2 });
 
 export const errText = (e) => String(e?.message ?? e).split("\n")[0].slice(0, 300);
 
+// Free text (a stop reason, an error) on one status line: whitespace collapsed, at most 300 characters.
+export const oneLine = (text) => String(text).replace(/\s+/g, " ").trim().slice(0, 300);
+
 export const failedLine = (what, err) => `failed ${what}: ${errText(err)}`;
 
 export const quoteName = (name) => (/^[\w.-]+$/.test(name) ? name : `'${String(name).replace(/'/g, "'\\''")}'`);

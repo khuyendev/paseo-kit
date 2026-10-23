@@ -1,7 +1,7 @@
 // ph watch-run (FLOW-40): follow run logs by appended bytes and end by itself when every run has ended.
 import fs from "node:fs";
 import path from "node:path";
-import { UsageError } from "../lib/cli.mjs";
+import { UsageError, oneLine } from "../lib/cli.mjs";
 import { readJsonIf } from "../lib/io.mjs";
 import { pidAlive } from "../lib/proc.mjs";
 import { RUN_FILES, runsDirOf, runsDirSuffix } from "./journal.mjs";
@@ -81,7 +81,15 @@ export async function watchRunCommand(ctx) {
       if (now - st.since >= ABSENT_MS) end(st, `workflow not started (no run.json in ${st.dir})`);
       return;
     }
-    if (info.status !== "running") return end(st, `workflow ended (run.json status ${info.status})`);
+    if (info.status !== "running") {
+      // The runner writes run.json before its terminal log line, so the next poll reads that line before this fallback.
+      if (!st.settling) {
+        st.settling = true;
+        return;
+      }
+      const why = info.stopReason ? `; reason: ${oneLine(info.stopReason)}` : info.error ? `; error: ${oneLine(info.error)}` : "";
+      return end(st, `workflow ended (run.json status ${info.status}${why})`);
+    }
     // Three consecutive dead checks, so a runner that just wrote its last line is not taken for dead.
     if (pidAlive(info.pid)) st.deadChecks = 0;
     else if (++st.deadChecks >= DEAD_CHECKS) end(st, `workflow interrupted (runner pid ${info.pid} is gone; end it with: ph archive --run ${st.id}${archiveHint})`);

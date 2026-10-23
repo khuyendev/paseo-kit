@@ -18,12 +18,13 @@ function fixtureRun(s, id, { status = "done", pid = DEAD_PID, log = [], journal 
   return dir;
 }
 
-test("FLOW-40 status stopped with a dead pid ends at once; no ids exits 1", async () => {
+test("FLOW-40 status stopped with a dead pid ends after one settling poll; no ids exits 1", async () => {
   const s = setup();
   fixtureRun(s, "wf_a", { status: "stopped" });
   const r = await s.ph(["watch-run", "wf_a"]);
   assert.equal(r.code, 0);
   assert.deepEqual(r.out, ["workflow ended (run.json status stopped)"]);
+  assert.deepEqual(s.clock.sleeps, [1000]);
   assert.equal((await s.ph(["watch-run"])).code, 1);
 });
 
