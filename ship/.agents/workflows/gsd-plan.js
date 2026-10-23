@@ -132,6 +132,20 @@ const warnings = [];
 const advisories = [];
 const result = (status, extra = {}) => ({ status, phaseDir, mode, roles: roleTable, warnings, advisories, ...extra });
 const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reason, ...extra });
+// G017: the effective settings each gated judgment reads, hashed into its revision key (`--settings`). A changed lane,
+// role or limit reruns the judgments it decides; each key takes only the settings its own judgments read. The inputs
+// key (outline reuse) stays file-only: a regenerated outline that matches the old one is refused below, so a
+// planning-only change would fail there; `replan` regenerates the outline on purpose.
+const roleOf = (name) => ({ ...(g.roles?.[name] ?? {}), ...(roleOverrides[name] ?? {}) });
+const planning = { tracer, reversibilityGates, granularity: g.granularity, plan_limits: g.plan_limits, stack_skill: cfg.adapter.stack_skill ?? null };
+const settingsOf = {
+  freeze: { lanes: lanes.map((l) => ({ lens: l.lens, text: lensText(l.lens), model: l.model ?? null, effort: l.effort ?? null })), skeleton_lane: roleOf("skeleton_lane"), tracer, maxSkeletonPasses },
+  plan: { ...planning, planner: roleOf("planner") },
+  checked: { ...planning, checker: roleOf("checker"), maxCheckIterations },
+};
+const settingsDigest = {};
+for (const [key, value] of Object.entries(settingsOf)) settingsDigest[key] = await sha(JSON.stringify(value));
+if (Object.values(settingsDigest).some((h) => !h)) return result("failed", { reason: "settings digest unavailable" });
 
 // ---- preconditions (GSDF-16, GSDF-33) ----
 phase("Preconditions");
@@ -203,7 +217,7 @@ const revisionContext = (plans, issues) => [
 ].join("\n");
 async function inputsDigest() { return (await gsd(["revisions", "hash", phaseDir, "inputs"])).json?.hash ?? "none"; }
 // CR-GSF-19: skeleton reviews judge the outline, manifest and wiring, which the freeze key covers and inputs does not.
-async function skeletonDigest() { return (await gsd(["revisions", "hash", phaseDir, "freeze"])).json?.hash ?? "none"; }
+async function skeletonDigest() { return (await gsd(["revisions", "hash", phaseDir, "freeze", "--settings", settingsDigest.freeze])).json?.hash ?? "none"; }
 async function plannerCall(session, label, body, digestKey, digest, extra = {}) {
   const prompt = [body, POLICY, RETURN_NOTE, digestLine(digestKey, digest)].join("\n\n");
   return call(prompt, { label, session, agentType: agentFor("planner", "gsd-planner"), schema: PLANNER_SCHEMA, ...roleOpts(session === "planner:outline" ? "outline" : "planner"), ...extra });
@@ -450,14 +464,14 @@ if (laneWrite.code !== 0) return failedCall("skeleton lane inputs", laneWrite.st
 
 // A skeleton reviewed in this run invalidates every plan written against the old one (GSDF-24).
 let skeletonFresh = false;
-if ((await gsd(["revisions", "check", phaseDir, "freeze"])).code === 0 && (await gsd(["revisions", "check", phaseDir, "skeleton"])).code === 0 && !a.replan) {
+if ((await gsd(["revisions", "check", phaseDir, "freeze", "--settings", settingsDigest.freeze])).code === 0 && (await gsd(["revisions", "check", phaseDir, "skeleton"])).code === 0 && !a.replan) {
   log("skeleton unchanged since its review passed");
 } else {
   skeletonFresh = true;
   const gate = await skeletonGate();
   await gsd(["write", phaseDir, "OUTLINE-REVIEW"], renderReview(gate));
   if (gate.status !== "passed") return gate.stop;
-  await gsd(["revisions", "record", phaseDir, "freeze"]);
+  await gsd(["revisions", "record", phaseDir, "freeze", "--settings", settingsDigest.freeze]);
   await gsd(["revisions", "record", phaseDir, "skeleton"]);
   docPaths.push(P("OUTLINE-REVIEW.md"));
   if (await wiringExists()) docPaths.push(WIRING);
@@ -470,7 +484,7 @@ const frozen = (await gsd(["outline", "parse", N])).json ?? {};
 const rows = frozen.rows ?? outline?.rows ?? [];
 const planIds = rows.map((r) => r.id);
 const manifestOf = (id) => (frozen.manifest?.plans ?? []).find((p) => p.id === id) ?? { id };
-freezeHash = (await gsd(["revisions", "hash", phaseDir, "freeze"])).json?.hash ?? "none";
+freezeHash = (await gsd(["revisions", "hash", phaseDir, "freeze", "--settings", settingsDigest.freeze])).json?.hash ?? "none";
 const wavesOf = (list) => [...new Set(list.map((r) => Number(r.wave ?? 1)))].sort((x, y) => x - y).map((w) => list.filter((r) => Number(r.wave ?? 1) === w).map((r) => r.id));
 const superseded = await gsd(["supersede", phaseDir, "--keep", planIds.join(",")]);
 for (const m of superseded.json?.moved ?? []) log(`superseded ${typeof m === "string" ? m : m.from ?? JSON.stringify(m)}`);
@@ -479,7 +493,7 @@ const wiringQuotes = (id) => wiringText.split(/\r?\n/).filter((l) => l.includes(
 for (const ids of wavesOf(rows)) {
   const todo = [];
   for (const id of ids) {
-    const same = (await gsd(["revisions", "check", phaseDir, `plan:${id}`])).code === 0;
+    const same = (await gsd(["revisions", "check", phaseDir, `plan:${id}`, "--settings", settingsDigest.plan])).code === 0;
     const st = !skeletonFresh && same ? await gsd(["verify", "plan-structure", planPath(id)]) : null;
     if (st?.code === 0) {
       setStructureWarnings(id, st.json?.warnings);
@@ -540,7 +554,7 @@ async function recordEach(ids, gapScoped) {
   for (const id of ids) {
     const s = await structureFix(id, gapScoped ? "planner:gaps" : `planner:${id}`);
     if (s) stop ??= s;
-    else if (!gapScoped) await gsd(["revisions", "record", phaseDir, `plan:${id}`]);
+    else if (!gapScoped) await gsd(["revisions", "record", phaseDir, `plan:${id}`, "--settings", settingsDigest.plan]);
   }
   return stop;
 }
@@ -549,13 +563,13 @@ async function recordEach(ids, gapScoped) {
 phase("Checker");
 const checked = await checkerLoop(planIds, false);
 if (checked.stop) return checked.stop;
-if (!checked.skipped) await gsd(["revisions", "record", phaseDir, "checked"]);
+if (!checked.skipped) await gsd(["revisions", "record", phaseDir, "checked", "--settings", settingsDigest.checked]);
 docPaths.push(...planIds.map(planPath));
 
 // ---- optional plan review (GSDF-37) ----
 if (planReview) {
   phase("Plan review");
-  const pr = await workflow("gsd-plan-review", { phaseDir, plans: planIds, roles: roleOverrides, researchPath: approvedResearch, guidance: a.reviewGuidance ?? null });
+  const pr = await workflow("gsd-plan-review", { phaseDir, plans: planIds, roles: roleOverrides, researchPath: approvedResearch, guidance: a.reviewGuidance ?? null, planSettings: settingsDigest.plan });
   if (pr?.status !== "converged") {
     const stop = { stage: "Plan review", reason: pr?.reason ?? "plan review did not converge", issues: pr?.issues ?? [], conflict: pr?.conflict ?? null };
     // The owner answers here and reruns: reviewGuidance goes to the review prompts, a CONTEXT decision is read by them too.
@@ -589,7 +603,7 @@ async function countProbes(scopeIds, gapScoped) {
   return found;
 }
 async function checkerLoop(scopeIds, gapScoped) {
-  if (!gapScoped && !a.replan && (await gsd(["revisions", "check", phaseDir, "checked"])).code === 0) {
+  if (!gapScoped && !a.replan && (await gsd(["revisions", "check", phaseDir, "checked", "--settings", settingsDigest.checked])).code === 0) {
     log("checker skipped: plans unchanged since the last passing check");
     return { skipped: true };
   }
@@ -616,7 +630,7 @@ async function checkerLoop(scopeIds, gapScoped) {
       POLICY,
       digestLine("freeze", freezeHash),
       // The checker judges PLAN contents, which the freeze key does not cover (CR-GSF-19).
-      digestLine("checked", (await gsd(["revisions", "hash", phaseDir, "checked"])).json?.hash ?? "none"),
+      digestLine("checked", (await gsd(["revisions", "hash", phaseDir, "checked", "--settings", settingsDigest.checked])).json?.hash ?? "none"),
     ].filter(Boolean).join("\n\n");
     const opts = { label: `checker-${iter}`, agentType: agentFor("checker", "gsd-plan-checker"), readOnly: true, schema: ISSUES_SCHEMA, ...roleOpts("checker") };
     let c = await call(prompt, opts);

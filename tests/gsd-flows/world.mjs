@@ -43,7 +43,9 @@ export function makeWorld(opts = {}) {
     checked: () => planIdsOnDisk().map((id) => read(`${PHASE_DIR}/${id}-PLAN.md`)).join(""),
     handoff: () => keyText.checked(),
   };
-  const hashOf = (key) => digest(key.startsWith("plan:") ? read(`${PHASE_DIR}/${key.slice(5)}-PLAN.md`) : keyText[key]());
+  // As the real keyHash: the --settings digest of the verb is part of the key (G017).
+  const hashOf = (key, settings = "") => digest(settings + (key.startsWith("plan:") ? read(`${PHASE_DIR}/${key.slice(5)}-PLAN.md`) : keyText[key]()));
+  const settingsArg = (args) => (args.includes("--settings") ? args[args.indexOf("--settings") + 1] : undefined);
   const recorded = new Map();
   const attempts = {};
   const world = { project, root: project.root, read, write, recorded, attempts, events: [], probes: {}, coverage: { passed: true }, status: opts.status ?? "PLANNED", verification: opts.verification ?? null };
@@ -52,9 +54,13 @@ export function makeWorld(opts = {}) {
     "find-phase": () => ({ found: true, status: world.status, directory: PHASE_DIR }),
     "research status": () => (read(phaseFile("RESEARCH.md")) ? { code: 0, json: { status: "complete" } } : { code: 66, json: { status: "missing" } }),
     "roadmap get-phase": () => ({ found: true, phase_number: "1", phase_name: "Core", goal: "core works", requirements: ["R-1"] }),
-    "revisions hash": ([, key]) => ({ hash: hashOf(key) }),
-    "revisions check": ([, key]) => (!recorded.has(key) ? { code: 66, json: { status: "never" } } : recorded.get(key) === hashOf(key) ? { code: 0, json: { same: true } } : { code: 1, json: { same: false } }),
-    "revisions record": ([, key]) => { recorded.set(key, hashOf(key)); ev(`record ${key}`); return { recorded: key }; },
+    "revisions hash": (args) => ({ hash: hashOf(args[1], settingsArg(args)) }),
+    "revisions check": (args) => {
+      const key = args[1];
+      const hash = hashOf(key, settingsArg(args));
+      return !recorded.has(key) ? { code: 66, json: { status: "never" } } : recorded.get(key) === hash ? { code: 0, json: { same: true } } : { code: 1, json: { same: false } };
+    },
+    "revisions record": (args) => { recorded.set(args[1], hashOf(args[1], settingsArg(args))); ev(`record ${args[1]}`); return { recorded: args[1] }; },
     "outline parse": () => {
       const text = read(phaseFile("PLAN-OUTLINE.md"));
       if (!text) return { code: 66, json: { exists: false } };

@@ -72,7 +72,8 @@ function multi(args, names) {
 
 const state = (sub, usage, options = {}) => ({ usage, options: { phase: "string", status: "string", plan: "string", activity: "string", plans: "string", name: "string", wave: "string", text: "string", "text-file": "string", by: "string", milestone: "string", ...options }, run: (g, a, o) => stateVerb(g, sub, o) });
 const init = (workflow) => ({ usage: `ph gsd init.${workflow} <phase>`, options: {}, run: (g, a) => initPayload(g, workflow, a[0]) });
-const revisions = (sub) => ({ usage: `ph gsd revisions.${sub} <phase> <key>`, options: {}, run: (g, a) => revisionsVerb(g, sub, phaseOf(g, a), a[1]) });
+// `--settings <digest>`: the effective settings of the key's judgments (the workflow's digest; absent = files only).
+const revisions = (sub) => ({ usage: `ph gsd revisions.${sub} <phase> <key> [--settings <digest>]`, options: { settings: "string" }, run: (g, a, o) => revisionsVerb(g, sub, phaseOf(g, a), a[1], o.settings ?? null) });
 
 export const verbHandlers = {
   "init.project": { usage: "ph gsd init.project", options: {}, run: (g) => initProject(g) },

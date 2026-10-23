@@ -70,6 +70,8 @@ const plans = Array.isArray(a.plans) ? a.plans.filter((p) => /^\d+(\.\d+)?-\d+$/
 if (!plans.length) return { status: "failed", reason: "plans must list the plan ids to review" };
 const guidance = a.guidance ?? null;
 if (guidance !== null && (typeof guidance !== "string" || !guidance.trim())) return { status: "failed", reason: "guidance must be non-empty text when given" };
+// G017: gsd-plan passes the settings digest of its plan key, so a plan recorded here is keyed the way gsd-plan checks it.
+const planSettings = typeof a.planSettings === "string" && a.planSettings ? a.planSettings : null;
 const cfg = await loadCfg();
 // The finder, verifier and judge have no generic agent type: they run the default tier unless the adapter maps one.
 const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
@@ -205,7 +207,7 @@ for (let cycle = 1; ; cycle++) {
   // The warnings of this check are the plans' warnings now; gsd-plan replaces the earlier ones with them (G019).
   structure = checks.map((c) => ({ plan: c.plan, warnings: c.warnings }));
   // The edited plans pass the structure check: record them, so the next gsd-plan run keeps them instead of planning them again.
-  for (const p of plans) await gsd(["revisions", "record", phaseDir, `plan:${p}`]);
+  for (const p of plans) await gsd(["revisions", "record", phaseDir, `plan:${p}`, ...(planSettings ? ["--settings", planSettings] : [])]);
   const h = await gsd(["handoff", N]);
   if (h.code !== 0) return { status: "failed", reason: "handoff refused after the plan-review edit", errors: h.json?.errors ?? [] };
   planRevision = h.json?.planRevision ?? null;

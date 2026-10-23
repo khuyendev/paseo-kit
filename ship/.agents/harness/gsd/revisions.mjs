@@ -94,7 +94,9 @@ function digestOf(entry) {
 
 // Hash of a key: its files (deduplicated, sorted) plus this phase's ROADMAP section without its generated block, never
 // another phase's section. Files outside the code root are not hashed; they are listed in `skipped` so the caller can report them.
-export function keyHash(g, phase, key) {
+// A workflow passes `settings`, the digest of the effective settings its judgments of this key read (G017): a changed
+// lane, role or limit then changes the key even when no file did.
+export function keyHash(g, phase, key, settings = null) {
   const seen = new Map();
   const outside = new Set();
   for (const f of keyFiles(g, phase, key)) {
@@ -105,6 +107,7 @@ export function keyHash(g, phase, key) {
   const lines = labels.map((label) => `${label}\0${digestOf(seen.get(label))}\n`);
   const section = roadmapPhase(loadRoadmap(g.codeRoot, g.cfg), phase.number)?.section ?? null;
   lines.push(`roadmap\0${section === null ? "missing" : textDigest(sectionContent(section))}\n`);
+  if (settings !== null) lines.push(`settings\0${settings}\n`);
   const skipped = [...outside].filter((label) => !seen.has(label)).sort();
   return { hash: sha256(lines.join("")), files: labels, skipped };
 }
@@ -113,8 +116,8 @@ const revisionsFile = (phase) => path.join(phase.dir, "revisions.json");
 
 export const readRevisions = (phase) => readJsonIf(revisionsFile(phase), null) ?? { v: 1, keys: {}, lists: {} };
 
-export function recordRevision(g, phase, key) {
-  const { hash, files, skipped } = keyHash(g, phase, key);
+export function recordRevision(g, phase, key, settings = null) {
+  const { hash, files, skipped } = keyHash(g, phase, key, settings);
   const head = headOf(g.codeRoot);
   const list = sha256(files.join("\n")).slice(0, 16);
   // G046: the read, merge and write of revisions.json run under one lock, so a record never replaces another's keys.
@@ -129,19 +132,19 @@ export function recordRevision(g, phase, key) {
   return { key, hash, files: files.length, skipped, head };
 }
 
-export function checkRevision(g, phase, key) {
+export function checkRevision(g, phase, key, settings = null) {
   const recorded = readRevisions(phase).keys[key];
   if (!recorded) throw none(`revisions key ${key} was never recorded`, { key });
-  const { hash, skipped } = keyHash(g, phase, key);
+  const { hash, skipped } = keyHash(g, phase, key, settings);
   const head = headOf(g.codeRoot);
   return { key, same: hash === recorded.hash, recorded: recorded.hash, current: hash, skipped, headChanged: recorded.head !== head, recordedHead: recorded.head, head };
 }
 
-export function revisionsVerb(g, sub, phase, key) {
-  if (sub === "record") return done(recordRevision(g, phase, need(key)));
-  if (sub === "hash") return done({ key: need(key), ...keyHash(g, phase, key) });
+export function revisionsVerb(g, sub, phase, key, settings = null) {
+  if (sub === "record") return done(recordRevision(g, phase, need(key), settings));
+  if (sub === "hash") return done({ key: need(key), ...keyHash(g, phase, key, settings) });
   if (sub === "check") {
-    const r = checkRevision(g, phase, need(key));
+    const r = checkRevision(g, phase, need(key), settings);
     return done({ status: r.same ? "same" : "changed", ...r }, r.same ? 0 : 1);
   }
   const data = readRevisions(phase);
