@@ -151,11 +151,13 @@ if (verdict.status === "passed") {
 if (verdict.status === "human_needed") {
   const items = verdict.humanVerification.length ? verdict.humanVerification : [{ test: "human verification", expected: "see the VERIFICATION report" }];
   const tests = items.map((h, i) => `### ${i + 1}. ${typeof h === "string" ? h : h.test ?? h.name ?? `item ${i + 1}`}\nexpected: ${typeof h === "string" ? h : h.expected ?? h.description ?? ""}\nresult: [pending]\n`).join("\n");
-  await gsd(["write", phaseDir, "UAT"], `---\nstatus: testing\nphase: ${phaseDir.split("/").pop()}\nsource: [${REPORT}]\n---\n\n## Current Test\n\nnumber: 1\nawaiting: user response\n\n## Tests\n\n${tests}\n## Summary\n\ntotal: ${items.length}\npassed: 0\nissues: 0\n`);
+  const uat = await gsd(["write", phaseDir, "UAT"], `---\nstatus: testing\nphase: ${phaseDir.split("/").pop()}\nsource: [${REPORT}]\n---\n\n## Current Test\n\nnumber: 1\nawaiting: user response\n\n## Tests\n\n${tests}\n## Summary\n\ntotal: ${items.length}\npassed: 0\nissues: 0\n`);
+  if (uat.code !== 0) return { status: "failed", reason: `UAT write failed: ${uat.json?.error ?? uat.code}` };
   return { ...verdict, route: "uat", uat: `${phaseDir}/${nn}-UAT.md` };
 }
 if (verdict.status === "gaps_found") {
-  await gsd(["requirements", "revert", N]);
+  const reverted = await gsd(["requirements", "revert", N]);
+  if (reverted.code !== 0) return { status: "failed", reason: `requirements revert failed: ${reverted.json?.error ?? reverted.code}` };
   return { ...verdict, route: "plan-gaps" };
 }
 return { ...verdict, route: "verify-after-evidence" };
