@@ -87,12 +87,18 @@ export function discardWorktree(wt, { git = runGit } = {}) {
 
 const WORKFLOW_NAME = /^(wf_\d{8}-\d{6}_[0-9a-f]{4})-\d+$/;
 const AGENT_NAME = /^(.+)-\d{8}-\d{6}_[0-9a-f]{4}$/;
+// A custom --run-id (any safe id) names its isolated agents `<run id>-<n>`; the digits after the last hyphen are n.
+const RUN_AGENT_NAME = /^(.+)-\d+$/;
 
-export function ownerOf(name) {
+export function ownerOf(name, runsDir) {
   const wf = WORKFLOW_NAME.exec(name);
   if (wf) return { kind: "run", id: wf[1] };
   const agent = AGENT_NAME.exec(name);
-  return agent ? { kind: "agent", name: agent[1] } : { kind: "unknown" };
+  if (agent) return { kind: "agent", name: agent[1] };
+  // Only a prefix that names an existing run dir is a run; a stray `<word>-<digits>` stays unknown.
+  const custom = RUN_AGENT_NAME.exec(name);
+  if (custom && runsDir && fs.existsSync(path.join(runsDir, custom[1], "run.json"))) return { kind: "run", id: custom[1] };
+  return { kind: "unknown" };
 }
 
 export function listHarnessWorktrees(top, cfg, { git = runGit } = {}) {
@@ -115,7 +121,7 @@ export function listHarnessWorktrees(top, cfg, { git = runGit } = {}) {
 
 /** inUse: run id -> from run.json; agent name -> agentLive.get(name) (true/false, undefined when the daemon was not asked). */
 export function classify(top, wt, { runsDir, agentLive = new Map(), git = runGit }) {
-  const owner = ownerOf(wt.name);
+  const owner = ownerOf(wt.name, runsDir);
   let inUse = null;
   let ownerText = "owner unknown";
   if (owner.kind === "run") {
