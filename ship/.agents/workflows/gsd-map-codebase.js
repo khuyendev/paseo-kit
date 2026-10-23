@@ -51,6 +51,10 @@ async function fileSha(path) { const r = await flow(["read", path]); return r.js
 const FOCUS = { tech: ["STACK", "INTEGRATIONS"], arch: ["ARCHITECTURE", "STRUCTURE"], quality: ["CONVENTIONS", "TESTING"], concerns: ["CONCERNS"] };
 const SAFE_PATH = /^(?!\/)(?![A-Za-z]:)[A-Za-z0-9_][A-Za-z0-9_ ./-]*$/;
 const CONFIRM_SCHEMA = { type: "object", properties: { focus: { type: "string" }, written: { type: "array", items: { type: "string" } } }, required: ["written"] };
+// The doc a confirmation names: `.planning/codebase/STACK.md`, `STACK.md` or `STACK`.
+const docName = (p) => String(p).split("/").pop().replace(/\.md$/i, "").toUpperCase();
+// G117: a mapper counts only when its confirmation names exactly the docs of its focus; otherwise the map is not this run's.
+const confirmed = (j, r) => { const names = (r?.result?.written ?? []).map(docName); return j.docs.every((d) => names.includes(d)) && names.every((n) => j.docs.includes(n)); };
 
 const a = args ?? {};
 const paths = a.paths === undefined ? [] : String(a.paths).split(",").map((p) => p.trim()).filter(Boolean);
@@ -66,14 +70,25 @@ const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
 
 phase("Map");
 const jobs = Object.entries(FOCUS).map(([focus, own]) => ({ focus, docs: own.filter((d) => docs.includes(d)) })).filter((j) => j.docs.length);
-const replies = await parallel(jobs.map((j) => () => call([
-  `Focus: ${j.focus}. Explore the codebase${paths.length ? ` limited to these paths (incremental remap): ${paths.join(", ")}` : ""} and write ${j.docs.map((d) => `.planning/codebase/${d}.md`).join(" and ")} directly.`,
-  paths.length ? "Update only the sections the listed paths affect; keep the rest of each document." : "",
-  "Do not write last_mapped_commit or last_mapped_at (the orchestrator stamps the map). Never copy secrets, keys or tokens into a document. Do not commit.",
-  "Return only a confirmation JSON {focus, written: [paths]}, not the documents.",
-].filter(Boolean).join("\n\n"), { label: `mapper-${j.focus}`, agentType: agentFor("mapper", "gsd-codebase-mapper"), role: "mapper", schema: CONFIRM_SCHEMA })));
-const failedJob = replies.findIndex((r) => r && !r.result && fatal(r.reason));
-if (failedJob >= 0) return { status: "failed", reason: `mapper ${jobs[failedJob].focus} failed: ${replies[failedJob].reason}` };
+// G117: a mapper that gives no confirmation naming its docs is retried once unless fatal (as gsd-plan-review); a job still
+// unconfirmed fails the run before the check and the stamp, so an old doc is never stamped as this run's map.
+const replies = await parallel(jobs.map((j) => async () => {
+  const prompt = [
+    `Focus: ${j.focus}. Explore the codebase${paths.length ? ` limited to these paths (incremental remap): ${paths.join(", ")}` : ""} and write ${j.docs.map((d) => `.planning/codebase/${d}.md`).join(" and ")} directly.`,
+    paths.length ? "Update only the sections the listed paths affect; keep the rest of each document." : "",
+    "Do not write last_mapped_commit or last_mapped_at (the orchestrator stamps the map). Never copy secrets, keys or tokens into a document. Do not commit.",
+    "Return only a confirmation JSON {focus, written: [paths]}, not the documents.",
+  ].filter(Boolean).join("\n\n");
+  const opts = { label: `mapper-${j.focus}`, agentType: agentFor("mapper", "gsd-codebase-mapper"), role: "mapper", schema: CONFIRM_SCHEMA };
+  let r = await call(prompt, opts);
+  if (!confirmed(j, r) && !fatal(r.reason)) r = await call(prompt, opts);
+  return r;
+}));
+const failedJob = jobs.findIndex((j, i) => !confirmed(j, replies[i]));
+if (failedJob >= 0) {
+  const r = replies[failedJob];
+  return { status: "failed", reason: `mapper ${jobs[failedJob].focus} failed: ${r?.result ? "its confirmation does not name exactly its docs" : (r?.reason ?? "no reply")}` };
+}
 
 phase("Check");
 const check = await flow(["map-check", ...docs]);
