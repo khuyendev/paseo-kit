@@ -22,6 +22,8 @@ export const HELP = [
   "",
   "ownership:",
   "  kit-owned (tracked by digest): .agents/harness.defaults.json, .agents/harness/** runtime, kit agents, workflows, skills, hooks, .claude/plugins/**, the AGENTS.md block",
+  "  kit block only: a shipped skill holding the kit markers (the gsd workflow skills); its front matter and project section are seeded once,",
+  "    then the project's; update migrates an unedited whole-file copy of an older kit and keeps an edited one (listed, exit 2)",
   "  project-owned, seeded once and never overwritten: .agents/harness.config.json (overlay and adapter), .agents/harness-history.md, .planning/",
   "  composition (kit.json composition, the gsd-*.js workflow scripts): kit default until the project edits its copy;",
   "    update then keeps the edited copy, also with --force (composition kept:, no conflict exit); pull offers it back",

@@ -8,6 +8,7 @@ import { checkHookSettings } from "./hooks.mjs";
 import { checkModGates } from "./mod.mjs";
 import { overlayLines } from "./overlay.mjs";
 import { compositionEntries, droppedLine, isComposition, isEdited, keptLine, statusLine, verbLines } from "./composition.mjs";
+import { seededPass } from "./seeded.mjs";
 import { fail } from "./failure.mjs";
 
 const LINK_CONFLICT = (key, prefix) => `conflict ${key}: ${linkProblem(prefix)}`;
@@ -30,8 +31,10 @@ export function install(ctx) {
   checkHookSettings(ctx.project, ctx.kit.template);
   if (ctx.enablePlugin) checkModGates(ctx.env);
   const records = {};
-  let conflicts = 0;
+  const seeded = seededPass(ctx, records, "install");
+  let conflicts = seeded.kept;
   for (const key of [...ctx.kit.units.keys()].sort(byCodePoint)) {
+    if (seeded.skip.has(key)) continue;
     const linked = linkedPart(ctx.kit, ctx.project, key);
     if (linked) {
       ctx.out(LINK_CONFLICT(key, linked));
@@ -65,10 +68,12 @@ export function update(ctx) {
   if (ctx.enablePlugin) checkModGates(ctx.env);
   const records = { ...manifest.files };
   const retiredHooks = new Set();
-  let changed = 0;
-  let kept = 0;
+  const seeded = seededPass(ctx, records, "update");
+  let changed = seeded.changed;
+  let kept = seeded.kept;
   let composed = 0;
   for (const key of allKeys(ctx.kit, records)) {
+    if (seeded.skip.has(key)) continue;
     const linked = linkedPart(ctx.kit, ctx.project, key);
     if (linked) {
       ctx.out(LINK_CONFLICT(key, linked));
@@ -117,9 +122,11 @@ export function update(ctx) {
 
 export function status(ctx) {
   const manifest = requireManifest(ctx.project);
-  let differ = 0;
+  const seeded = seededPass(ctx, { ...manifest.files }, "status");
+  let differ = seeded.kept;
   let edited = 0;
   for (const key of allKeys(ctx.kit, manifest.files)) {
+    if (seeded.skip.has(key)) continue;
     const linked = linkedPart(ctx.kit, ctx.project, key);
     if (linked) {
       ctx.out(LINK_CONFLICT(key, linked));
@@ -163,9 +170,11 @@ export function pull(ctx, partNames) {
     for (const name of unknown) ctx.err(`failed pull ${name}: not a kit part`);
     return 1;
   }
+  const seeded = seededPass(ctx, records, "pull", named);
   let copied = 0;
-  let skipped = 0;
+  let skipped = seeded.kept;
   for (const key of named.length ? [...new Set(named)] : [...known]) {
+    if (seeded.skip.has(key)) continue;
     const linked = linkedPart(ctx.kit, ctx.project, key, { kitSide: true });
     if (linked) {
       ctx.out(`skipped ${key} (${linkProblem(linked)})`);
