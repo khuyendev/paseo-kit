@@ -359,6 +359,7 @@
     ".agents/harness/ph.mjs",
     ".agents/harness/platform.mjs",
     ".agents/harness/runtime/agents.mjs",
+    ".agents/harness/runtime/cap-lock.mjs",
     ".agents/harness/runtime/cmd-agents.mjs",
     ".agents/harness/runtime/cmd-start.mjs",
     ".agents/harness/runtime/cmd-worktrees.mjs",

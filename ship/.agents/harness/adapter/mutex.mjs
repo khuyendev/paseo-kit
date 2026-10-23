@@ -97,10 +97,9 @@ export function unlock(name, token, { tmp } = {}) {
   }
 }
 
-// Runs `fn` while holding the named lock; `log` gets one `waiting for mutex <name>` line when it had to wait.
-// A null name runs `fn` at once (no mutex configured).
-export async function withMutex(name, fn, { log = () => {}, clock = realClock, tmp } = {}) {
-  if (!name) return fn();
+// Takes the named lock, waiting while a live owner holds it; returns the release. `log` gets one `waiting for mutex <name>`
+// line when it had to wait.
+export async function acquireMutex(name, { log = () => {}, clock = realClock, tmp } = {}) {
   let token;
   let waited = false;
   while (!(token = tryLock(name, { tmp }))) {
@@ -108,9 +107,17 @@ export async function withMutex(name, fn, { log = () => {}, clock = realClock, t
     waited = true;
     await clock.sleep(POLL_MS);
   }
+  return () => unlock(name, token, { tmp });
+}
+
+// Runs `fn` while holding the named lock; `log` gets one `waiting for mutex <name>` line when it had to wait.
+// A null name runs `fn` at once (no mutex configured).
+export async function withMutex(name, fn, { log = () => {}, clock = realClock, tmp } = {}) {
+  if (!name) return fn();
+  const release = await acquireMutex(name, { log, clock, tmp });
   try {
     return await fn();
   } finally {
-    unlock(name, token, { tmp });
+    release();
   }
 }

@@ -27,7 +27,7 @@ const contextOf = (u) => u?.contextWindowUsedTokens ?? (u?.inputTokens ?? 0) + (
  */
 export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunId, out, clock, onAdopt }) {
   const watchdog = createWatchdog({ session, cfg, clock, out, root });
-  const capacity = createCapacity({ session, cfg, clock, out });
+  const capacity = createCapacity({ session, cfg, clock, out, root });
   const definitions = new Map();
   const sessions = new Map();
   const gates = new Map();
@@ -188,7 +188,7 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
       const agent = await session.createAgent({ sel, prompt: text, title: `${workflowName}:${label}`, name: label, swarm: workflowName, run: runId, cwd, outputSchema, readOnly });
       agentId = agent.id;
       journalAgent?.(agentId);
-      admission?.created?.(agentId);
+      admission?.started?.(agentId);
       wd = watchdog.arm(agentId, label);
       out(`agent start #${n} ${label} ${id8(agentId)} ${identity.model}${primed ? " prime:two-turn" : ""}`);
     }
@@ -232,12 +232,12 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
         const continuation = `${task.trim()}\n\nRun ${runId} #${n} (bookkeeping only; ignore).`;
         const fresh = { sel, prompt: fullPrompt(), title: `${workflowName}:${label}`, name: label, swarm: workflowName, run: runId, cwd, readOnly };
         const r = await session.resumeSend(agentId, { sel, prompt: continuation, create: fresh });
+        admission?.started?.(r.agent.id);
         if (r.created) {
           wd?.disarm();
           agentId = r.agent.id;
           base = null;
           journalAgent?.(agentId);
-          admission?.created?.(agentId);
           wd = watchdog.arm(agentId, label);
           out(`log warning: ${r.warning}`);
         }
@@ -273,7 +273,7 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
     } catch (e) {
       if (e.agentId && e.archived !== true) {
         agentId = e.agentId;
-        admission?.created?.(agentId);
+        admission?.started?.(agentId);
         capacity.retain(agentId);
         out(`log warning: creation cleanup unconfirmed for ${agentId}; retaining its worktree`);
       }

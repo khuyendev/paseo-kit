@@ -4,6 +4,7 @@ import path from "node:path";
 import { UsageError, quoteName } from "../lib/cli.mjs";
 import { readText } from "../lib/io.mjs";
 import { id8, isInside } from "../lib/paths.mjs";
+import { takeCapLock } from "./cap-lock.mjs";
 import { composePrompt } from "./prompts.mjs";
 import { createWorktree, discardWorktree, releaseLease, stamp } from "./worktrees.mjs";
 
@@ -57,6 +58,17 @@ export async function prepareCreate(ctx) {
   session.requireCaller();
   await checkCallerRoot(session);
   return { session, live: await session.listAgents() };
+}
+
+// G133: fn runs under the caller's cap lock with a fresh listing of its agents, so the checks and the creates it makes
+// cannot race a spawn or a workflow run of the same caller in another process.
+export async function withCapLock(ctx, session, fn) {
+  const release = await takeCapLock(ctx.root, session.requireCaller(), ctx.clock);
+  try {
+    return await fn(await session.listAgents());
+  } finally {
+    release();
+  }
 }
 
 /**

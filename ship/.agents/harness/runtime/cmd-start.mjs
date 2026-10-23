@@ -9,7 +9,7 @@ import { checkBlockNames, parseFanout } from "./fanout.mjs";
 import { selectModel } from "./models.mjs";
 import { loadPrices } from "./pricing.mjs";
 import { resultJson } from "./result.mjs";
-import { checkCapacity, checkNameLengths, checkNamesFree, prepareCreate, readPrompt, runningCount, startAgent, waitHint } from "./start.mjs";
+import { checkCapacity, checkNameLengths, checkNamesFree, prepareCreate, readPrompt, runningCount, startAgent, waitHint, withCapLock } from "./start.mjs";
 import { repoTop } from "./worktrees.mjs";
 
 const resolveDir = (ctx, dir) => (dir === undefined ? undefined : path.resolve(ctx.root, dir));
@@ -38,7 +38,12 @@ async function spawn(ctx) {
     swarm: opts.name, task, def, sel, kind: "team", readOnly: opts["read-only"], workdir: resolveDir(ctx, opts.cwd),
     ws: resolveDir(ctx, opts.ws), worktree: opts.worktree,
   };
-  const results = await Promise.allSettled(names.map((name) => startAgent(ctx, session, { ...spec, name })));
+  // G133: the recheck and the creates run under the caller's cap lock, so no other process takes the slots checked above.
+  const results = await withCapLock(ctx, session, async (now) => {
+    checkCapacity(now, names.length, ctx.cfg);
+    checkNamesFree(now, names);
+    return Promise.allSettled(names.map((name) => startAgent(ctx, session, { ...spec, name })));
+  });
   const started = [];
   results.forEach((r, i) => {
     if (r.status === "fulfilled") {
@@ -73,7 +78,12 @@ async function fanout(ctx) {
   const spec = (b) => ({ ...common, name: b.name, task: b.prompt, def: b.def, sel: b.sel, readOnly: b.readOnly });
   if (opts.collect) return collect(ctx, session, live, blocks, spec);
   checkCapacity(live, blocks.length, ctx.cfg);
-  const results = await Promise.allSettled(blocks.map((b) => startAgent(ctx, session, { ...spec(b), kind: "team" })));
+  // G133: the recheck and the creates run under the caller's cap lock, as in spawn.
+  const results = await withCapLock(ctx, session, async (now) => {
+    checkCapacity(now, blocks.length, ctx.cfg);
+    checkNamesFree(now, blocks.map((b) => b.name));
+    return Promise.allSettled(blocks.map((b) => startAgent(ctx, session, { ...spec(b), kind: "team" })));
+  });
   const started = [];
   results.forEach((r, i) => {
     if (r.status === "fulfilled") {
@@ -127,7 +137,11 @@ async function collect(ctx, session, live, blocks, spec) {
       await admit();
       admitted = true;
       try {
-        agent = await startAgent(ctx, session, { ...spec(b), kind: "oneshot" });
+        // G133: the create re-reads the agents under the cap lock; another process may have taken the slot of the snapshot.
+        agent = await withCapLock(ctx, session, (now) => {
+          checkCapacity(now, 1, cfg);
+          return startAgent(ctx, session, { ...spec(b), kind: "oneshot" });
+        });
       } catch (e) {
         if (!(e.agentId && e.archived === false)) liveCount--;
         throw e;

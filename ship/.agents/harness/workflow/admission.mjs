@@ -1,8 +1,12 @@
 // Caller-wide admission of workflow calls beyond the run semaphore (FLOW-14): running capacity shared with teammates
-// and other runs, and the live-agent cap for calls that need a new agent (PHCL-24).
+// and other runs, and the live-agent cap for calls that need a new agent (PHCL-24). G133: the count and the
+// reservation hold the caller's cap lock, shared with every run and spawn of the caller, until the call's agent is
+// running or the call ends.
+import { takeCapLock } from "../runtime/cap-lock.mjs";
+
 const RECOUNT_MS = 5000;
 
-export function createCapacity({ session, cfg, clock, out }) {
+export function createCapacity({ session, cfg, clock, out, root }) {
   const reservations = new Set();
   const retained = new Set();
   const wakers = new Set();
@@ -50,7 +54,7 @@ export function createCapacity({ session, cfg, clock, out }) {
   return {
     retain: (agentId) => retained.add(agentId),
     unretain: (agentId) => retained.delete(agentId),
-    // {release(), created(agentId), keep()} once a running slot (and a live slot when needsNew) is free, or {reason}.
+    // {release(), started(agentId), keep()} once a running slot (and a live slot when needsNew) is free, or {reason}.
     admit: ({ needsNew }) => serial(() => admitOne(needsNew)),
   };
 
@@ -58,19 +62,37 @@ export function createCapacity({ session, cfg, clock, out }) {
     const liveDeadline = clock.now() + cfg.wait_timeout_s * 1000;
     let logged = false;
     for (;;) {
-      const n = await count(needsNew);
+      const unlock = await takeCapLock(root, session.requireCaller(), clock);
+      let n;
+      try {
+        n = await count(needsNew);
+      } catch (e) {
+        unlock();
+        throw e;
+      }
       if (n.runOk && n.liveOk) {
         const r = { needsNew, agentId: null, retain: false };
         reservations.add(r);
+        let held = true;
+        // The cap lock is released once: when the agent is running (started) or when the call ends (release).
+        const free = () => {
+          if (held) unlock();
+          held = false;
+        };
         return {
-          created: (agentId) => void (r.agentId = agentId),
+          started: (agentId) => {
+            r.agentId = agentId;
+            free();
+          },
           keep: () => void (r.retain = true),
           release: () => {
             reservations.delete(r);
+            free();
             wake();
           },
         };
       }
+      unlock();
       if (!n.liveOk && (n.stuck || clock.now() >= liveDeadline)) return { reason: liveReason(n.live) };
       if (!logged) {
         out(`log waiting for a free agent slot (${n.running} running of ${cfg.max_subagents})`);
