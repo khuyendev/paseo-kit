@@ -49,11 +49,13 @@ for (const pre of ["", "gap-"]) for (let k = 1; ; k++) {
 const checkedEvidence = [];
 for (const p of evidence) {
   const c = await flow(["evidence-check", p], { plans: planned });
-  checkedEvidence.push({ path: p, status: c.json?.status ?? "invalid", reason: c.json?.reason ?? null });
+  checkedEvidence.push({ path: p, status: c.json?.status ?? "invalid", reason: c.json?.reason ?? null, ...(c.json?.stale ? { stale: c.json.stale } : {}) });
   if (c.code !== 0) log(`evidence ${p} is ${c.json?.status ?? "invalid"}: ${c.json?.reason ?? ""}`);
 }
 const current = checkedEvidence.filter((e) => e.status === "current").map((e) => e.path);
-const stale = checkedEvidence.filter((e) => e.status !== "current");
+// Kit feedback 97: partial evidence proves every obligation but the stale ones it names.
+const partial = checkedEvidence.filter((e) => e.status === "partial");
+const stale = checkedEvidence.filter((e) => e.status !== "current" && e.status !== "partial");
 const checkedHash = (await gsd(["revisions", "hash", phaseDir, "checked"])).json?.hash ?? "none";
 const evidenceIdentities = [];
 for (const e of checkedEvidence) evidenceIdentities.push({ ...e, sha: await fileSha(e.path) });
@@ -97,6 +99,7 @@ const partsOf = (list) => ({ attemptKey: attempt.key, parts: list.map(({ id, pat
 const READ_LINE = "Read: the phase PLAN files and SUMMARY files (claims, not proof), .planning/ROADMAP.md, .planning/REQUIREMENTS.md, the phase CONTEXT and WIRING when present, the previous report when present, and the gate evidence below.";
 const evidenceLines = () => [
   `Gate evidence (current; proof of what ran): ${current.length ? current.join(", ") : "none"}`,
+  partial.length ? `Partly current evidence (proof of what ran, except the named obligations, whose command changed since the gate ran; treat the claims only they would back as unverified): ${partial.map((e) => `${e.path} (stale: ${e.stale.join(", ")})`).join(", ")}` : "",
   stale.length ? `Stale or invalid evidence (NOT proof; treat the claims it would back as unverified): ${stale.map((e) => `${e.path} (${e.status})`).join(", ")}` : "",
   "Do not rerun anything: no build, no tests, no commands with side effects.",
 ];
@@ -155,7 +158,7 @@ else if (mode === "phase") {
   if (attempt.runId === runId && st.code === 0 && st.json.sha !== before && !attempt.abandonedNow) verdict = await readback(null);
 }
 if (!verdict) {
-  const fp = (await gsd(["verification", "fingerprint", phaseDir, ...current])).json ?? {};
+  const fp = (await gsd(["verification", "fingerprint", phaseDir, ...current, ...partial.map((e) => e.path)])).json ?? {};
   if (mode === "per-criterion") {
     const failedParts = await verifyParts(fp);
     if (failedParts) return failedParts;
