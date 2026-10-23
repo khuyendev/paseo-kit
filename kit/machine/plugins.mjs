@@ -21,7 +21,12 @@ export function kitPlugins(pluginsDir) {
 }
 
 const isKitEntry = (have, p) => have?.source === "directory" && typeof have.path === "string" && samePath(have.path, p.dir);
-const hasDeps = (p) => fs.existsSync(path.join(p.dir, "node_modules"));
+// Written only after `npm ci` exits 0: a node_modules folder alone can be a partial install.
+const DEPS_DONE = ".npm-ci-done";
+const hasDeps = (p) => fs.existsSync(path.join(p.dir, DEPS_DONE));
+export const markDeps = (p) => fs.writeFileSync(path.join(p.dir, DEPS_DONE), "");
+// A failed `npm ci` leaves no marker, so the next apply retries; its partial node_modules goes too.
+export const dropDeps = (p) => fs.rmSync(path.join(p.dir, "node_modules"), { recursive: true, force: true });
 
 // Check lines: `ok`/`problem` when this run enables plugins, else every line is a `note`.
 export function pluginLines(live, plugins, enabling) {

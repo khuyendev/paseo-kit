@@ -238,7 +238,7 @@ test("MACH-15 without the flag pluginsEnabled and plugins stay; with it the kit 
   live.pluginsEnabled = false;
   live.plugins = { "user-plugin": { source: "directory", path: "/owner/plugin", enabled: true } };
   const m = makeMachine({ live, plugins });
-  fs.mkdirSync(path.join(m.kitDir, "plugins", "office", "node_modules"), { recursive: true });
+  fs.writeFileSync(path.join(m.kitDir, "plugins", "office", ".npm-ci-done"), "");
   const r = await m.run(["apply", "--no-reload"]);
   assert.equal(r.code, 0, r.stdout);
   assert.deepEqual([m.readConfig().pluginsEnabled, m.readConfig().plugins], [false, live.plugins]);

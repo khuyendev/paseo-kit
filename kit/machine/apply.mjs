@@ -6,7 +6,7 @@ import { claudeGate, nodeGate, runCheck } from "./check.mjs";
 import { loadInputs, readLive, Fail } from "./context.mjs";
 import { npmCi, paseoReload } from "./external.mjs";
 import { applyLinks, linkDirs, linkStates, readRecord } from "./links.mjs";
-import { kitPlugins, needsDeps, patchPlugins } from "./plugins.mjs";
+import { dropDeps, kitPlugins, markDeps, needsDeps, patchPlugins } from "./plugins.mjs";
 import { patchProviders } from "./providers.mjs";
 import { secretResolver } from "./template.mjs";
 
@@ -67,8 +67,10 @@ export async function runApply(ctx, opts) {
       if (!r.ok) {
         problems++;
         ctx.out(`failed plugin ${p.id}: npm ci ${r.reason}`);
+        dropDeps(p);
         continue;
       }
+      markDeps(p);
       ctx.out(`paseo: plugin ${p.id}: npm ci done`);
     }
     ctx.out(`paseo: to load it now: paseo plugin reload ${p.id}`);
