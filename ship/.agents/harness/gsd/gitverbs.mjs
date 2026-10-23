@@ -2,17 +2,22 @@
 // Subjects carry the conventional scope `type(<phase>-<plan>)` or `type(<phase>-w<k>)`; commits.json maps wave commits to plans.
 import path from "node:path";
 import { readJsonIf } from "../lib/io.mjs";
-import { done, fail, rel, unavailable } from "./common.mjs";
+import { done, fail, rel, unavailable, withFileLock } from "./common.mjs";
 import { GIT_TIMEOUT_MS, git, gitOk } from "./git.mjs";
 import { findPhase, normPlanId, padPhase } from "./planning.mjs";
 import { guardWriter } from "./state.mjs";
 
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
+// kit-feedback 2: a plan's docs commit and an execute's code commit can run at once (different phases), and git has one index
+// writer, so every commit takes the git writer lock and waits for it, as the STATE.md lock does.
 export function commitVerb(g, message, files, removed) {
   guardWriter(g.env);
   if (!message) throw fail("commit needs a message");
   if (!files.length && !removed.length) throw fail("commit needs --files <paths...>");
+  return withFileLock(path.join(g.codeRoot, "_workspace", "locks", "git-writer.lock"), () => commitIndex(g, message, files, removed));
+}
+function commitIndex(g, message, files, removed) {
   const all = [...files, ...removed].map((f) => f.replace(/\\/g, "/"));
   if (!g.cfg.gsd.commit_policy.docs && all.every((f) => f.replace(/^\.\//, "").startsWith(".planning/"))) {
     return done({ committed: false, skipped: true, hash: null, reason: "skipped_commit_docs_false" });

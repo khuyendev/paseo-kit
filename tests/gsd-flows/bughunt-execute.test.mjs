@@ -408,10 +408,10 @@ test("G006 G020 the code-root lease names the holder's workflow; a claim left by
   assert.equal(lockCheck(p.root, "debug").holderKind, "gsd-debug");
   unlock(p.root, "debug", after.token);
   const w = makeExecWorld();
-  const h = lock(w.root, "debug", "wf_plan_A", process.pid, "gsd-plan");
+  const h = lock(w.root, "debug", "wf_quick_A", process.pid, "gsd-quick");
   try {
     const r = await exec(w);
-    assert.match(r.result.reason, /^a gsd-plan run holds this code root \(wf_plan_A\); execute starts after it ends$/);
+    assert.match(r.result.reason, /^a gsd-quick run holds this code root \(wf_quick_A\); execute starts after it ends$/);
   } finally { unlock(w.root, "debug", h.token); }
 });
 

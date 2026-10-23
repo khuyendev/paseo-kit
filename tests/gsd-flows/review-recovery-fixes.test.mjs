@@ -36,8 +36,8 @@ test("GSDF-41 CR-GSF-03 batch worktrees receive accepted dependency output befor
   assert.ok(JSON.parse(w.read(`${PD}/transfers/01-02.json`)).files.every((f) => !f.path.includes("01-01")));
 });
 
-test("GSDF-64 CR-GSF-18 debug excludes planning, execution and quick writers", async () => {
-  for (const [name, args] of [["gsd-plan", { phaseDir: PD }], ["gsd-execute", { phaseDir: PD }], ["gsd-quick", { description: "fix a" }]]) {
+test("GSDF-64 CR-GSF-18 debug excludes execution and quick writers (planning holds only its phase lease: F02)", async () => {
+  for (const [name, args] of [["gsd-execute", { phaseDir: PD }], ["gsd-quick", { description: "fix a" }]]) {
     const w = makeWorld({ files: { ".planning/ROADMAP.md": "# R\n" } });
     const held = lock(w.root, "debug", "wf_debug", process.pid);
     try {

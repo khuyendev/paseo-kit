@@ -22,6 +22,6 @@ Results:
 - `needs-owner` type `budget-not-saved`: the session file would not take a budget write (a lock, a read-only file, a full disk). No debugger turn runs on a budget that was not recorded; fix the file and rerun. A turn is reserved in the frontmatter `budget_reserved` before it starts; a reservation whose run never reported back still counts as spent.
 - `resolved`: the verify obligation of the failing signature passed on a fresh run that executed something (a run that executed nothing or could not run is never a pass); the session moved to `resolved/` and the knowledge base got an entry.
 - `diagnosed`: root cause found (find_root_cause_only); the session stays active.
-- `refused`: another debug session runs on this code root (sessions run one at a time; no executor or planner writes there meanwhile).
+- `refused`: another debug session runs on this code root (sessions run one at a time; no executor or quick run writes there meanwhile; a planner may).
 
 Rules for the session file: only this skill and the `ph gsd debug` verbs write `## Checkpoints`, move files to `resolved/` and append the knowledge base. Reproduction scripts from reports are never executed by the skill.

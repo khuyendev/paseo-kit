@@ -1,4 +1,4 @@
-// G106: gsd-quick takes the code-root writer lease like gsd-plan, gsd-execute and gsd-debug.
+// G106: gsd-quick takes the code-root writer lease like gsd-execute and gsd-debug (a plan holds only its phase lease).
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";

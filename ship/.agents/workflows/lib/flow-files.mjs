@@ -58,7 +58,8 @@ export function remove(root, rel) {
   return { removed: existed ? rel : null };
 }
 
-// GSDF-64: debug, plan, execute and quick share one root writer lock (the file keeps its old name `debug`); the
+// GSDF-64: debug, execute and quick share one root writer lock (the file keeps its old name `debug`); plan holds only
+// `phase-<NN>` (kit-feedback 2). The
 // record names the holder's workflow, so a refusal says which run holds the root. The short transition claim
 // serializes acquisition, stale reclamation and release, so a contender cannot remove a newly acquired lease.
 // Unknown liveness fails closed; it is never permission to write. The claim records its owner pid, so a claim left by a

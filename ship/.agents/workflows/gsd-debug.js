@@ -36,8 +36,8 @@ async function call(prompt, opts) {
 }
 const fatal = (reason) => Boolean(reason && NEVER_RETRY.test(reason));
 const needsOwner = (stage, reason, extra = {}) => ({ status: "needs-owner", stage, reason, ...extra });
-// The refusal of a held code-root lease names the holder's workflow and run (kit-feedback 1).
-const leaseText = (r) => `${r?.holderKind ? `a ${r.holderKind} run` : "another run"} holds this code root (${r?.holder ?? r?.error ?? "unknown run"})`;
+// The refusal of a held lease names the holder's workflow and run (kit-feedback 1); `what` says what it holds.
+const leaseText = (r, what = "this code root") => `${r?.holderKind ? `a ${r.holderKind} run` : "another run"} holds ${what} (${r?.holder ?? r?.error ?? "unknown run"})`;
 async function discussOpen(phaseDir, nn) {
   const ex = (await flow(["exists", `${phaseDir}/${nn}-DISCUSS-CHECKPOINT.json`, `${phaseDir}/${nn}-CONTEXT.md`])).json?.exists ?? {};
   if (ex[`${phaseDir}/${nn}-DISCUSS-CHECKPOINT.json`]) return "discussion interrupted (DISCUSS-CHECKPOINT present); finish it with gsd-discuss";
@@ -68,7 +68,7 @@ const data = (text) => `DATA_START\n${String(text).split(/\r?\n/).map((l) => `  
 const EXTEND = `extend with ph gsd debug extend ${slug} (stdin {"turns", "minutes", "reason"}), then continue`;
 
 phase("Session");
-// GSDF-64: one writer (debug, plan, execute, quick) per code root at a time.
+// GSDF-64: one root writer (debug, execute, quick) per code root at a time; a plan holds only its phase lease (kit-feedback 2).
 const lock = await flow(["lock", "debug", runId, "gsd-debug"]);
 if (lock.code !== 0) return { status: "refused", reason: `${leaseText(lock.json)}; debug after it ends` };
 try {

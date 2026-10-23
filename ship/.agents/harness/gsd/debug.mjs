@@ -151,7 +151,7 @@ const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 
 
 // G112: the create scan, reopen and slug loop must not interleave with another create, or two creates for one signature
 // (or one label) both pick the same file and the second write replaces the first session. Own lock file, not the
-// workflow's `debug` lease: gsd-plan and gsd-execute hold that lease too. Exclusive-create like withStateLock.
+// workflow's `debug` lease: gsd-execute and gsd-quick hold that lease too. Exclusive-create like withStateLock.
 function withCreateLock(root, fn) {
   fs.mkdirSync(debugDir(root), { recursive: true });
   const lock = path.join(debugDir(root), "create.lock");

@@ -36,8 +36,8 @@ async function call(prompt, opts) {
 }
 const fatal = (reason) => Boolean(reason && NEVER_RETRY.test(reason));
 const needsOwner = (stage, reason, extra = {}) => ({ status: "needs-owner", stage, reason, ...extra });
-// The refusal of a held code-root lease names the holder's workflow and run (kit-feedback 1).
-const leaseText = (r) => `${r?.holderKind ? `a ${r.holderKind} run` : "another run"} holds this code root (${r?.holder ?? r?.error ?? "unknown run"})`;
+// The refusal of a held lease names the holder's workflow and run (kit-feedback 1); `what` says what it holds.
+const leaseText = (r, what = "this code root") => `${r?.holderKind ? `a ${r.holderKind} run` : "another run"} holds ${what} (${r?.holder ?? r?.error ?? "unknown run"})`;
 async function discussOpen(phaseDir, nn) {
   const ex = (await flow(["exists", `${phaseDir}/${nn}-DISCUSS-CHECKPOINT.json`, `${phaseDir}/${nn}-CONTEXT.md`])).json?.exists ?? {};
   if (ex[`${phaseDir}/${nn}-DISCUSS-CHECKPOINT.json`]) return "discussion interrupted (DISCUSS-CHECKPOINT present); finish it with gsd-discuss";
@@ -131,8 +131,15 @@ async function pool(items, n, fn) {
 phase("Preconditions");
 const guard = await flow(["cwd-guard", cfg.worktree_dir]);
 if (guard.code !== 0) return result("refused", { reason: (guard.json?.problems ?? ["cwd guard failed"]).join("; "), stranded: guard.json?.stranded ?? [], dirty: guard.json?.dirty ?? [] });
+// kit-feedback 2: execute writes the code root and its phase directory, so it holds the phase lease and the root writer lease
+// for the whole run. Planning of another phase may run meanwhile; another plan of this phase, a debug or a quick run may not.
+const phaseLease = await flow(["lock", `phase-${nn}`, runId, "gsd-execute"]);
+if (phaseLease.code !== 0) return result("refused", { reason: `${leaseText(phaseLease.json, `phase ${N}`)}; execute starts after it ends` });
 const lease = await flow(["lock", "debug", runId, "gsd-execute"]);
-if (lease.code !== 0) return result("refused", { reason: `${leaseText(lease.json)}; execute starts after it ends` });
+if (lease.code !== 0) {
+  await flow(["unlock", `phase-${nn}`, phaseLease.json.token]);
+  return result("refused", { reason: `${leaseText(lease.json)}; execute starts after it ends` });
+}
 try {
 const anti = await flow(["anti-patterns", phaseDir]);
 if (anti.code !== 0) return owner("Execute", `blocking anti-patterns need three written answers each in ${anti.json?.answersFile}: ${(anti.json?.unanswered ?? []).join(", ")}; run gsd-discuss ${N} to write them (it reads CONTEXT), or write them with node ${FLOW} write ${anti.json?.answersFile} (JSON on stdin)`, { rows: anti.json?.unanswered ?? [] });
@@ -1040,4 +1047,5 @@ for (const d of done) {
 return finish({ evidence: evidenceFiles, finalGate: finalEvidence });
 } finally {
   await flow(["unlock", "debug", lease.json.token]);
+  await flow(["unlock", `phase-${nn}`, phaseLease.json.token]);
 }

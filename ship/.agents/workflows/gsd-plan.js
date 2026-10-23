@@ -39,8 +39,8 @@ async function call(prompt, opts) {
 }
 const fatal = (reason) => Boolean(reason && NEVER_RETRY.test(reason));
 const needsOwner = (stage, reason, extra = {}) => ({ status: "needs-owner", stage, reason, ...extra });
-// The refusal of a held code-root lease names the holder's workflow and run (kit-feedback 1).
-const leaseText = (r) => `${r?.holderKind ? `a ${r.holderKind} run` : "another run"} holds this code root (${r?.holder ?? r?.error ?? "unknown run"})`;
+// The refusal of a held lease names the holder's workflow and run (kit-feedback 1); `what` says what it holds.
+const leaseText = (r, what = "this code root") => `${r?.holderKind ? `a ${r.holderKind} run` : "another run"} holds ${what} (${r?.holder ?? r?.error ?? "unknown run"})`;
 async function discussOpen(phaseDir, nn) {
   const ex = (await flow(["exists", `${phaseDir}/${nn}-DISCUSS-CHECKPOINT.json`, `${phaseDir}/${nn}-CONTEXT.md`])).json?.exists ?? {};
   if (ex[`${phaseDir}/${nn}-DISCUSS-CHECKPOINT.json`]) return "discussion interrupted (DISCUSS-CHECKPOINT present); finish it with gsd-discuss";
@@ -151,9 +151,10 @@ if (Object.values(settingsDigest).some((h) => !h)) return result("failed", { rea
 
 // ---- preconditions (GSDF-16, GSDF-33) ----
 phase("Preconditions");
-// GSDF-64: no planner writes in the code root while another writer (debug, execute, quick, plan) holds it.
-const lease = await flow(["lock", "debug", runId, "gsd-plan"]);
-if (lease.code !== 0) return result("refused", { reason: `${leaseText(lease.json)}; plan after it ends` });
+// kit-feedback 2: plan holds only its phase's lease, so planning phase N+1 can run while phase N executes. It writes no code
+// and takes no root writer lease; STATE, ROADMAP and the commit take their short writer locks inside ph gsd.
+const lease = await flow(["lock", `phase-${nn}`, runId, "gsd-plan"]);
+if (lease.code !== 0) return result("refused", { reason: `${leaseText(lease.json, `phase ${N}`)}; plan after it ends` });
 try {
 const found = (await gsd(["find-phase", N])).json;
 // G010: the number names the phase directory; a phaseDir with another slug would plan into a stale directory.
@@ -781,5 +782,5 @@ async function gapMode() {
   return out;
 }
 } finally {
-  await flow(["unlock", "debug", lease.json.token]);
+  await flow(["unlock", `phase-${nn}`, lease.json.token]);
 }
