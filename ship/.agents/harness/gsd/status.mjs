@@ -5,7 +5,7 @@ import path from "node:path";
 import { readJsonIf } from "../lib/io.mjs";
 import { sha256, textDigest } from "../lib/hash.mjs";
 import { isInside } from "../lib/paths.mjs";
-import { asArray, done, none, readIf, rel, unavailable } from "./common.mjs";
+import { asArray, done, mentions, none, readIf, rel, unavailable } from "./common.mjs";
 import { haltIds, listFiles, phaseFile, planIds, summaryIds } from "./planning.mjs";
 import { keyHash, readAttempt } from "./revisions.mjs";
 import { loadRoadmap, roadmapPhase } from "./roadmap.mjs";
@@ -164,7 +164,7 @@ export function researchStatus(g, phase) {
     const reqBlock = /<phase_requirements>([\s\S]*?)<\/phase_requirements>/.exec(body)?.[1] ?? null;
     const reqs = roadmapPhase(loadRoadmap(g.codeRoot, g.cfg), phase.number)?.requirements ?? [];
     if (reqs.length && reqBlock === null) problems.push("missing <phase_requirements>");
-    else for (const id of reqs) if (reqBlock !== null && !reqBlock.includes(id)) problems.push(`phase requirement ${id} missing from <phase_requirements>`);
+    else for (const id of reqs) if (reqBlock !== null && !mentions(reqBlock, id)) problems.push(`phase requirement ${id} missing from <phase_requirements>`);
   }
   if (!problems.length && fm.status === "blocked" && !/<research_blockers>/.test(body)) problems.push("blocked report without <research_blockers>");
   if (problems.length) return done({ status: "invalid", ...base, problems }, 1);
