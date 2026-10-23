@@ -13,9 +13,10 @@ const MAX_LISTED_ERRORS = 20;
 
 export const schemaInstruction = (schema) => `\n\nReply with only a JSON object (no other text) that matches this JSON schema:\n${JSON.stringify(schema)}`;
 
-export function schemaRetryPrompt(errors, schema, native) {
+// A retry is a new turn, and Paseo applies outputSchema to the first turn only, so the retry restates the schema.
+export function schemaRetryPrompt(errors, schema) {
   const listed = errors.slice(0, MAX_LISTED_ERRORS).map((e) => `- ${e}`).join("\n");
-  return `Your reply did not match the required JSON schema:\n${listed}\nReply again with only the corrected JSON object.${native ? "" : schemaInstruction(schema)}`;
+  return `Your reply did not match the required JSON schema:\n${listed}\nReply again with only the corrected JSON object.${schemaInstruction(schema)}`;
 }
 
 const contextOf = (u) => u?.contextWindowUsedTokens ?? (u?.inputTokens ?? 0) + (u?.cachedInputTokens ?? 0);
@@ -264,7 +265,7 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
         }
         seen.push(...errors.map((e) => `#${attempt} ${e}`));
         if (attempt > cfg.schema_retries) return result("null", { reason: `reply did not match the schema after ${attempt} replies: ${seen.slice(0, 3).join("; ")}` });
-        text = await send(schemaRetryPrompt(errors, opts.schema, native));
+        text = await send(schemaRetryPrompt(errors, opts.schema));
       }
     } catch (e) {
       if (e.agentId && e.archived !== true) {
