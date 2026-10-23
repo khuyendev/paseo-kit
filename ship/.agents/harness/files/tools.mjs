@@ -23,12 +23,12 @@ const BASE = [
     description: "Apply ordered exact replacements across files, preserving line endings. oldText must match once after earlier edits. Line edits, instead of oldText: give the file entry the tag of a read_ranges entry, then {from, to, newText} replaces those lines of that read (newText \"\" deletes them) or {after, newText} inserts after a line (0: at the top); a final line break in newText is optional. The lines are checked against that read and found again if earlier edits moved them; an entry's line edits apply before its oldText edits. By default matching edits commit, failures get retained fix IDs, and already-applied edits are skipped. Do not resend successful edits. Retry fixes with {id} for a suggested match, {id, occurrence}, {id, oldText}, {id, path}, or {id, from/to/after, tag} for a line edit; newText may override the retained replacement. atomic aborts all writes on any failure; dryRun writes nothing.",
     inputSchema: obj({
       files: list(obj({
-        path: str,
+        path: { type: "string", minLength: 1 },
         tag: str,
         edits: list(obj({ oldText: { type: "string", minLength: 1 }, newText: str, from: int(1), to: int(1), after: int(0) }, ["newText"])),
       }, ["path", "edits"])),
       fixes: list(obj({
-        id: str, occurrence: int(1), oldText: { type: "string", minLength: 1 }, newText: str, path: str,
+        id: str, occurrence: int(1), oldText: { type: "string", minLength: 1 }, newText: str, path: { type: "string", minLength: 1 },
         tag: str, from: int(1), to: int(1), after: int(0),
       }, ["id"])),
       atomic: { type: "boolean", default: false },
