@@ -212,6 +212,10 @@ export function createFakeDaemon({
       const agent = need(agentId);
       if (!fake.ignoreModelUpdates) agent.model = model;
     },
+    async setAgentThinkingOption(agentId, thinkingOptionId) {
+      record("setAgentThinkingOption", [agentId, thinkingOptionId]);
+      need(agentId).thinkingOptionId = thinkingOptionId;
+    },
     async respondToPermission(agentId, requestId, response) {
       record("respondToPermission", [agentId, requestId, response]);
       const agent = need(agentId);

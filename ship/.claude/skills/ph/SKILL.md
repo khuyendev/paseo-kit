@@ -49,6 +49,7 @@ or config error (nothing done), 2 done with failed items or problems.
 | `ph team` | your live subagents: `<id8> <status> <context%> <provider/model> <name>`. |
 | `ph context [--self] [--rotate-pct N] [NAME...]` | context-window use, highest first; `ROTATE` at or above N (default `context_guard.start_pct`) marks the agent and changes nothing. With `--self`, a last line `compact reminder at N% (next in T tokens)` gives the context guard's threshold and the tokens left before its next reminder. To rotate it, start a fresh agent with a handoff, then `ph archive` the old one. |
 | `ph stop NAME...` | cancels the running turn; agent and context stay. |
+| `ph model <agentId\|runId> <tier\|provider/model> [--thinking LEVEL]` | switches a live agent (any agent a kit command started, by full id) to the model and thinking of the tier or provider/model, `model <name> <id8>: <old> -> <new>`. A run id switches every live agent of that run and prints `failed model <name>: ...` (exit 2) for one it cannot move. Only within the agent's provider (a model change does not cross providers; start a new agent for that). `--thinking` takes the kit levels (off, low, medium, high, xhigh, max). |
 | `ph archive NAME... \| --idle [--name-prefix P] \| --name-prefix P \| --run RUNID [--runs-dir D]` | archives agents; `--run` also stops a running workflow runner and marks the run `stopped`. |
 | `ph compact-self [--focus TEXT] [--resume TEXT] [--agent ID]` | compacts you after this turn (see below). |
 | `ph task add\|update\|list\|get --ws D ...` | the team's shared task list `<ws>/tasks.json` (see below). |
@@ -72,8 +73,10 @@ Options are `--key value` only; a value may itself start with `--`. Prompts: exa
   `--model pro` inherits `tiers.pro.features`; a direct `--model circle/<model>` does not. Fast does not change
   permission mode or model identity and requires provider/model support. Patch only requested tier fields,
   preserve other settings, and do not duplicate tiers merely for Fast on/off. Changes affect new agents, including
-  the next `agent()` call of a running workflow (it reads the overlay again; the log names `tier <name>: <old> -> <new>`);
-  live agents keep their model, and cached resume calls may create no agent. The shipped tiers remain unconfigured.
+  the next `agent()` call of a running workflow (it reads the overlay again; the log names `tier <name>: <old> -> <new>`).
+  A live agent of a running workflow follows its tier too when the new model is on the same provider (its model and
+  thinking switch; the log names `retier <label> <id8>: <old> -> <new>`); on another provider it keeps its model and the
+  log says so. Cached resume calls may create no agent. The shipped tiers remain unconfigured.
 - `--role R` (fanout `role=`, workflow `agent({role})`) names a GSD role; model and effort then follow
   `gsd.roles.<R>` of the adapter. Precedence, for model and effort separately: `--model`/`--effort` > role entry >
   the agent type's `model:` > `default_tier`. The role is never guessed from the agent type. The role catalog in the kit's `docs/INTERFACES.md` section 4.2 (Role catalog) lists which workflow passes each role, its agent type and tier.

@@ -115,7 +115,8 @@ export async function runWorkflow(o) {
     const cost = r.usage?.costUsd;
     if (typeof cost === "number") state.costUsd = (state.costUsd ?? 0) + cost;
     const reason = ok ? null : (r.reason ?? "unknown");
-    journal({ ...base, agentId: r.agentId ?? null, model: r.model ?? null, status: ok ? "ok" : "null", reason, result: ok ? r.result : null, tokens: r.tokens ?? 0, usage: r.usage ?? null, duration_s: r.durationS ?? null, ...(r.worktree ? { worktree: r.worktree } : {}) });
+    // model is the one the agent runs on when the call ends; retiers lists the switches the call made (F45B).
+    journal({ ...base, agentId: r.agentId ?? null, model: r.model ?? null, status: ok ? "ok" : "null", reason, result: ok ? r.result : null, tokens: r.tokens ?? 0, usage: r.usage ?? null, duration_s: r.durationS ?? null, ...(r.worktree ? { worktree: r.worktree } : {}), ...(r.retiers ? { retiers: r.retiers } : {}) });
     out(`agent done #${base.n} ${base.label} ${ok ? "ok" : `null (${reason})`} tokens=${r.tokens ?? 0} cost=${fmtCost(cost)} ${r.durationS ?? "?"}s`);
   }
 

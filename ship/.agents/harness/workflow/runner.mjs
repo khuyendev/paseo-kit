@@ -6,6 +6,7 @@ import { loadConfig } from "../config.mjs";
 import { errText } from "../lib/cli.mjs";
 import { id8, samePath } from "../lib/paths.mjs";
 import { createCapacity } from "./admission.mjs";
+import { createRetier } from "./retier.mjs";
 import { parseReply } from "./schema.mjs";
 import { createWatchdog } from "./watchdog.mjs";
 
@@ -28,6 +29,7 @@ export function schemaRetryPrompt(errors, schema) {
 export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunId, out, clock, onAdopt }) {
   const watchdog = createWatchdog({ session, cfg, clock, out, root });
   const capacity = createCapacity({ session, cfg, clock, out, root });
+  const retier = createRetier({ session, runtime, root, out, clock });
   const definitions = new Map();
   const sessions = new Map();
   const gates = new Map();
@@ -65,15 +67,16 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
     }
     try {
       const def = opts.agentType ? definition(opts.agentType) : null;
-      const explicit = { model: opts.model, effort: opts.effort };
-      const sel = runtime.selectModel(current, { explicit, role: opts.role, definition: def });
-      const tier = runtime.requestedModel(current, { explicit, role: opts.role, definition: def });
+      // The request is what a live retier resolves again when the overlay changes (F45B).
+      const request = { explicit: { model: opts.model, effort: opts.effort }, role: opts.role, definition: def };
+      const sel = runtime.selectModel(current, request);
+      const tier = runtime.requestedModel(current, request);
       if (tierOf.has(tier) && tierOf.get(tier) !== sel.id) out(`tier ${tier}: ${tierOf.get(tier)} -> ${sel.id}`);
       tierOf.set(tier, sel.id);
       // The read-only mode (the note and the daemon's disallowed tools) and the prompt notes are part of the call's
       // identity, so the resume cache reruns a call whose permissions or notes changed (FLOW-15).
       const readOnly = opts.readOnly === true || Boolean(def?.readOnly);
-      return { def, sel, model: sel.id, effort: sel.thinking ?? null, roleHash: def?.roleHash ?? "", provider: sel.provider, readOnly, notesHash: runtime.promptNotesHash(cfg) };
+      return { def, sel, model: sel.id, effort: sel.thinking ?? null, roleHash: def?.roleHash ?? "", provider: sel.provider, readOnly, notesHash: runtime.promptNotesHash(cfg), request };
     } catch (e) {
       return { error: errText(e) };
     }
@@ -142,6 +145,8 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
     const prior = key !== undefined ? sessions.get(key) : null;
     const readOnly = identity.readOnly;
     let agentId = prior?.agentId ?? null;
+    // The live record of the call's agent (retier.mjs): its model is the one the agent runs on now.
+    let tracked = null;
     let base = null;
     let wd = null;
     let gate = null;
@@ -162,7 +167,11 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
       return { tokens: u.output, usage: { ...u, costUsd: costUsd ?? null, reportedCostUsd: now.reportedCostUsd ?? null } };
     };
     const durationS = () => Math.round((clock.now() - t0) / 1000);
-    const result = (status, fields) => ({ status, agentId, model: identity.model, ...usageOf(), durationS: durationS(), worktreePath: worktree?.path ?? null, ...(worktree ? { worktree } : {}), ...fields });
+    // The model is the one the agent runs on when the call ends; a retier switch of the call is listed in retiers (F45B).
+    const result = (status, fields) => ({
+      status, agentId, model: tracked?.model ?? identity.model, ...usageOf(), durationS: durationS(), worktreePath: worktree?.path ?? null, ...(worktree ? { worktree } : {}),
+      ...(tracked?.switches.length ? { retiers: tracked.switches } : {}), ...fields,
+    });
     // opts.timeoutS bounds the whole call (all turns of it); at the deadline the call ends null and the agent is archived.
     const deadline = opts.timeoutS !== undefined ? t0 + opts.timeoutS * 1000 : null;
     const expired = () => deadline !== null && clock.now() >= deadline;
@@ -239,6 +248,7 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
         },
       );
       agentId = agent.id;
+      tracked = retier.follow(agentId, label, identity);
       journalAgent?.(agentId);
       admission?.started?.(agentId);
       wd = watchdog.arm(agentId, label);
@@ -288,12 +298,15 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
         admission?.started?.(r.agent.id);
         if (r.created) {
           wd?.disarm();
+          // The daemon forgot the session agent: it is no longer live, so it stops following the overlay.
+          retier.release(agentId);
           agentId = r.agent.id;
           base = null;
           journalAgent?.(agentId);
           wd = watchdog.arm(agentId, label);
           out(`log warning: ${r.warning}`);
         }
+        tracked = retier.follow(agentId, label, identity);
         text = await waitReply(r.created ? 0 : before);
       } else {
         if (cfg.warmup && def) gate = await passGate(def, identity);
@@ -355,6 +368,7 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
         try {
           if (!wd?.archived) await session.archive(agentId);
           capacity.unretain(agentId);
+          retier.release(agentId);
         } catch (e) {
           capacity.retain(agentId);
           out(`log warning: archive ${id8(agentId)} failed: ${errText(e)}`);
@@ -388,6 +402,7 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
 
   // Run end (done, failed or stopped): every session agent is archived unless kept (FLOW-12).
   async function finish() {
+    retier.close();
     for (const s of sessions.values()) {
       if (s.keep) continue;
       await session.archive(s.agentId).catch((e) => out(`log warning: archive ${id8(s.agentId)} failed: ${errText(e)}`));

@@ -253,6 +253,15 @@ export class Session {
     if (got !== model) throw new Error(`model readback ${model} != ${got}`);
   }
 
+  // F45B: the thinking level of a live agent, clamped to the levels its model offers (PCLI-10); no level (null) clears it.
+  // False when the model offers none of the level asked for, and nothing is set.
+  async setThinking(agentId, { provider, model, thinking }) {
+    const id = thinking === undefined || thinking === null ? null : clampThinking(thinking, await this.thinkingIds(provider, model));
+    if (id === undefined) return false;
+    await this.client.setAgentThinkingOption(agentId, id);
+    return true;
+  }
+
   // PCLI-16: send to an existing session agent, or start it fresh with the full prompt when the daemon forgot it.
   async resumeSend(agentId, { sel, prompt, create }) {
     const agent = await this.fetchAgent(agentId);

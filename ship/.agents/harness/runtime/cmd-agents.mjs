@@ -1,5 +1,5 @@
-// Commands on existing agents: send, watch, result, team, context, stop, archive (PHCL-11..13, PHCL-15, PHCL-16,
-// PHCL-19, PHCL-20).
+// Commands on existing agents: send, watch, result, team, context, stop, archive, model (PHCL-11..13, PHCL-15, PHCL-16,
+// PHCL-19, PHCL-20, F45B).
 import fs from "node:fs";
 import path from "node:path";
 import { assertPromptSize } from "../paseo-client/index.mjs";
@@ -7,6 +7,7 @@ import { UsageError, errText, failedLine } from "../lib/cli.mjs";
 import { readJsonIf, writeJsonAtomic } from "../lib/io.mjs";
 import { id8, isInside, resolveInside } from "../lib/paths.mjs";
 import { killPidTree, pidAlive } from "../lib/proc.mjs";
+import { resolveModel } from "./models.mjs";
 import { resultJson } from "./result.mjs";
 import { RUN_FILES, readJournal } from "../workflow/journal.mjs";
 import { appendRecords, readLedger, runRecord } from "../workflow/metrics.mjs";
@@ -257,6 +258,46 @@ async function archive(ctx) {
   return ok === selected.length ? 0 : 2;
 }
 
+// F45B: a live agent moves to the model (and thinking) of sel, within its provider; the next call of a tier moves on its own.
+async function moveAgent(ctx, session, agent, sel) {
+  if (agent.provider !== sel.provider) {
+    throw new UsageError(`agent ${id8(agent.id)} runs on ${agent.provider}, not ${sel.provider}; a model change stays within one provider, so start a new agent for ${sel.id}`);
+  }
+  const from = `${agent.provider}/${agent.model}`;
+  await session.setModel(agent.id, sel.model);
+  const thinkingSet = await session.setThinking(agent.id, sel);
+  ctx.out(`model ${agent.title ?? id8(agent.id)} ${id8(agent.id)}: ${from} -> ${sel.id}`);
+  if (!thinkingSet) ctx.out(`log warning: ${sel.id} offers no ${sel.thinking} thinking; the thinking stays`);
+}
+
+// ph model <agentId|runId> <tier|provider/model>: an agent id switches that kit agent; a run id switches every live agent of the run.
+async function model(ctx) {
+  if (ctx.args.length !== 2) throw new UsageError("usage: ph model <agentId|runId> <tier|provider/model> [--thinking LEVEL]");
+  const [target, spec] = ctx.args;
+  const sel = resolveModel(ctx.cfg, spec, ctx.opts.thinking);
+  const session = await ctx.paseo();
+  const runsDir = path.resolve(ctx.root, ctx.opts["runs-dir"] ?? RUNS_DIR);
+  if (/^[A-Za-z0-9._-]+$/.test(target) && !target.includes("..") && fs.existsSync(path.join(runsDir, target, RUN_FILES.run))) {
+    const agents = await session.findAgents({ "harness.run": target });
+    if (!agents.length) throw new UsageError(`run ${target} has no live agents`);
+    let failed = 0;
+    for (const agent of agents) {
+      try {
+        await moveAgent(ctx, session, agent, sel);
+      } catch (e) {
+        failed++;
+        ctx.out(failedLine(`model ${agent.title ?? id8(agent.id)}`, e));
+      }
+    }
+    return failed ? 2 : 0;
+  }
+  const agent = await session.fetchAgent(target);
+  if (!agent || agent.archivedAt) throw new UsageError(`no live agent or run '${target}'`);
+  if (!agent.labels?.["harness.name"]) throw new UsageError(`agent ${id8(agent.id)} was not started by the kit (ph spawn, fanout or a workflow)`);
+  await moveAgent(ctx, session, agent, sel);
+  return 0;
+}
+
 export const agentCommands = [
   {
     name: "send",
@@ -313,5 +354,13 @@ export const agentCommands = [
     options: { idle: "bool", "name-prefix": "string", run: "string", reason: "string", "runs-dir": "string" },
     config: "required",
     run: archive,
+  },
+  {
+    name: "model",
+    summary: "switch a live agent (or every live agent of a run) to a tier or provider/model, within its provider",
+    usage: "ph model <agentId|runId> <tier|provider/model> [--thinking LEVEL] [--runs-dir D]",
+    options: { thinking: "string", "runs-dir": "string" },
+    config: "required",
+    run: model,
   },
 ];

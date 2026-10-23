@@ -155,6 +155,8 @@ Merge column: `entry` = one-level per-entry merge; `replace` = whole value repla
 
 Wait policy (G144, `wait_timeout_s` and `agent_stop_s`): a workflow `agent()` with no `timeoutS` waits for its turn in slices of `wait_timeout_s`. While the watchdog is armed (`watchdog_enabled` true and `agent_stop_s` above 0), the wait goes on past `wait_timeout_s` until the turn ends or the watchdog stops the agent after `agent_stop_s` of model time (tool time is not counted, FLOW-29); a nudge that settles a slice as running does not end it. Unarmed (watchdog off, or `agent_stop_s` 0), `wait_timeout_s` caps the turn as before. An explicit `timeoutS` on the call bounds the whole call at that value. The waits of `cmd-start.mjs`, `cmd-agents.mjs` and `compact.mjs` keep `wait_timeout_s` as their cap.
 
+Live retier (F45B, `workflow/retier.mjs`): while a workflow run owns a live agent (a call's agent while it runs, or an idle session agent it keeps), the overlay file `.agents/harness.config.json` is checked every 5 s by its mtime and size and read again only when it changed. A tier that resolves to another model of the same provider switches each live agent of it: `Session.setModel` (with readback), then `Session.setThinking` when the thinking level changed. Each switch logs `retier <label> <agent8>: <old> -> <new>` and is listed in the call's journal entry as `retiers`; the entry's `model` is the model the agent ends on, while the call's cost stays priced with the model it started on. A tier on another provider logs `retier <label>: <tier> moved to provider <p>; the running agent keeps <old>, the next call uses the new tier` and changes nothing. A failed switch is logged and never fails the call. The check runs only while the run owns a live agent and stops with the run. `ph model` applies the same rule by hand (runtime `cmd-agents.mjs`).
+
 Thinking levels (`THINKING_LEVELS`): `off, low, medium, high, xhigh, max`.
 
 ### 4.1 `adapter` section (M12; entries merge per entry, an entry is replaced whole, ADPT-14)
@@ -213,7 +215,7 @@ Paths in the adapter are repo-relative script paths (validated at load: no drive
 
 #### Role catalog
 
-Each row is a role, the workflows that pass it, the agent type it starts (`adapter.agents.<role>` replaces it) and the tier it runs on when nothing else is set: the agent definition's `model:`, or `default_tier` when the call names no agent type. Precedence per call: the call's own model or effort (the gsd-plan args `roles` map, `skeletonLanes`, `gsd.code_review.reviewers`) > `gsd.roles.<role>` > the agent's `model:` > `default_tier`. A tier resolves to the model in `tiers.<tier>.provider` of the project overlay, read again at each workflow `agent()` call (a change logs `tier <name>: <old> -> <new>`); the kit ships tiers unconfigured, so calls fail until they are mapped. `outline` has its own `gsd.roles` entry: `gsd.roles.planner` does not reach it.
+Each row is a role, the workflows that pass it, the agent type it starts (`adapter.agents.<role>` replaces it) and the tier it runs on when nothing else is set: the agent definition's `model:`, or `default_tier` when the call names no agent type. Precedence per call: the call's own model or effort (the gsd-plan args `roles` map, `skeletonLanes`, `gsd.code_review.reviewers`) > `gsd.roles.<role>` > the agent's `model:` > `default_tier`. A tier resolves to the model in `tiers.<tier>.provider` of the project overlay, read again at each workflow `agent()` call (a change logs `tier <name>: <old> -> <new>`), and a live agent of a running workflow follows it within its provider (the live retier of section 4); the kit ships tiers unconfigured, so calls fail until they are mapped. `outline` has its own `gsd.roles` entry: `gsd.roles.planner` does not reach it.
 
 | role | called by | agent type | tier | notes |
 | --- | --- | --- | --- | --- |
@@ -307,6 +309,7 @@ const session = await connect({ env, root, cfg, clock });   // or ctx.paseo() in
 | `resolveTargets(refs)` | PCLI-15: caller's pool, then the leader's; exact id, id prefix >= 6, exact title; errors `'<ref>' matches <n> agents; use the id`, `no live subagent named or id '<ref>'`, `name at least one agent (title, id or unique id prefix)` (all `UsageError`). |
 | `archive(agentId)`, `cancel(agentId)` | archive the agent / cancel its running turn. |
 | `setModel(agentId, model)` | update the model and read it back; throws `model readback <want> != <got>` (PCLI-16). |
+| `setThinking(agentId, {provider, model, thinking})` | F45B: the thinking level of a live agent, clamped to the levels its model offers (PCLI-10); `null` clears it. Returns `false` and sets nothing when the model offers none of the level asked for. No readback. |
 | `resumeSend(agentId, {sel, prompt, create})` | PCLI-16: refuses on an active turn (`agent <id8> has an active turn`) or another provider (`agent <id8> runs on <p>, not <want>`); updates and reads back the model when `sel.model` differs; sends `prompt`; when the daemon reports the agent not found, creates a fresh agent with `create` (a `createAgent` spec holding the full prompt) and returns a warning. Returns `{agent, created, warning}`. |
 | `timeline(agentId, {limit = 1000} = {})` | tail entries `[{item}]` (tool calls: `item.type === "tool_call"`, `item.name`, `item.detail`). |
 | `observe(agentIds)` | subscribe the agents' timelines so stream events arrive (`createAgent` does it for its agents). |
@@ -333,7 +336,7 @@ Command modules (fixed list in `ph.mjs`, imported in this order; a module file t
 
 | module | owner | commands (examples) |
 | --- | --- | --- |
-| `./runtime/commands.mjs` | code-ph | doctor, spawn, fanout, send, watch, result, team, context, compact-self (+ hidden watcher), stop, archive, task, freeze, worktrees |
+| `./runtime/commands.mjs` | code-ph | doctor, spawn, fanout, send, watch, result, team, context, compact-self (+ hidden watcher), stop, archive, model, task, freeze, worktrees |
 | `./workflow/commands.mjs` | code-workflow | workflow, watch-run, run-stats, evolve-stats, runs |
 | `./gsd/commands.mjs` | code-gsd-core | gsd |
 | `./adapter/commands.mjs` | code-harness | harness (`ph harness lint [--all]`, HARN-05) |
@@ -395,7 +398,7 @@ Tests use Node's runner (`node --test`), run offline, never touch `~/.paseo`, `~
 | member | meaning |
 | --- | --- |
 | `fake.daemon` | pass to `connect({daemon: fake.daemon})` / `main(argv, {daemon})`; with `down: "<msg>"` connect throws `Cannot connect to daemon at fake: <msg>`. |
-| `fake.client` | in-memory daemon client: `createAgent, sendAgentMessage, waitForFinish, fetchAgent, fetchAgents, archiveAgent, cancelAgent, updateAgent, setAgentModel, respondToPermission, listProviderModels, observeTimeline, fetchAgentTimeline, on, close`. |
+| `fake.client` | in-memory daemon client: `createAgent, sendAgentMessage, waitForFinish, fetchAgent, fetchAgents, archiveAgent, cancelAgent, updateAgent, setAgentModel, setAgentThinkingOption, respondToPermission, listProviderModels, observeTimeline, fetchAgentTimeline, on, close`. |
 | `fake.calls` / `fake.callsOf(method)` | every client call in order: `{method, args}`. |
 | `fake.agents` | `Map id -> snapshot` (mutable). |
 | `fake.addAgent(partial)` | add an existing agent (defaults: random uuid, `status: "idle"`, `provider: "circle-agent"`, `model: "m"`, `cwd: "/fake"`, `labels: {}`, title = id8); `parent: <id>` sets the parent label; `status: "running"` gives it a manual turn (end it with `fake.finish`). |
