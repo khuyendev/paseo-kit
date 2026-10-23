@@ -133,12 +133,49 @@ const listSessions = (root) =>
         .filter(Boolean)
     : [];
 
+const CREATE_LOCK_STALE_MS = 10000;
+const CREATE_LOCK_WAIT_MS = 30000;
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+// G112: the create scan, reopen and slug loop must not interleave with another create, or two creates for one signature
+// (or one label) both pick the same file and the second write replaces the first session. Own lock file, not the
+// workflow's `debug` lease: gsd-plan and gsd-execute hold that lease too. Exclusive-create like withStateLock.
+function withCreateLock(root, fn) {
+  fs.mkdirSync(debugDir(root), { recursive: true });
+  const lock = path.join(debugDir(root), "create.lock");
+  const start = Date.now();
+  for (;;) {
+    try {
+      fs.writeFileSync(lock, `${process.pid}\n`, { flag: "wx" });
+      break;
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+      try {
+        if (Date.now() - fs.statSync(lock).mtimeMs > CREATE_LOCK_STALE_MS) fs.rmSync(lock, { force: true });
+      } catch {
+        // removed by its holder meanwhile
+      }
+      if (Date.now() - start > CREATE_LOCK_WAIT_MS) throw unavailable(`debug create lock is held (${lock}); retry`);
+      pause(25 + Math.floor(Math.random() * 50));
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    fs.rmSync(lock, { force: true });
+  }
+}
+
 export function debugCreate(g, input) {
   const sig = input?.signature;
   if (!sig?.kind || !sig?.key) throw fail("debug create needs signature {kind, key, label}");
   const goal = input.goal ?? "find_and_fix";
   if (!GOALS.has(goal)) throw fail("goal must be find_and_fix or find_root_cause_only");
   const signatureId = sha256(`${sig.kind}\0${sig.key}`);
+  return withCreateLock(g.codeRoot, () => createSession(g, input, sig, goal, signatureId));
+}
+
+function createSession(g, input, sig, goal, signatureId) {
   const dir = debugDir(g.codeRoot);
   const active = listSessions(g.codeRoot).find((s) => s.fm.signature_id === signatureId && s.fm.status !== "resolved");
   if (active) {
