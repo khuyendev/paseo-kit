@@ -189,7 +189,7 @@ Time counts model time since the last prompt, tool time excluded. Teammates get 
 | `agent_stop_s` | 5400 | the agent is stopped and the call returns `null` |
 | `agent_tool_stuck_s` | 900 | a tool call open this long is interrupted once with a retry message |
 | `agent_file_tool_stuck_s` | 180 | the same for the file tools |
-| `watchdog_repeat_calls` | 3 | identical tool calls in a row before a loop warning |
+| `watchdog_repeat_calls` | 3 | identical tool calls since the last prompt (not necessarily in a row; a write resets the count) before a loop warning |
 | `watchdog_same_file_reads` | 6 | reads of one file before a reread warning |
 | `watchdog_reads_without_write` | 40 | reads without a write before a piecemeal warning |
 
