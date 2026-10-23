@@ -1,5 +1,6 @@
 // Private per-session state of the file tools (FTOL-14..16): a 0700 directory per Claude session, a session lock
-// with stale recovery, ticket retention and budgets, and removal of whole stale session directories.
+// with stale recovery, ticket retention and budgets, and removal of whole stale session directories. FTOL-15 target
+// locks live in the shared state root, one per file, so two sessions never write the same file at once.
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -135,8 +136,8 @@ function recoverLock(lock) {
   return false;
 }
 
-export function locked(dir, fn, { lockWaitMs = PRIVATE.lockWaitMs } = {}) {
-  const lock = path.join(dir, "session.lock");
+export function locked(dir, fn, { lockWaitMs = PRIVATE.lockWaitMs, name = "session.lock" } = {}) {
+  const lock = path.join(dir, name);
   const deadline = Date.now() + lockWaitMs;
   let fd;
   for (;;) {
@@ -157,6 +158,20 @@ export function locked(dir, fn, { lockWaitMs = PRIVATE.lockWaitMs } = {}) {
     fs.closeSync(fd);
     fs.rmSync(lock, { force: true });
   }
+}
+
+// FTOL-15: the lock of one target file is shared by every session, so it lives in the state root, not a session directory
+export const targetLock = (key) => `target-${crypto.createHash("sha256").update(key).digest("hex")}.lock`;
+
+// Runs fn holding the lock of each key, taken in the order given (callers sort the keys) so two batches never wait in a
+// cycle; one shared deadline covers the whole batch.
+export function lockedTargets(stateRoot, keys, fn, { lockWaitMs = PRIVATE.lockWaitMs } = {}) {
+  const deadline = Date.now() + lockWaitMs;
+  const take = ([key, ...rest]) => {
+    if (key === undefined) return fn();
+    return locked(stateRoot, () => take(rest), { name: targetLock(key), lockWaitMs: deadline - Date.now() });
+  };
+  return take(keys);
 }
 
 const TICKET_FILE = /^([a-f0-9]{64})\.(?:(request|plan|result|page)\.json|started)$/;

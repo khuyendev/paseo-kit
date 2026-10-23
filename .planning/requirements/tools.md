@@ -94,8 +94,8 @@
 - Scope: v1
 
 ### FTOL-15 Session lock with stale recovery
-- Requirement: All backend actions of one session run under `session.lock` (exclusive create, content `{pid}`); a waiter polls up to 20 s (below the 30 s transport timeout) then fails `private session state locked by another running file operation; retry later`; a lock of a dead pid, or left unwritten for 10 s, is recovered atomically; a killed `--execute` never wedges the session.
-- Acceptance: offline: a dead-pid lock and an empty lock older than 10 s are recovered; a live-pid lock fails after about 20 s; killing an execute mid-run leaves the next call working; 8 concurrent executes yield 8 distinct fix IDs.
+- Requirement: All backend actions of one session run under `session.lock` (exclusive create, content `{pid}`); a waiter polls up to 20 s (below the 30 s transport timeout) then fails `private session state locked by another running file operation; retry later`; a lock of a dead pid, or left unwritten for 10 s, is recovered atomically; a killed `--execute` never wedges the session. A call that writes files also takes a target lock per canonical file path (case-folded on Windows), kept in the shared state root so every session sees it: the locks are taken in sorted path order before the ticket starts and held through the commit and any rollback, so two sessions cannot overwrite each other's edits of one file; a wait that times out writes nothing, and the rollback of an interrupted batch takes the same locks.
+- Acceptance: offline: a dead-pid lock and an empty lock older than 10 s are recovered; a live-pid lock fails after about 20 s; killing an execute mid-run leaves the next call working; 8 concurrent executes yield 8 distinct fix IDs; an edit of session B that lands during session A's commit of the same file is refused or kept, never reported written and then dropped, while an edit of another file is not delayed.
 - Source: FIL-13.
 - Scope: v1
 

@@ -74,6 +74,12 @@ export function planRequest(request, store) {
   return { checks, signature: signature(checks) };
 }
 
+// FTOL-15: the files a request writes, as sorted lock keys: the Read check of each target (folders get only Write checks)
+export function targetKeys(request, plan) {
+  if (request.method === "read_ranges") return [];
+  return [...new Set(plan.checks.filter((c) => c.tool === "Read").map((c) => pathKey(c.real)))].sort();
+}
+
 const HANDLERS = { read_ranges: readRanges, edit_multiple_files: editMultiple, write_multiple_files: writeMultiple };
 
 // Returns { text, isError? }; the store is updated in place. journal: { file, ticket, method } for the batch journal.

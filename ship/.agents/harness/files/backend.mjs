@@ -7,9 +7,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { recoverCommit } from "./commit.mjs";
-import { executeRequest, planRequest } from "./plan.mjs";
-import { defaultStateRoot, identifier, locked, readPrivate, sessionDirectory, sessionHash, sweep, sweepSessions, writePrivate } from "./private.mjs";
+import { executeRequest, planRequest, targetKeys } from "./plan.mjs";
+import { defaultStateRoot, identifier, locked, lockedTargets, readPrivate, sessionDirectory, sessionHash, sweep, sweepSessions, writePrivate } from "./private.mjs";
 import { createStore } from "./store.mjs";
+import { fileKey } from "./targets.mjs";
 import { PREFIX, TOOLS, TOOL_NAMES, validateArgs } from "./tools.mjs";
 
 export const PROTOCOL = 1;
@@ -59,16 +60,20 @@ function unavailable(dir, ticket) {
 }
 
 // A batch that a killed process left half-written is rolled back before any ticket runs; its ticket then gets the
-// rollback as its result, so its receipt does not report an outcome that is no longer partly written
-function recoverInterrupted(dir) {
+// rollback as its result, so its receipt does not report an outcome that is no longer partly written. The rollback
+// writes the batch's files, so it holds their target locks (FTOL-15): another session's commit of one waits for it.
+function recoverInterrupted(dir, stateRoot, opts) {
   const journal = path.join(dir, JOURNAL);
   if (!fs.existsSync(journal)) return;
-  const { ticket, method, incomplete } = recoverCommit(journal);
-  const text = incomplete.length
-    ? `interrupted by a killed process; ROLLBACK INCOMPLETE, these files may hold the new text: ${incomplete.join("; ")}`
-    : "interrupted by a killed process; rolled back: nothing written";
-  writePrivate(file(dir, ticket, "result"), pageResult(dir, method, { isError: true, text }));
-  fs.rmSync(file(dir, ticket, "started"), { force: true });
+  const keys = readPrivate(journal).entries.map((e) => fileKey(e.abs));
+  lockedTargets(stateRoot, [...new Set(keys)].sort(), () => {
+    const { ticket, method, incomplete } = recoverCommit(journal);
+    const text = incomplete.length
+      ? `interrupted by a killed process; ROLLBACK INCOMPLETE, these files may hold the new text: ${incomplete.join("; ")}`
+      : "interrupted by a killed process; rolled back: nothing written";
+    writePrivate(file(dir, ticket, "result"), pageResult(dir, method, { isError: true, text }));
+    fs.rmSync(file(dir, ticket, "started"), { force: true });
+  }, opts);
 }
 
 function stage(dir, session, input) {
@@ -154,9 +159,10 @@ export function runTicket(action, session, ticket, opts = {}) {
   if (action !== "--plan" && action !== "--execute") throw new Error("unknown ticket action");
   identifier(session, "backend ticket");
   identifier(ticket, "backend ticket");
-  const dir = sessionDirectory(opts.stateRoot ?? defaultStateRoot(), session);
+  const stateRoot = opts.stateRoot ?? defaultStateRoot();
+  const dir = sessionDirectory(stateRoot, session);
   return locked(dir, () => {
-    recoverInterrupted(dir);
+    recoverInterrupted(dir, stateRoot, opts);
     const stateFile = path.join(dir, "state.json");
     const store = createStore(readPrivate(stateFile, {}));
     if (action === "--execute" && fs.existsSync(file(dir, ticket, "result"))) return; // completed: never repeat
@@ -173,16 +179,20 @@ export function runTicket(action, session, ticket, opts = {}) {
     if (action === "--plan") return writePrivate(file(dir, ticket, "plan"), planRequest(request, store));
     const plan = readPrivate(file(dir, ticket, "plan"), null);
     if (!plan) throw new Error("execution ticket was not planned; nothing executed");
-    fs.writeFileSync(file(dir, ticket, "started"), String(Date.now()), { flag: "wx", mode: 0o600 }); // FTOL-11
-    let out;
-    try {
-      out = executeRequest(request, store, plan, opts.env ?? process.env, { file: path.join(dir, JOURNAL), ticket, method: request.method });
-    } catch (e) {
-      out = { isError: true, text: e.message };
-    }
-    writePrivate(stateFile, store.snapshot()); // fix IDs persist before the result is paged (FTOL-13)
-    writePrivate(file(dir, ticket, "result"), pageResult(dir, request.method, out));
-    fs.rmSync(file(dir, ticket, "started"), { force: true });
+    // FTOL-15: the files a call writes are locked across sessions from read to commit (rollback included); a wait that
+    // times out happens before the ticket is marked started, so nothing ran and the call can be retried
+    return lockedTargets(stateRoot, targetKeys(request, plan), () => {
+      fs.writeFileSync(file(dir, ticket, "started"), String(Date.now()), { flag: "wx", mode: 0o600 }); // FTOL-11
+      let out;
+      try {
+        out = executeRequest(request, store, plan, opts.env ?? process.env, { file: path.join(dir, JOURNAL), ticket, method: request.method });
+      } catch (e) {
+        out = { isError: true, text: e.message };
+      }
+      writePrivate(stateFile, store.snapshot()); // fix IDs persist before the result is paged (FTOL-13)
+      writePrivate(file(dir, ticket, "result"), pageResult(dir, request.method, out));
+      fs.rmSync(file(dir, ticket, "started"), { force: true });
+    }, opts);
   }, opts);
 }
 
