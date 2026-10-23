@@ -171,6 +171,8 @@ export async function gateObligation(cfg, { codeRoot, phaseDir, kind, command = 
     if (!parsed.ok) return { ...base, outcome: "unavailable", reason: parsed.reason };
     targets = parsed.response.targets;
   }
+  // G094: a kind that is not exit-code-sufficient needs a named target; an empty selection runs with no selector and proves nothing.
+  if (!entry.exit_code_sufficient && !targets.length) return { ...base, targets, outcome: "unavailable", reason: "no concrete targets selected" };
   let run;
   try {
     run = obligationCommand(cfg, { kind, argument, targets });

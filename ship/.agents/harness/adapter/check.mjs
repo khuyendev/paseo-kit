@@ -27,7 +27,6 @@ export async function checkObligation(cfg, { codeRoot, kind, command, outputDir,
     const ob = await gateObligation(cfg, { codeRoot, kind, command });
     record.obligation = ob;
     if (ob.outcome !== "ready") return finish(ob.reason ?? ob.outcome);
-    if (!ob.exitCodeSufficient && !ob.targets.length) return finish("no concrete targets selected");
     const entry = cfg.adapter.verify_vocabulary[kind];
     if (entry.resolver) {
       record.resolve = await invokeHook(cfg, { codeRoot, script: entry.resolver, op: "resolve",

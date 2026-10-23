@@ -118,6 +118,11 @@ export async function verifyCommandPaths(g, phase, plans) {
             const severity = status === "missing" ? "blocker" : status === "unresolvable" ? "warning" : "none";
             commands.push({ ...row, kind: c.kind, status, severity, detail: r.detail ?? null, target: r.target });
           }
+          // G094: a parser that extracts no target must not drop the obligation; only an exit-code-sufficient kind may run targetless.
+          if (!results.length) {
+            const targetless = c.spec.exit_code_sufficient;
+            commands.push({ ...row, kind: c.kind, status: targetless ? "ok" : "missing", severity: targetless ? "none" : "blocker", detail: "no concrete target selected", target: null });
+          }
         } catch (e) {
           if (!(e instanceof HookError)) throw e;
           unresolvableHooks++;

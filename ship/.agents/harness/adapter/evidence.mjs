@@ -28,9 +28,10 @@ export async function currentInputs(codeRoot, relFiles) {
 }
 
 // INV-53: why a passed run is no proof for its named targets, or null. `executed` = {count|null, targets};
-// count null (no evidence parser) is accepted only for an exit-code-sufficient kind.
+// count null (no evidence parser) is accepted only for an exit-code-sufficient kind. G094: no named targets is
+// no proof either, unless the exit code is (a count with no named target is not a selection that ran).
 export function executionProblem({ targets = [], executed, exitCodeSufficient = false }) {
-  if (!targets.length) return null;
+  if (!targets.length) return exitCodeSufficient ? null : "no concrete targets selected";
   if (executed.count === null) return exitCodeSufficient ? null : `no executed list for ${targets.length} named target(s)`;
   if (!executed.count) return `executed 0 of ${targets.length} target(s)`;
   const missing = targets.filter((t) => !executed.targets.includes(t));
@@ -106,7 +107,8 @@ export function evidenceVerdict(evidenceFile, { codeRoot, requested, inputs }) {
   const reasons = ev.steps.filter((s) => s.outcome !== "passed").map((s) => `${s.name}: ${s.outcome}`);
   for (const r of wanted) {
     const s = steps.get(r.name);
-    if (s.outcome !== "passed") continue;
+    // Build, test and gate steps name no targets; only obligations (which carry targets) are checked for coverage.
+    if (s.outcome !== "passed" || !Array.isArray(r.targets)) continue;
     const problem = executionProblem({ targets: r.targets, executed: s.executed, exitCodeSufficient: r.exitCodeSufficient });
     if (problem) reasons.push(`${r.name}: ${problem}`);
   }
