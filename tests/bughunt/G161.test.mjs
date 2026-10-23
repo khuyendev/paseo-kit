@@ -26,7 +26,7 @@ test("G161 run-stats of a journal with JSON null lines prints the numbers of its
   const r = await s.ph(["run-stats", "wf_n"]);
   assert.equal(r.code, 0);
   assert.deepEqual(r.out, [
-    "wf_n [plan] status done",
+    "wf_n [plan -] status done",
     "wall 100 s; agents 1: median 10 s, slowest 10 s; tokens in 100 cached 50 out 5; cost $0.01",
   ]);
 });
