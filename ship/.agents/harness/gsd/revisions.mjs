@@ -6,6 +6,7 @@ import { writeJsonAtomic, readJsonIf } from "../lib/io.mjs";
 import { sha256, textDigest } from "../lib/hash.mjs";
 import { done, fail, none, nowIso, readIf, rel } from "./common.mjs";
 import { loadAgentDef } from "../runtime/agents.mjs";
+import { isInside } from "../lib/paths.mjs";
 import { headOf } from "./git.mjs";
 import { phaseFile, planPath, planIds } from "./planning.mjs";
 import { loadRequirements } from "./requirements.mjs";
@@ -33,10 +34,14 @@ const backticked = (text) => [...String(text ?? "").matchAll(/`([^`\s]+)`/g)].ma
 // every run, the findings do not.
 const reportContent = (text) => text?.replace(/^attempt_key:[^\r\n]*\r?\n?/gm, "").replace(/^<!-- gsd:research-complete\b[^\r\n]*-->\r?\n?/gm, "") ?? null;
 
-// The files of one key: `{label, abs}` entries, or `{label, text}` for content derived from a file (null when the
-// file is missing); harness files (role text) are read from the invoking checkout.
+// The files of one key: `{label, abs, inside}` entries, or `{label, text}` for content derived from a file (null when the
+// file is missing); harness files (role text) are read from the invoking checkout. A code file outside the code root
+// (`inside` false) is left out of the hash, so an edit there cannot change it.
 export function keyFiles(g, phase, key) {
-  const code = (p) => ({ label: p, abs: path.resolve(g.codeRoot, p) });
+  const code = (p) => {
+    const abs = path.resolve(g.codeRoot, p);
+    return { label: p, abs, inside: isInside(abs, g.codeRoot) };
+  };
   const harness = (p) => ({ label: `harness:${p}`, abs: path.resolve(g.harnessRoot, p) });
   const inPhase = (name) => code(rel(g.codeRoot, path.join(phase.dir, name)));
   const research = () => {
@@ -52,7 +57,8 @@ export function keyFiles(g, phase, key) {
     }
     const refs = /<canonical_refs>([\s\S]*?)<\/canonical_refs>/.exec(readIf(ctxFile) ?? "")?.[1];
     for (const p of backticked(refs)) out.push(code(p));
-    for (const p of g.cfg.adapter.instructions) out.push(code(p));
+    // Owner config is hashed as written, even when it points outside the root (it may be deliberate).
+    for (const p of g.cfg.adapter.instructions) out.push({ ...code(p), inside: true });
     for (const p of [...roleFiles(g, RESEARCHER), RESEARCH_FRAGMENT]) out.push(harness(p));
     return out;
   };
@@ -87,15 +93,20 @@ function digestOf(entry) {
 }
 
 // Hash of a key: its files (deduplicated, sorted) plus this phase's ROADMAP section without its generated block, never
-// another phase's section.
+// another phase's section. Files outside the code root are not hashed; they are listed in `skipped` so the caller can report them.
 export function keyHash(g, phase, key) {
   const seen = new Map();
-  for (const f of keyFiles(g, phase, key)) seen.set(f.label, f);
+  const outside = new Set();
+  for (const f of keyFiles(g, phase, key)) {
+    if (f.inside === false) outside.add(f.label);
+    else seen.set(f.label, f);
+  }
   const labels = [...seen.keys()].sort();
   const lines = labels.map((label) => `${label}\0${digestOf(seen.get(label))}\n`);
   const section = roadmapPhase(loadRoadmap(g.codeRoot, g.cfg), phase.number)?.section ?? null;
   lines.push(`roadmap\0${section === null ? "missing" : textDigest(sectionContent(section))}\n`);
-  return { hash: sha256(lines.join("")), files: labels };
+  const skipped = [...outside].filter((label) => !seen.has(label)).sort();
+  return { hash: sha256(lines.join("")), files: labels, skipped };
 }
 
 const revisionsFile = (phase) => path.join(phase.dir, "revisions.json");
@@ -103,7 +114,7 @@ const revisionsFile = (phase) => path.join(phase.dir, "revisions.json");
 export const readRevisions = (phase) => readJsonIf(revisionsFile(phase), null) ?? { v: 1, keys: {}, lists: {} };
 
 export function recordRevision(g, phase, key) {
-  const { hash, files } = keyHash(g, phase, key);
+  const { hash, files, skipped } = keyHash(g, phase, key);
   const data = readRevisions(phase);
   const list = sha256(files.join("\n")).slice(0, 16);
   data.lists[list] = files;
@@ -111,15 +122,15 @@ export function recordRevision(g, phase, key) {
   const used = new Set(Object.values(data.keys).map((k) => k.list));
   for (const id of Object.keys(data.lists)) if (!used.has(id)) delete data.lists[id];
   writeJsonAtomic(revisionsFile(phase), data);
-  return { key, hash, files: files.length, head: data.keys[key].head };
+  return { key, hash, files: files.length, skipped, head: data.keys[key].head };
 }
 
 export function checkRevision(g, phase, key) {
   const recorded = readRevisions(phase).keys[key];
   if (!recorded) throw none(`revisions key ${key} was never recorded`, { key });
-  const { hash } = keyHash(g, phase, key);
+  const { hash, skipped } = keyHash(g, phase, key);
   const head = headOf(g.codeRoot);
-  return { key, same: hash === recorded.hash, recorded: recorded.hash, current: hash, headChanged: recorded.head !== head, recordedHead: recorded.head, head };
+  return { key, same: hash === recorded.hash, recorded: recorded.hash, current: hash, skipped, headChanged: recorded.head !== head, recordedHead: recorded.head, head };
 }
 
 export function revisionsVerb(g, sub, phase, key) {
