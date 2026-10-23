@@ -487,12 +487,11 @@ for (const ids of wavesOf(rows)) {
     } else todo.push(id);
   }
   const outcomes = await parallel(todo.map((id) => () => planOne(id)));
-  for (const [i, o] of outcomes.entries()) if (!o || o.stop) return o?.stop ?? failedCall(`planner ${todo[i]}`, null);
-  for (const id of todo) {
-    const s = await structureFix(id, `planner:${id}`);
-    if (s) return s;
-    await gsd(["revisions", "record", phaseDir, `plan:${id}`]);
-  }
+  // G015: the plans that finished are recorded before the batch stops, so a failed sibling does not drop them.
+  const recorded = await recordEach(todo.filter((_, i) => outcomes[i]?.ok), false);
+  const failed = outcomes.findIndex((o) => !o || o.stop);
+  if (failed >= 0) return outcomes[failed]?.stop ?? failedCall(`planner ${todo[failed]}`, null);
+  if (recorded) return recorded;
 }
 async function planOne(id) {
   const entry = manifestOf(id);
@@ -534,6 +533,16 @@ async function structureFix(id, session) {
   st = await gsd(["verify", "plan-structure", planPath(id)]);
   setStructureWarnings(id, st.json?.warnings);
   return st.code === 0 ? null : result("failed", { reason: `plan ${id} still fails verify plan-structure`, errors: st.json?.errors ?? [] });
+}
+// G015: each plan is recorded once its own structure check passes, so one plan's stop does not drop its finished siblings.
+async function recordEach(ids, gapScoped) {
+  let stop = null;
+  for (const id of ids) {
+    const s = await structureFix(id, gapScoped ? "planner:gaps" : `planner:${id}`);
+    if (s) stop ??= s;
+    else if (!gapScoped) await gsd(["revisions", "record", phaseDir, `plan:${id}`]);
+  }
+  return stop;
 }
 
 // ---- checker loop (GSDF-26..28) ----
@@ -652,20 +661,23 @@ async function checkerLoop(scopeIds, gapScoped) {
     const perPlan = [...revise].filter(([key]) => key !== null);
     const phaseLevel = revise.get(null) ?? [];
     const revised = await parallel(perPlan.map(([id, list]) => () => plannerCall(gapScoped ? "planner:gaps" : `planner:${id}`, `revise-${id}-${iter}`, [planningContext("revision"), revisionContext([planPath(id)], list)].join("\n\n"), "freeze", freezeHash)));
-    for (const r of revised) if (ownerMarker(r?.result)) return { stop: ownerStop("Checker", r.result) };
+    // G015: each revision that answered is fixed and recorded when it returns, so an owner or failed stop of a sibling does not drop it.
+    // A revision that returned nothing or stopped for an owner is never recorded as revised (G008).
+    const answered = perPlan.filter((_, i) => revised[i] && revised[i].result !== null && !ownerMarker(revised[i].result)).map(([id]) => id);
+    const stop = await recordEach(answered, gapScoped);
+    const owned = revised.find((r) => ownerMarker(r?.result));
+    if (owned) return { stop: ownerStop("Checker", owned.result) };
     // A revision that returned nothing is not a finished revision: stop with its reason; the plan is never recorded as revised.
     const missed = revised.findIndex((r) => !r || r.result === null);
     if (missed !== -1) return { stop: failedCall(`planner revision ${perPlan[missed][0]} (checker iteration ${iter})`, revised[missed]?.reason ?? null) };
+    if (stop) return { stop };
     if (phaseLevel.length) {
       const r = await plannerCall(gapScoped ? "planner:gaps" : "planner:outline", `revise-phase-${iter}`, [planningContext("revision"), revisionContext(scopeIds.map(planPath), phaseLevel)].join("\n\n"), "freeze", freezeHash);
       if (ownerMarker(r.result)) return { stop: ownerStop("Checker", r.result) };
       if (r.result === null) return { stop: failedCall(`phase-level planner revision (checker iteration ${iter})`, r.reason) };
-    }
-    const touched = phaseLevel.length ? scopeIds : perPlan.map(([id]) => id);
-    for (const id of touched) {
-      const s = await structureFix(id, gapScoped ? "planner:gaps" : `planner:${id}`);
+      // The phase-level revision can change any plan, so every plan is checked and recorded again.
+      const s = await recordEach(scopeIds, gapScoped);
       if (s) return { stop: s };
-      if (!gapScoped) await gsd(["revisions", "record", phaseDir, `plan:${id}`]);
     }
   }
   for (const list of carriedBy.values()) warnings.push(...list);
