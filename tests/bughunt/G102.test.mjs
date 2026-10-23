@@ -45,11 +45,12 @@ test("G102 quick --full stops for the owner when research returns a result but w
   assert.deepEqual(labels(r), ["quick-research"]);
 });
 
+// G108 stops a run whose directory already holds the research before any agent runs, so an old report never reaches the check.
 test("G102 a RESEARCH.md left by an earlier run does not pass for this research pass", async () => {
   const r = await quick(quickWorld({ [RESEARCH]: "old report\n" }), { full: true }, () => "researched");
   assert.equal(r.result.status, "needs-owner");
-  assert.match(r.result.reason, /wrote no new/);
-  assert.deepEqual(labels(r), ["quick-research"]);
+  assert.match(r.result.reason, /already exists/);
+  assert.deepEqual(labels(r), []);
 });
 
 test("G102 quick --full continues when research writes its report", async () => {

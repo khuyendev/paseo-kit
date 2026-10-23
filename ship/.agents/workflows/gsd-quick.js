@@ -91,6 +91,12 @@ const RESEARCH = `${q.dir}/${q.id}-RESEARCH.md`;
 // G122: indented like gsd-debug.js, so a line of the description cannot close the DATA fence.
 const data = `DATA_START\n${description.split(/\r?\n/).map((l) => `    ${l}`).join("\n")}\nDATA_END`;
 const context = a.contextPath ? `Owner decisions: ${a.contextPath} (locked).` : "";
+// G108: a run never writes over a file already in its directory (an owner's edited plan, research or summary); it stops first.
+const VERIFY = `${q.dir}/${q.id}-VERIFICATION.md`;
+const written = [PLAN, SUMMARY, ...(a.full && !a.skipResearch ? [RESEARCH] : []), ...(a.full ? [VERIFY] : [])];
+const present = (await flow(["exists", ...written])).json?.exists ?? {};
+const taken = written.filter((f) => present[f]);
+if (taken.length) return needsOwner("Plan", `${taken.join(", ")} already exists and this run would overwrite it; pass no dir to start a new quick task`, { dir: q.dir });
 // G103: a structure error the planner can fix in place gets one repair turn in its own session, as gsd-plan does (GSDF-25).
 async function structureFix(label, stage) {
   let st = await gsd(["verify", "plan-structure", PLAN]);
@@ -152,10 +158,10 @@ const ex = await call([
 if (!ex.result && fatal(ex.reason)) return { status: "failed", reason: `executor failed: ${ex.reason}`, dir: q.dir };
 const summaryOk = (await flow(["exists", SUMMARY])).json?.exists?.[SUMMARY];
 const stop = (ex.result?.taskResults ?? []).find((t) => t.status === "partial" || t.status === "blocked");
-if (stop) return { status: "needs-owner", stage: "Execute", reason: `task ${stop.task} ${stop.status}: ${stop.evidence ?? ""}`, dir: q.dir };
+// G108: the stop keeps the task results that finished; the executor's SUMMARY stays on disk and is named here.
+if (stop) return { status: "needs-owner", stage: "Execute", reason: `task ${stop.task} ${stop.status}: ${stop.evidence ?? ""}`, dir: q.dir, taskResults: ex.result.taskResults, summary: summaryOk ? SUMMARY : null };
 if (!summaryOk) return { status: "failed", reason: `executor wrote no ${SUMMARY}${ex.reason ? ` (${ex.reason})` : ""}`, dir: q.dir };
 
-const VERIFY = `${q.dir}/${q.id}-VERIFICATION.md`;
 if (a.full) {
   phase("Verify");
   // CR-GSF-14: done needs a fresh report whose frontmatter status is passed; dispatch alone proves nothing.
