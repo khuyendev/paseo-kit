@@ -12,6 +12,7 @@ import { isBuiltinRunnerKind } from "./contract.mjs";
 import { lintCommandContract } from "./lint-probes.mjs";
 import { isWorkflowScript, lintAgentFile, lintSkillFolder, lintTextFile, walkFiles } from "./lint-assets.mjs";
 import { lintWorkflowScript } from "./lint-scripts.mjs";
+import { checkCompositionVerbs } from "../gsd/verb-check.mjs";
 import { EVAL_RECORD_KINDS, HISTORY_REL, badScopePath, lintHistory, scopePaths, triggerRecordRel, validateEvalRecord, validateTriggerRecord } from "./records.mjs";
 
 const SKILLS = ".claude/skills";
@@ -195,6 +196,8 @@ export function lintProject(root, { all = false } = {}) {
     findings.push({ level: "warn", file: HISTORY_REL, line: null, msg: `scope path ${rel} does not exist` });
   }
   findings.push(...lintAdapter(root, cfg));
+  // Kit feedback 87: a composition may call only the kit's flow and gsd verbs (checked after every evolve edit).
+  findings.push(...checkCompositionVerbs(root).problems.map((p) => ({ level: "fail", file: p.file, line: p.line, msg: p.msg })));
   const named = [...scope, ...adapterAssets(cfg)].filter((p) => inRoot(root, p) && fs.existsSync(path.join(root, p)) && p !== OVERLAY_REL);
   const scoped = new Set(named.flatMap((p) => expand(root, p)));
   const groups = classify([...scoped]);

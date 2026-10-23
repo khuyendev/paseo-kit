@@ -7,6 +7,7 @@ import { checkWiringTargets, wire } from "./wiring.mjs";
 import { checkHookSettings } from "./hooks.mjs";
 import { checkModGates } from "./mod.mjs";
 import { overlayLines } from "./overlay.mjs";
+import { compositionEntries, droppedLine, isComposition, isEdited, keptLine, statusLine, verbLines } from "./composition.mjs";
 import { fail } from "./failure.mjs";
 
 const LINK_CONFLICT = (key, prefix) => `conflict ${key}: ${linkProblem(prefix)}`;
@@ -17,9 +18,9 @@ const allKeys = (kit, files) => [...new Set([...kit.units.keys(), ...Object.keys
 // Block text differing from the shipped body is flagged whatever its state (INST-13).
 const blockDiffers = (key, { P, K }) => isBlockKey(key) && P != null && P !== MALFORMED && K != null && P !== K;
 
-function finishInstallOrUpdate(ctx, { records, installedAt }) {
+function finishInstallOrUpdate(ctx, { records, installedAt, composition = {} }) {
   const problems = wire({ ...ctx, records });
-  writeManifest(ctx.project, { version: ctx.kit.version, installedAt, files: records }, ctx.now());
+  writeManifest(ctx.project, { version: ctx.kit.version, installedAt, files: records, composition: compositionEntries(ctx.kit, records, composition) }, ctx.now());
   return problems;
 }
 
@@ -66,6 +67,7 @@ export function update(ctx) {
   const retiredHooks = new Set();
   let changed = 0;
   let kept = 0;
+  let composed = 0;
   for (const key of allKeys(ctx.kit, records)) {
     const linked = linkedPart(ctx.kit, ctx.project, key);
     if (linked) {
@@ -80,6 +82,13 @@ export function update(ctx) {
       continue;
     }
     const state = classify(P, K, records[key] ?? null);
+    // Kit feedback 87: an edited composition part is the project's; kept even with --force and never a conflict.
+    if (isComposition(ctx.kit, manifest, key) && (isEdited(state) || state === "removed-local")) {
+      if (state === "removed-local") delete records[key];
+      ctx.out(state === "removed-local" ? droppedLine(key) : keptLine(ctx, key, state, manifest.composition?.[key]));
+      composed++;
+      continue;
+    }
     if (state === "same") records[key] = K;
     else if (state === "gone") delete records[key];
     else if (state === "missing" || state === "kit-newer" || (ctx.force && (state === "local" || state === "both"))) {
@@ -99,15 +108,17 @@ export function update(ctx) {
       kept++;
     }
   }
-  kept += finishInstallOrUpdate({ ...ctx, retiredHooks }, { records, installedAt: manifest.installedAt });
-  const refused = overlayLines(ctx, manifest.version);
-  ctx.out(`update: ${changed} part(s) changed, ${kept} kept; kit ${ctx.kit.version}`);
+  kept += finishInstallOrUpdate({ ...ctx, retiredHooks }, { records, installedAt: manifest.installedAt, composition: manifest.composition });
+  const refused = overlayLines(ctx, manifest.version) + verbLines(ctx);
+  const asEdited = composed ? `, ${composed} composition part(s) kept as edited` : "";
+  ctx.out(`update: ${changed} part(s) changed, ${kept} kept${asEdited}; kit ${ctx.kit.version}`);
   return kept || refused ? 2 : 0;
 }
 
 export function status(ctx) {
   const manifest = requireManifest(ctx.project);
   let differ = 0;
+  let edited = 0;
   for (const key of allKeys(ctx.kit, manifest.files)) {
     const linked = linkedPart(ctx.kit, ctx.project, key);
     if (linked) {
@@ -122,14 +133,20 @@ export function status(ctx) {
       continue;
     }
     const state = classify(d.P, d.K, manifest.files[key] ?? null);
-    if (state !== "same" && state !== "gone") {
+    const composed = isComposition(ctx.kit, manifest, key) && statusLine(ctx, key, state, manifest.composition?.[key]);
+    if (composed) {
+      ctx.out(composed.line);
+      if (composed.differs) differ++;
+      if (isEdited(state)) edited++;
+    } else if (state !== "same" && state !== "gone") {
       ctx.out(`${state.padEnd(13)} ${key}  (${reason(state).slice(state.length + 2)})`);
       differ++;
     }
     if (blockDiffers(key, d)) ctx.out(BLOCK_WARNING(key));
   }
   const versions = `project on kit ${manifest.version}, kit now ${ctx.kit.version}`;
-  ctx.out(differ ? `status: ${differ} part(s) differ; ${versions}` : `status: every kit part is the same; ${versions}`);
+  const owned = edited ? `; ${edited} composition part(s) edited by the project` : "";
+  ctx.out(differ ? `status: ${differ} part(s) differ${owned}; ${versions}` : `status: every kit part is the same${owned}; ${versions}`);
   return differ ? 2 : 0;
 }
 
@@ -175,7 +192,8 @@ export function pull(ctx, partNames) {
       skipped++;
     }
   }
-  writeManifest(ctx.project, { version: ctx.kit.version, installedAt: manifest.installedAt, files: records }, ctx.now());
+  const composition = compositionEntries(ctx.kit, records, manifest.composition);
+  writeManifest(ctx.project, { version: ctx.kit.version, installedAt: manifest.installedAt, files: records, composition }, ctx.now());
   const reminder = copied ? "; record them in the kit CHANGELOG.md and commit the kit, then update the other projects" : "";
   ctx.out(`pull: ${copied} part(s) copied into the kit${reminder}`);
   return skipped ? 2 : 0;

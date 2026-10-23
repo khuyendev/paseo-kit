@@ -13,6 +13,20 @@ specific to one project, engine or game (D-110); a project supplies only its ada
 - Kit tests (`npm test`): Node 24.
 - Claude Code >= 2.1.296 for the harness-files mod; Paseo CLI (tested with 0.11.2) with a running daemon; Git.
 
+## What the kit owns and what the project owns
+
+The kit is split in two layers (kit feedback 87):
+
+- The kit owns the runtime (`ph workflow`, its journal and resume, agents, tiers, worktrees), the verbs and the
+  invariants. A verb is one job with one on-disk record: `node .agents/workflows/lib/gsd-flow.mjs <verb>` and
+  `ph gsd <verb>`, listed with input, output and record in `docs/INTERFACES.md` "Kit verbs (stable API)". The kit
+  keeps their names and shapes stable (a rename comes with a CHANGELOG line and an alias for one release). Invariants
+  are rules a workflow cannot switch off from inside a run.
+- The project owns its workflow composition: the scripts `.agents/workflows/gsd-*.js` (step order, when to stop or go
+  on, which verbs run with which policy). The kit ships a default; the project changes its copy through
+  `harness-evolve` between runs. A script cannot import modules, so it reaches the kit only through the verbs;
+  `kit.mjs update`, `ph doctor` and `ph harness lint` check that every verb a script calls is one the kit serves.
+
 ## Install and update a project
 
 ```
@@ -29,8 +43,15 @@ node kit.mjs help
   once, and records every kit part with its digest in `.agents/harness-kit.json`.
 - `update` takes kit changes and keeps local edits (listed, exit 2) unless `--force`; after the copy it runs the gsd
   workflows' argument checks on the merged overlay (a refused value is `problem`, exit 2) and names the overlay keys
-  the CHANGELOG mentions since the installed version (`warning`); `status` is read-only; `pull` copies locally edited
-  parts back into the kit.
+  the CHANGELOG mentions since the installed version (`warning`) and the verb check of the workflow compositions (an
+  unknown verb is `problem`, exit 2); `status` is read-only; `pull` copies locally edited parts back into the kit.
+- Composition parts (kit.json `composition`: the `gsd-*.js` workflow scripts). The manifest records the digest and kit
+  version each was seeded from. `update` takes a new kit default only for a copy the project never edited; an edited
+  copy stays, also with `--force`, with a `composition kept:` line (when the kit default changed too: since which
+  version and the `git diff --no-index` command to compare) and no conflict exit. To take the default, delete the
+  project copy and run `update`. `status` lists each part as `kit default`, `edited by project`, or edited with the kit
+  default changed since a version. `pull` still copies an edited composition into the kit, so a change that proved
+  itself in one project becomes the default for the others.
 - Ownership: kit-owned parts are tracked by digest; the overlay, the history table and `.planning/` belong to the
   project and are never overwritten; install never edits Paseo settings. `--force` never overrides removed-local
   parts, seeds, project-owned files, foreign settings keys or hooks, `CLAUDE.md` lines, `.gitignore` lines outside
@@ -39,7 +60,8 @@ node kit.mjs help
   toggles an owner's plugin selection otherwise. Without it, when the mod is not selected, `install` and `update` print
   the `ph doctor` line and what that costs the hooks, and a `problem` line for each MCP server that still looks like a
   batch file writer (`fsbatch`, `filesystem`) with its `claude mcp remove --scope <scope> <name>` command; `ph doctor`
-  reports the same servers as problems while the mod is not selected.
+  reports the same servers as problems while the mod is not selected. With `--force` and without `--enable-plugin`
+  they also say that the mod stays unselected: `--force` replaces kit files, never the mod selection.
 - Exit codes: 0 done; 1 usage error or refusal before any write; 2 done with conflicts, kept parts or blocked hooks.
   A failure after the first copy (write error, mod activation, malformed hook) can leave kit files copied and
   `.claude/settings.json` edited, with no `.agents/harness-kit.json`; fix the cause and re-run the same install.

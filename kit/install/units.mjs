@@ -87,6 +87,7 @@ export function loadKit(kitDir) {
     throw new KitFailure(e.message);
   }
   if (typeof kitJson.version !== "string" || !Array.isArray(kitJson.units)) fail("kit.json needs a version string and a units list");
+  if (kitJson.composition !== undefined && !Array.isArray(kitJson.composition)) fail("kit.json composition must be a list of unit paths");
   const units = new Map();
   for (const rel of kitJson.units) {
     checkListed(kitDir, rel);
@@ -103,7 +104,12 @@ export function loadKit(kitDir) {
   for (const name of templateScripts(template)) {
     if (!units.has(hookUnitKey(name))) fail(`${HOOK_TEMPLATE_REL} names ${hookUnitKey(name)}, which kit.json does not list`);
   }
-  return { dir: kitDir, version: kitJson.version, units, template, templatesDir: path.join(kitDir, "ship", "templates") };
+  // Kit feedback 87: the workflow scripts a project owns and evolves once it edits them (update keeps an edited copy).
+  const composition = new Set(kitJson.composition ?? []);
+  for (const rel of composition) {
+    if (units.get(rel)?.kind !== "file") fail(`kit.json composition names ${JSON.stringify(rel)}, which units does not list`);
+  }
+  return { dir: kitDir, version: kitJson.version, units, composition, template, templatesDir: path.join(kitDir, "ship", "templates") };
 }
 
 export const shippedBlockBody = (unit) => readText(unit.src).trim();

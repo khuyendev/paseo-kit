@@ -13,6 +13,7 @@ import { id8 } from "../lib/paths.mjs";
 import { FILE_PLUGIN_ID, MIN_CLAUDE_VERSION, NODE_REQUIREMENT, claudeVersion, nodeRuntimeProblem, paseoConfigFile, versionAtLeast } from "../platform.mjs";
 import { checkTarget } from "../gsd/upstream.mjs";
 import { workflowArgProblems } from "../gsd/workflow-args.mjs";
+import { checkCompositionVerbs, problemText, WORKFLOWS_REL } from "../gsd/verb-check.mjs";
 import { DEFAULT_RUNS_DIR } from "../workflow/journal.mjs";
 import { AGENTS_DIR, listAgentTypes } from "./agents.mjs";
 import { resolveModel } from "./models.mjs";
@@ -134,6 +135,14 @@ function workflowArgLines(ctx, line) {
   if (!problems.length) line("ok", "workflow arguments: every skeleton lane lens resolves");
 }
 
+// Kit feedback 87: every flow and gsd verb a workflow composition calls is one the kit serves.
+function compositionVerbLines(ctx, line) {
+  const r = checkCompositionVerbs(ctx.root);
+  if (!r.scripts) return line("note", `composition verbs: no workflow scripts in ${WORKFLOWS_REL}/`);
+  for (const p of r.problems) line("problem", `composition ${problemText(p)}`);
+  if (!r.problems.length) line("ok", `composition verbs: ${r.scripts} workflow script(s), ${r.calls} flow and gsd calls use kit verbs${r.dynamic ? ` (${r.dynamic} with a computed verb not checked)` : ""}`);
+}
+
 // Integrity is independent of the project overlay so doctor can report both faults (CONF-08).
 async function gsdUpstreamLines(ctx, line) {
   let r;
@@ -181,6 +190,7 @@ export async function runDoctor(ctx, { freemem = os.freemem, claudeVersionText =
   await guard("adapter", () => adapterLines(ctx, line));
   await guard("worktrees", () => worktreeLines(ctx, line));
   await guard("workflow arguments", () => workflowArgLines(ctx, line));
+  await guard("composition verbs", () => compositionVerbLines(ctx, line));
   await guard("gsd upstream", () => gsdUpstreamLines(ctx, line));
   await guard("agent types", () => {
     const types = listAgentTypes(ctx.root);
@@ -197,7 +207,7 @@ export async function runDoctor(ctx, { freemem = os.freemem, claudeVersionText =
 export const doctorCommands = [
   {
     name: "doctor",
-    summary: "check node, caller, config, Paseo daemon, tiers, file mod, provider policy, adapter, workflow arguments and agent types",
+    summary: "check node, caller, config, Paseo daemon, tiers, file mod, provider policy, adapter, workflow arguments, composition verbs and agent types",
     usage: "ph doctor",
     options: {},
     config: "lenient",
