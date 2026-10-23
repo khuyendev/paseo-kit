@@ -2,7 +2,9 @@
 // file read, guarded write and git inspection they need runs here: `node .agents/workflows/lib/gsd-flow.mjs <cmd> ...`.
 // Output follows the ph gsd rule: one JSON document on the last stdout line; exit 0 ok, 1 negative verdict or error.
 import fs from "node:fs";
+import path from "node:path";
 import { configRoot } from "../../harness/config.mjs";
+import { DEFAULT_RUNS_DIR, checkRunId, readStopRequest } from "../../harness/workflow/journal.mjs";
 import { errText, isMain } from "../../harness/lib/cli.mjs";
 import * as files from "./flow-files.mjs";
 import * as map from "./flow-map.mjs";
@@ -21,6 +23,17 @@ const notState = (p) => {
   if (state.isStateFile(p)) throw new Error(`${p} is written only by the state-* verbs (state-plan, state-shared, state-request, state-integration, state-answer, state-smoke)`);
   return p;
 };
+
+// Kit feedback 88: the stop request `ph workflow stop` left for the current run (the runner names it in the script's env), or
+// for the run id given. Read-only; a script run outside `ph workflow` has no run and never stops.
+function stopRequested(root, [id], env) {
+  const runId = id ?? env.PASEO_HARNESS_WORKFLOW_RUN ?? null;
+  if (!runId) return { stop: false, runId: null };
+  checkRunId(runId, "run id");
+  const runDir = !id && env.PASEO_HARNESS_WORKFLOW_RUN_DIR ? env.PASEO_HARNESS_WORKFLOW_RUN_DIR : path.join(root, DEFAULT_RUNS_DIR, runId);
+  const req = readStopRequest(runDir);
+  return req ? { stop: true, runId, at: req.at ?? "wave-boundary", requestedAt: req.requestedAt ?? null, reason: req.reason ?? null } : { stop: false, runId };
+}
 
 const COMMANDS = {
   exists: (root, args) => files.exists(root, args),
@@ -85,6 +98,7 @@ const COMMANDS = {
   "state-integration": (root, [phaseDir], input) => state.stateIntegration(root, phaseDir, JSON.parse(input)),
   "state-answer": (root, [phaseDir], input) => state.stateAnswer(root, phaseDir, JSON.parse(input)),
   "state-smoke": (root, [phaseDir], input) => state.stateSmoke(root, phaseDir, JSON.parse(input)),
+  "stop-requested": (root, args, _input, env) => stopRequested(root, args, env),
 };
 
 export const COMMAND_NAMES = Object.keys(COMMANDS);
@@ -94,7 +108,7 @@ export const COMMAND_NAMES = Object.keys(COMMANDS);
 const STDIN = new Set(["write", "append", "json-push", "summary-heal", "resume-gate", "transfer", "discard-worktree", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "evidence-check", "check-weakening", "review-scope", "review-record", "prereview-record", "changed-lines", "forensics-path", "plan-run", "plan-mark", "plan-end", "plan-outline", "plan-checker", "plan-contracts", "plan-realloc", "plan-recheck", "state-plan", "state-shared", "state-request", "state-integration", "state-answer", "state-smoke"]);
 export const readsStdin = (cmd) => STDIN.has(cmd);
 
-export async function main(argv, { root = configRoot(), input = "", out = (l) => process.stdout.write(`${l}\n`) } = {}) {
+export async function main(argv, { root = configRoot(), input = "", out = (l) => process.stdout.write(`${l}\n`), env = process.env } = {}) {
   const [cmd, ...args] = argv;
   const fn = COMMANDS[cmd];
   // The plan-* verbs are the only writer of plan-progress.json.
@@ -107,7 +121,7 @@ export async function main(argv, { root = configRoot(), input = "", out = (l) =>
     return 1;
   }
   try {
-    const { code = 0, ...json } = await fn(root, args, typeof input === "function" ? input() : input);
+    const { code = 0, ...json } = await fn(root, args, typeof input === "function" ? input() : input, env);
     out(JSON.stringify(json));
     return code;
   } catch (e) {

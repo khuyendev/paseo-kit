@@ -87,6 +87,9 @@ const planFilter = a.plans ? (Array.isArray(a.plans) ? a.plans : String(a.plans)
 if (planFilter && planFilter.some((id) => !/^\d+(\.\d+)?-\d+$/.test(id))) return { status: "failed", reason: "plans must be plan ids NN-MM" };
 const waveFilter = a.wave === undefined ? null : Number(a.wave);
 if (waveFilter !== null && !(Number.isInteger(waveFilter) && waveFilter >= 1)) return { status: "failed", reason: "wave must be an integer >= 1" };
+// Kit feedback 88: stopAfterWave N ends the run paused once wave N is committed, before a later wave starts.
+const stopAfterWave = a.stopAfterWave === undefined || a.stopAfterWave === null ? null : Number(a.stopAfterWave);
+if (stopAfterWave !== null && !(Number.isInteger(stopAfterWave) && stopAfterWave >= 1)) return { status: "failed", reason: "stopAfterWave must be an integer >= 1" };
 const cfg = await loadCfg();
 const g = cfg.gsd;
 const cmds = cfg.adapter.commands;
@@ -212,6 +215,8 @@ async function defectEvent(kind, extra, defects) {
 // kit-feedback 66: gsd.execute_schedule graph starts each plan when the plans it waits for are committed (per-wave only).
 const schedule = g.execute_schedule ?? "waves";
 if (schedule === "graph" && execMode !== "per-wave") return result("refused", { reason: `gsd.execute_schedule graph needs gsd.execution_mode per-wave (it is ${execMode})` });
+// Batch mode commits once, after the last wave: it has no wave boundary to pause at.
+if (stopAfterWave !== null && execMode !== "per-wave") return result("refused", { reason: `stopAfterWave needs gsd.execution_mode per-wave (it is ${execMode}: one commit after the last wave)` });
 
 // Calls run one at a time, in order; a failed call does not stop the next.
 const serialize = () => {
@@ -1376,6 +1381,46 @@ async function track(w, tasks, verify, evidence) {
   return lost ? { stop: lost } : {};
 }
 
+// ---- clean stop at a wave boundary (kit feedback 88) ----
+// `ph workflow stop <runId>` leaves a stop request the verb stop-requested reads; stopAfterWave is the same stop, set in the args.
+// Both are checked only where every started wave is committed and tracked: before a wave that has work left (waves schedule),
+// before a plan starts (graph schedule: started plans run on to their commit). The run then ends paused: nothing is killed.
+let stopSeen = null;
+let currentRun = null;
+async function stopAsked() {
+  if (stopSeen) return stopSeen;
+  const r = await flow(["stop-requested"]);
+  currentRun = r.json?.runId ?? currentRun;
+  if (r.json?.stop) {
+    stopSeen = r.json;
+    log(`stop request of run ${r.json.runId} (${r.json.at}) seen${r.json.reason ? `: ${r.json.reason}` : ""}`);
+  }
+  return stopSeen;
+}
+// Why the run pauses before work of wave k, or null.
+const pauseBefore = async (k) => (stopAfterWave !== null && k > stopAfterWave ? "stopAfterWave" : (await stopAsked()) ? "stop-request" : null);
+const hasWork = (w) => w.tasks.filter(selectedTask).some((t) => !tracked(t.plan));
+// The last wave of this run's set whose plans, and those of every wave before it, are tracked or committed.
+function waveReached() {
+  let k = null;
+  for (const w of waves) {
+    if (w.tasks.filter(selectedTask).some((t) => !tracked(t.plan) && progress.plans[t.plan]?.commit === undefined)) break;
+    k = w.k;
+  }
+  return k;
+}
+function paused(by, nextWave, extra = {}) {
+  const afterWave = waveReached();
+  const reached = afterWave === null ? "before its first wave" : `after wave ${afterWave} (committed)`;
+  const reason = by === "stopAfterWave" ? `stopAfterWave ${stopAfterWave}: paused ${reached}` : `stop requested${stopSeen?.reason ? ` (${stopSeen.reason})` : ""}: paused ${reached}`;
+  const resume = currentRun ? ` (or ph workflow --resume ${currentRun})` : "";
+  const answer = by === "stopAfterWave"
+    ? ANSWER.rerun(`rerun with the same args without stopAfterWave (or a higher one); with stopAfterWave ${stopAfterWave} the run pauses again at once. The committed waves are tracked; the run goes on with wave ${nextWave}`)
+    : ANSWER.rerun(`rerun with the same args${resume}; the committed waves are tracked and the run goes on with wave ${nextWave}`);
+  ev(`paused ${by} before wave ${nextWave}`);
+  return result("paused", { stage: "Wave", reason, pausedAt: { by, afterWave, nextWave }, answer, ...extra });
+}
+
 // Plans sharing a files_modified entry never run at the same time (GSDF-40): later ones move to a later group.
 function overlapGroups(tasks) {
   const groups = [];
@@ -1505,6 +1550,7 @@ async function graphRun() {
     if (tr.stop) return tr;
   }
   const units = waves.flatMap((w) => w.tasks.filter(selectedTask).filter((t) => !tracked(t.plan)));
+  const pausing = [];
   const inRun = new Set(units.map((t) => t.plan));
   const isCommitted = (id) => progress.plans[id]?.commit !== undefined;
   const execSlot = slots(limit);
@@ -1560,6 +1606,12 @@ async function graphRun() {
     const p = planInfo(t.plan);
     if (p.has_summary && p.halted) return stopPlans([t.plan], owner("Execute", `plans with a SUMMARY and a halt record: ${t.plan}; resolve the halt first (ph gsd halt clear ${N} --plan <id> --reason <answer>)`, { answer: ANSWER.halt(t.plan), halted: [t.plan] }));
     if (!p.has_summary && (p.halted || p.error)) return skip(t, p.halted ? "halted" : `frontmatter ${p.error}`);
+    // Kit feedback 88: a stop (request or stopAfterWave) starts no new plan; the plans already started commit.
+    const by = await pauseBefore(w.k);
+    if (by) {
+      pausing.push({ plan: t.plan, wave: w.k, by });
+      return interrupt(t);
+    }
     const partial = ((await flow(["pending-transfers", phaseDir])).json?.pending ?? []).filter((x) => x.plan === t.plan);
     if (partial.length) return stopPlans([t.plan], owner("Execute", `the transfer of ${t.plan} did not finish: the main tree holds part of it (the worktree ${partial[0].worktree} is kept)`, { answer: ANSWER.tree("finish or revert the transfer by hand, then rerun with the same args"), partial, options: ["copy the rest from the worktree by hand and delete the transfers-pending record", "revert the copied paths, delete the SUMMARY and the record, then rerun to re-execute"] }));
     order.push(`start ${t.plan}`);
@@ -1736,6 +1788,10 @@ async function graphRun() {
   ]);
   const by = (state) => units.filter((t) => settled.get(t.plan)?.state === state).map((t) => t.plan);
   const info = { schedule: "graph", order, committed: by("committed"), ...(by("interrupted").length ? { interrupted: by("interrupted") } : {}) };
+  if (!stops.length && pausing.length) {
+    const first = pausing.reduce((x, y) => (y.wave < x.wave ? y : x));
+    return { pause: paused(first.by, first.wave, { ...info, notStarted: pausing.map((x) => x.plan) }) };
+  }
   if (!stops.length) return { info };
   return { stop: { ...stops[0].stop, ...info, stopped: stops.map(({ plans, stop }) => ({ plans, status: stop.status, stage: stop.stage ?? null, reason: stop.reason })), ...(skipped.length ? { skipped } : {}) } };
 }
@@ -1743,11 +1799,17 @@ async function graphRun() {
 if (schedule === "graph") {
   const gr = await graphRun();
   if (gr.stop) return gr.stop;
+  if (gr.pause) return gr.pause;
   return phaseGate(gr.info);
 }
 
 if (execMode === "per-wave") {
   for (const w of waves) {
+    // Kit feedback 88: the wave boundary; every wave before this one is committed and tracked.
+    if (hasWork(w)) {
+      const by = await pauseBefore(w.k);
+      if (by) return paused(by, w.k);
+    }
     const cw = await codeWave(w);
     if (cw.stop) return cw.stop;
     if (!cw.tasks.length) continue;
@@ -1784,7 +1846,12 @@ if (execMode === "per-wave") {
 // ---- batch mode (GSDF-49, D-63): code-only waves, one phase review, one final gate, one fixer ----
 const done = [];
 const allReviews = [];
+let batchStopNoted = false;
 for (const w of waves) {
+  if (!batchStopNoted && (await stopAsked())) {
+    batchStopNoted = true;
+    log("stop request not honoured: batch mode commits once after the last wave, so it has no wave boundary; the run goes on to its end");
+  }
   const cw = await codeWave(w);
   if (cw.stop) return cw.stop;
   if (!cw.tasks.length) continue;

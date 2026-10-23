@@ -406,6 +406,15 @@ async function contractGate(stage, { complete = false } = {}) {
 }
 const ownerStop = (stage, r) => owner(stage, `planner returned ${ownerMarker(r)}`, { marker: ownerMarker(r), question: r?.question ?? r?.summary ?? null, summary: r?.summary ?? null, plans: r?.plans ?? null, conflict: r?.conflict ?? null, options: ["answer and rerun with the same args", "adjust CONTEXT and rerun", "abandon"], answer: answers.context(`the planner's ${ownerMarker(r)} (its question, conflict or proposal)`) });
 const failedCall = (what, reason) => result("failed", { reason: `${what}${reason ? `: ${reason}` : " returned nothing"}` });
+// Kit feedback 88: `ph workflow stop <runId>` asks the run to stop at its next boundary, checked between planner waves and between
+// the rounds of the checker loop, where every plan written so far is recorded. The run ends paused; a rerun with the same args keeps
+// the recorded plans and goes on.
+async function pauseAsked(stage, where, at = {}) {
+  const r = await flow(["stop-requested"]);
+  if (!r.json?.stop) return null;
+  log(`stop request of run ${r.json.runId} (${r.json.at}) seen: paused ${where}`);
+  return result("paused", { stage, reason: `stop requested${r.json.reason ? ` (${r.json.reason})` : ""}: paused ${where}`, pausedAt: { by: "stop-request", ...at }, answer: answers.rerun("") });
+}
 // Kit feedback 64: each pre-code review stage that ran leaves a record of its findings and their fates for `ph review-stats
 // --stage` (gsd.review_metrics); `part` names a part of a stage that runs beside others (the dependency checks). Measurement
 // only: no flow reads it back, and a failed write is a warning, never a stop.
@@ -780,7 +789,10 @@ async function keptPlan(id) {
 }
 // Wave by wave, the plans without a valid record are written; returns the stop, or null. The checker's reallocation runs it again.
 async function stagedWaves() {
-  for (const ids of wavesOf(rows)) {
+  const all = wavesOf(rows);
+  for (const [i, ids] of all.entries()) {
+    const pause = i > 0 ? await pauseAsked("Plans", `after planner wave ${i} of ${all.length}`, { afterWave: i, nextWave: i + 1 }) : null;
+    if (pause) return pause;
     const todo = [];
     for (const id of ids) {
       const st = await keptPlan(id);
@@ -818,7 +830,11 @@ async function planStreams() {
   };
   if (planReview) await flow(["remove", notesPath]);
   let stop = null;
-  for (const ids of wavesOf(rows)) {
+  const all = wavesOf(rows);
+  for (const [i, ids] of all.entries()) {
+    // The previous wave's streams froze, its contract gate and propagation ran: no stream edits a plan now.
+    const pause = i > 0 ? await pauseAsked("Plans", `after planner wave ${i} of ${all.length}`, { afterWave: i, nextWave: i + 1 }) : null;
+    if (pause) { stop = pause; break; }
     const todo = [];
     for (const id of ids) {
       const st = await keptPlan(id);
@@ -1173,6 +1189,9 @@ async function checkerRounds(scopeIds, gapScoped, ledger) {
   let earlier = [];
   let stuckKeys = [];
   for (let iter = 1; ; iter++) {
+    // Kit feedback 88: the last round's revisions are recorded; a stop request ends the run here.
+    const pause = iter > 1 ? await pauseAsked("Checker", `before checker round ${iter}`, { round: iter }) : null;
+    if (pause) return { stop: pause };
     // Kit feedback 67 F2: a CONTRACT_CHANGE of the last round has its consumers revised before the checker reads them again.
     if (contractDirty && !gapScoped) {
       const contractStop = await contractGate("Checker");

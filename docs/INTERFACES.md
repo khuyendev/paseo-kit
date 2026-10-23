@@ -589,6 +589,7 @@ error, `{status: "error", error}`); `ph gsd` verbs exit 0, 1, 66 (nothing matche
 | `plan-mark` | `<phaseDir>`, `{run, plans, stage: planned\|recorded}` | `{status}` | `plan-progress.json` |
 | `plan-outline` | `<phaseDir>`, `{run, inputs, sha}` | `{status}` | `plan-progress.json` |
 | `plan-checker`, `plan-contracts`, `plan-realloc`, `plan-recheck` | `<phaseDir>`, `{run, part, step, ops}` | `{status, log}` | `plan-progress.json` (op log per part) |
+| `stop-requested` | `[runId]` (default: the current run, `PASEO_HARNESS_WORKFLOW_RUN` / `_RUN_DIR`, which `ph workflow` sets) | `{stop, runId, at?, requestedAt?, reason?}`: whether `ph workflow stop` asked the run to stop at its next wave boundary (`stop: false, runId: null` outside a run) | none (reads `<runDir>/stop.json`) |
 
 ### `ph gsd` verbs
 

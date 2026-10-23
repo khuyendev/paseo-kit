@@ -12,8 +12,9 @@ export const WATCH_OPTIONS = Object.freeze({ all: "bool", quiet: "bool", "from-s
 const POLL_MS = 1000;
 const ABSENT_MS = 60_000;
 const DEAD_CHECKS = 3;
-const TERMINAL = /^workflow (done|failed) /;
+const TERMINAL = /^workflow (done|failed|paused) /;
 const FAILED = /^workflow failed /;
+const PAUSED = /^workflow paused /;
 const SHOWN = /^(log |phase |workflow )|^agent done #\d+ .* null \(/;
 
 function readAppended(st) {
@@ -62,9 +63,12 @@ export async function watchRunCommand(ctx) {
   const say = (st, line) => ctx.out(`${many ? `[${st.id.slice(-4)}] ` : ""}${line}`);
   // Kit feedback #39: a run that failed or was interrupted is resumed with its journal, so the line says how (the agents
   // that finished replay from the journal, FLOW-21).
-  const end = (st, line, { resume = false } = {}) => {
+  // Kit feedback 88: a run paused at a wave boundary is continued as its result's `answer` says (a stopAfterWave run would pause
+  // again on a plain resume).
+  const end = (st, line, { resume = false, paused = false } = {}) => {
     if (line) say(st, line);
     if (resume) say(st, `next: resume with \`${ctx.ph} workflow --resume ${st.id} --detach${runsHint}\`; the journal keeps the agents that finished`);
+    if (paused) say(st, `next: the run paused at a wave boundary; continue it as ${path.join(st.dir, RUN_FILES.result).split(path.sep).join("/")} answer says (a rerun with the same args, or ${ctx.ph} workflow --resume ${st.id} --detach${runsHint})`);
     st.ended = true;
   };
   // --quiet: the wait is woken once, by the line that ends the watch (the end lines below are always printed).
@@ -77,11 +81,11 @@ export async function watchRunCommand(ctx) {
       const phase = lines.filter((l) => l.startsWith("phase ")).pop()?.slice(6) ?? "none";
       if (!ctx.opts.quiet) say(st, `resuming ${st.id}: skipped ${lines.length} earlier lines; current phase ${phase} (--from-start replays them)`);
       const terminal = lines.find((l) => TERMINAL.test(l));
-      if (terminal) return end(st, terminal, { resume: FAILED.test(terminal) });
+      if (terminal) return end(st, terminal, { resume: FAILED.test(terminal), paused: PAUSED.test(terminal) });
     } else {
       for (const line of lines) {
         if (shown(line)) say(st, line);
-        if (TERMINAL.test(line)) return end(st, null, { resume: FAILED.test(line) });
+        if (TERMINAL.test(line)) return end(st, null, { resume: FAILED.test(line), paused: PAUSED.test(line) });
       }
     }
     st.first = false;
@@ -102,7 +106,7 @@ export async function watchRunCommand(ctx) {
         return;
       }
       const why = info.stopReason ? `; reason: ${oneLine(info.stopReason)}` : info.error ? `; error: ${oneLine(info.error)}` : "";
-      return end(st, `workflow ended (run.json status ${info.status}${why})`, { resume: info.status === "failed" });
+      return end(st, `workflow ended (run.json status ${info.status}${why})`, { resume: info.status === "failed", paused: info.status === "paused" });
     }
     // Three consecutive dead checks, so a runner that just wrote its last line is not taken for dead.
     if (pidAlive(info.pid)) st.deadChecks = 0;
