@@ -15,6 +15,7 @@ Args file `_workspace/args/gsd-verify.json`: `{"phaseDir": ..., "evidence": [<ga
 - `human_needed`: the run wrote `<NN>-UAT.md` (one test per human item). Run the UAT conversation below; the phase does not advance and no ROADMAP checkbox changes.
 - `gaps_found`: the run reverted the phase's requirement marks; run `gsd-plan` with `mode: gaps`, then `gsd-execute --gaps-only`, then verify again. Leftovers after that one gap wave go to the owner.
 - `stale`: verify again once execution evidence is current.
+- `refused`: another verify of this phase holds its lock (the reason names the run); nothing was dispatched or recorded. Wait for that run to end, then verify again.
 
 ### UAT conversation (GSDF-57)
 - Before the first test: when a phase plan changed files matching `adapter.startup_globs` and no cold-start smoke test exists, insert one as test 1. A SUMMARY completion claim counts only when its plan's `commits.json` entry and a current gate evidence file confirm it; otherwise that test is an issue of severity blocker.

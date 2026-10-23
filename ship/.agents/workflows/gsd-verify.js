@@ -61,6 +61,12 @@ const REPORT = `${phaseDir}/${nn}-VERIFICATION.md`;
 const cfg = await loadCfg();
 const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
 
+// GSDF-64 (per phase): one verification of a phase at a time, from its attempt record through readback and routing. The
+// lock is per phase, not the root writer lock: a verify of one phase must not block plan or execute of the root.
+const lease = await flow(["lock", `verify-${nn}`, runId, "gsd-verify"]);
+if (lease.code !== 0) return { status: "refused", reason: `${leaseText(lease.json)}; verify of phase ${nn} after it ends` };
+try {
+
 // ---- gate evidence (GSDF-55, ADPT-17): stale or invalid evidence is listed as stale, never as proof ----
 phase("Evidence");
 // The planned obligations of every handoff wave: the expected steps of each evidence file come from the plans, not
@@ -150,3 +156,6 @@ if (verdict.status === "gaps_found") {
   return { ...verdict, route: "plan-gaps" };
 }
 return { ...verdict, route: "verify-after-evidence" };
+} finally {
+  await flow(["unlock", `verify-${nn}`, lease.json.token]);
+}
