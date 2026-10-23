@@ -107,6 +107,12 @@ export function status(ctx) {
   const manifest = requireManifest(ctx.project);
   let differ = 0;
   for (const key of allKeys(ctx.kit, manifest.files)) {
+    const linked = linkedPart(ctx.kit, ctx.project, key);
+    if (linked) {
+      ctx.out(LINK_CONFLICT(key, linked));
+      differ++;
+      continue;
+    }
     const d = digests(ctx.kit, ctx.project, key);
     if (d.P === MALFORMED) {
       ctx.out(`${"malformed".padEnd(13)} ${key}  (malformed kit block markers; fix by hand)`);

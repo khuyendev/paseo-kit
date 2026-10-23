@@ -68,7 +68,7 @@ test("INST-24 a linked skill folder is a kept conflict for install, update and p
   linkDir(other, p.path(".claude/skills/demo"));
   const before = treeHash(other);
   const line = `conflict .claude/skills/demo/SKILL.md: .claude/skills/demo is a link; ${LINK}`;
-  for (const argv of [["install", p.root, "--force"], ["update", p.root], ["update", p.root, "--force"]]) {
+  for (const argv of [["install", p.root, "--force"], ["update", p.root], ["update", p.root, "--force"], ["status", p.root]]) {
     const r = await runKit(argv, { kit });
     assert.equal(r.code, 2, `${argv.join(" ")}\n${r.stdout}${r.stderr}`);
     assert.ok(r.out.includes(line), r.stdout);
@@ -97,6 +97,9 @@ test("INST-24 a linked file is not written through, also with --force", async (t
   const r = await runKit(["install", p.root, "--force"], { kit });
   assert.equal(r.code, 2);
   assert.ok(r.out.includes(`conflict .agents/harness/runtime/a.mjs: .agents/harness/runtime/a.mjs is a link; ${LINK}`), r.stdout);
+  const s = await runKit(["status", p.root], { kit });
+  assert.equal(s.code, 2);
+  assert.ok(s.out.includes(`conflict .agents/harness/runtime/a.mjs: .agents/harness/runtime/a.mjs is a link; ${LINK}`), s.stdout);
   assert.equal(fs.readFileSync(target, "utf8"), "owner text\n");
 });
 
