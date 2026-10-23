@@ -21,6 +21,8 @@ const VOCAB = (extra = {}) => ({
   ...extra,
 });
 const COMMANDS = (extra = {}) => ({ build: null, test: null, build_timeout_s: 300, test_timeout_s: 600, gates: [], verify: {}, smoke_builds: [], ...extra });
+// F57: the shipped smoke triggers (harness.defaults.json adapter.smoke_triggers).
+const SMOKE_TRIGGERS = ["**/pubspec.yaml", "**/pubspec.lock", "**/package.json", "**/package-lock.json", "**/Cargo.toml", "**/Cargo.lock", "**/go.mod", "**/go.sum", "**/pyproject.toml", "**/requirements*.txt", "**/Podfile", "**/Podfile.lock", "**/build.gradle*", "**/settings.gradle*", "**/CMakeLists.txt"];
 
 test("ADPT-01 the adapter lives in the overlay, is validated closed and .planning/config.json is ignored", () => {
   const p = makeTempProject({ git: false, overlay: { adapter: { unknown_key: 1 } } });
@@ -231,7 +233,7 @@ test("ADPT-16 the kit ships a neutral adapter and no project adapter", () => {
     commands: COMMANDS(), verify_vocabulary: VOCAB(),
     ownership: { owns_forms: [{ prefix: "Path:", maps_to: "<path>" }], shared: { globs: [], predicate: null }, source_roots: [], ignore: [], regenerated: [] },
     review_lenses: [], syntax_checkers: {}, instructions: [], envelope: null, stack_skill: null, agents: {}, mutex: null,
-    startup_globs: [], hook_timeout_s: 30, dependency_probe: null, dependency_probe_timeout_s: 300, attribution: null, worktree_setup: { copy: [], link: [] },
+    startup_globs: [], smoke_triggers: SMOKE_TRIGGERS, hook_timeout_s: 30, dependency_probe: null, dependency_probe_timeout_s: 300, attribution: null, worktree_setup: { copy: [], link: [] },
   });
   assert.equal(fs.existsSync(path.join(SHIP_DIR, ".agents", "harness.config.json")), false);
   assert.equal(fs.existsSync(path.join(SHIP_DIR, ".agents", "skill-tests")), false);

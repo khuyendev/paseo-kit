@@ -1,7 +1,7 @@
 export const meta = {
   name: "gsd-execute",
   description: "GSD phase execution: safe-resume gate, executors per handoff wave, green gate with bounded fix rounds, bounded code review, orchestrator commits",
-  phases: [{ title: "Preconditions" }, { title: "Baseline" }, { title: "Wave" }, { title: "Gate" }, { title: "Review" }, { title: "Commit" }, { title: "Batch" }],
+  phases: [{ title: "Preconditions" }, { title: "Baseline" }, { title: "Wave" }, { title: "Smoke build" }, { title: "Gate" }, { title: "Review" }, { title: "Commit" }, { title: "Batch" }],
 };
 
 // ---- shared GSD script helpers (scripts cannot import; keep identical across gsd-*.js) ----
@@ -434,6 +434,24 @@ async function runGate(waveId, tasks) {
   for (const tline of r.json.timedOut ?? []) log(`gate timeout: ${tline}`);
   ev(`gate ${waveId} ${r.json.green ? "green" : `red (${r.json.failureCount})`}`);
   return r.json;
+}
+// F57 (kit-feedback 57): the first wave that changes a file matching adapter.smoke_triggers builds adapter.commands.smoke_builds
+// once per phase, before its gate, so a toolchain gap stops that wave instead of the end of the phase. A passed build is kept in
+// execute-progress.json, so a resumed run does not build again; a failed one stops needs-owner and is built again on the rerun.
+async function smokeStop(tasks, waveId, label) {
+  if (!cmds.smoke_builds?.length || progress.smoke) return null;
+  const pf = await planFiles(tasks);
+  if (pf.stop) return pf.stop;
+  const changed = [...Object.values(pf.files), ...Object.values(pf.removed), pf.integration].flat();
+  const due = (await flow(["smoke-due"], { files: changed, globs: cfg.adapter.smoke_triggers ?? [] })).json;
+  if (!due) return result("failed", { reason: "smoke trigger check could not run" });
+  if (!due.due) return null;
+  phase("Smoke build");
+  const smoke = await gsd(["check", "smoke"]);
+  if (smoke.code !== 0) return owner("Smoke build", `${label} changes ${due.matched.join(", ")}; ${smoke.json?.reason ?? `smoke build check exit ${smoke.code}`}`, { builds: (smoke.json?.builds ?? []).filter((b) => b.status !== "passed"), options: ["install the missing toolchain component or fix the build, then rerun with the same args", "remove the target from adapter.commands.smoke_builds, then rerun with the same args", "abandon"] });
+  progress.smoke = { wave: waveId, changed: due.matched };
+  if (!(await saveProgress())) return result("failed", { reason: `${PROGRESS} could not be written after the smoke build` });
+  return null;
 }
 const failureText = (list) => list.map((f) => `- ${f.step}${f.plan ? ` (plan ${f.plan})` : ""}: ${f.outcome ?? "failed"}; full log ${f.log ?? "n/a"}\n${String(f.excerpt ?? "").split(/\r?\n/).map((l) => `    ${l}`).join("\n")}`).join("\n");
 const fixerBlock = () => (g.fixer_verifies_itself
@@ -992,6 +1010,8 @@ if (execMode === "per-wave") {
     const tail = isTracer(w) ? "; no later wave starts" : "";
     const sh = await applyShared(w.waveId, label);
     if (sh) return sh;
+    const sm = await smokeStop(cw.tasks, w.waveId, label);
+    if (sm) return sm;
     phase("Gate");
     const fr = await fixRounds(w.waveId, cw.tasks, await runGate(w.waveId, cw.tasks), label, tail);
     if (fr.stop) return fr.stop;
@@ -1052,6 +1072,8 @@ const batchId = `${prefix}batch`;
 const batchGate = () => runGate(batchId, doneTasks);
 const shB = await applyShared(batchId, "the batch");
 if (shB) return shB;
+const smB = await smokeStop(doneTasks, batchId, "the batch");
+if (smB) return smB;
 let final = await batchGate();
 // G064: failures in files no executed plan owns go to an integration fixer owning exactly those files; the batch fixer
 // gets only the failures of the executed plans; a failure naming no file has no fixer.

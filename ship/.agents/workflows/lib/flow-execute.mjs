@@ -120,6 +120,13 @@ const trailerPlans = (root, sha) => {
   return m ? m[1].split(",").map((s) => s.trim()).filter(Boolean) : [];
 };
 
+// F57 (kit-feedback 57): the changed files of a wave (deleted ones too) that match adapter.smoke_triggers. The workflow passes
+// the globs from its config; a wave with a match runs adapter.commands.smoke_builds once per phase, before its gate.
+export function smokeDue({ files = [], globs = [] }) {
+  const matched = [...new Set(files)].filter((f) => globs.some((g) => matchesGlob(f, g)));
+  return { due: matched.length > 0, matched };
+}
+
 // input: {plans: [{id, owns[], summary, complete}], integration?: [path]} — the plans of the phase with their SUMMARY
 // state, and the paths the run's integration fixer was given (orchestrator output, recorded in execute-progress.json).
 // A moved HEAD is checked commit by commit: a commit the orchestrator made but could not record (its `Plans:` trailer

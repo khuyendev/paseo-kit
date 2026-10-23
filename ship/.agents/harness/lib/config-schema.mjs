@@ -120,6 +120,8 @@ export const SCHEMA = obj({
     agents: map(str({ pattern: NAME, patternText: "an agent type name" })),
     mutex: nullable(str({ nonEmpty: true })),
     startup_globs: strs(),
+    // F57: globs of dependency manifests and native-asset package files; a wave that changes one runs commands.smoke_builds once per phase.
+    smoke_triggers: strs(),
     hook_timeout_s: int(1),
     // G022: the argv that checks the dependency set the plans declare; null = no probe.
     dependency_probe: nullable(argv()),

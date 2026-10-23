@@ -272,6 +272,11 @@ const GOLDEN = {
     agents: {},
     mutex: null,
     startup_globs: [],
+    smoke_triggers: [
+      "**/pubspec.yaml", "**/pubspec.lock", "**/package.json", "**/package-lock.json", "**/Cargo.toml", "**/Cargo.lock",
+      "**/go.mod", "**/go.sum", "**/pyproject.toml", "**/requirements*.txt", "**/Podfile", "**/Podfile.lock",
+      "**/build.gradle*", "**/settings.gradle*", "**/CMakeLists.txt",
+    ],
     hook_timeout_s: 30,
     dependency_probe: null,
     dependency_probe_timeout_s: 300,
