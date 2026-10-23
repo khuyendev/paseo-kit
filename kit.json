@@ -378,6 +378,8 @@
     ".agents/harness/runtime/result.mjs",
     ".agents/harness/runtime/start.mjs",
     ".agents/harness/runtime/tasks.mjs",
+    ".agents/harness/runtime/worktree-landed.mjs",
+    ".agents/harness/runtime/worktree-links.mjs",
     ".agents/harness/runtime/worktree-seed.mjs",
     ".agents/harness/runtime/worktree-setup.mjs",
     ".agents/harness/runtime/worktrees.mjs",

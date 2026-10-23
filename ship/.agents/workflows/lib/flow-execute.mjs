@@ -11,7 +11,8 @@ import { contentHash, keyFiles, owned, ownsPath, ownsPrefixes, specificOwners } 
 import { overlaps } from "../../harness/gsd/adapter-hooks.mjs";
 import { matchesGlob } from "../../harness/adapter/contract.mjs";
 import { readWorktreeSeed } from "../../harness/runtime/worktree-seed.mjs";
-import { runGit } from "../../harness/runtime/worktrees.mjs";
+import { leftoverWorktrees, retireWorktree, runGit } from "../../harness/runtime/worktrees.mjs";
+import { DEFAULT_RUNS_DIR } from "../../harness/workflow/journal.mjs";
 
 const ANSWER_KEYS = ["what", "manifested", "prevention"];
 
@@ -330,6 +331,8 @@ const eolOnly = (wt, base, rel) => git(wt, ["cat-file", "-e", `${base}:${rel}`],
   && git(wt, ["diff", "--ignore-cr-at-eol", "--quiet", base, "--", rel], { allowFail: true }).code === 0;
 
 // GSDF-94: validate everything first, then copy file by file; a refusal writes nothing and keeps the worktree.
+// Kit feedback 75: each record entry also holds wt_sha256, the hash of the worktree content that was copied; the record is
+// how `ph worktrees` and the discard after the plan's commit know that the worktree's delta landed (sha256 can be rewritten by adopt).
 // kit-feedback 26: a path outside owns that matches adapter.ownership.regenerated, or differs only in line endings, is
 // dropped (not copied; the main tree keeps its own version) and listed in the record, instead of refusing the transfer.
 export function transfer(root, phaseDir, { plan, worktree, owns = [], summary, files_deleted = [] }) {
@@ -350,8 +353,8 @@ export function transfer(root, phaseDir, { plan, worktree, owns = [], summary, f
   for (const c of changes) {
     if (owned(c.path, allowed, prefixes)) {
       if (c.kind === "deleted" && !files_deleted.some((d) => toSlash(d) === c.path)) refused.push({ path: c.path, reason: "deletion not declared in files_deleted" });
-    } else if (regenerated(c.path)) dropped.push({ path: c.path, reason: "regenerated" });
-    else if (c.kind === "modified" && eolOnly(wt, base, c.path)) dropped.push({ path: c.path, reason: "line endings only" });
+    } else if (regenerated(c.path)) dropped.push({ path: c.path, reason: "regenerated", wt_sha256: contentHash(path.join(wt, c.path)) });
+    else if (c.kind === "modified" && eolOnly(wt, base, c.path)) dropped.push({ path: c.path, reason: "line endings only", wt_sha256: contentHash(path.join(wt, c.path)) });
     else refused.push({ path: c.path, reason: "outside owns" });
   }
   const kept = changes.filter((c) => !dropped.some((d) => d.path === c.path));
@@ -394,12 +397,26 @@ export function transfer(root, phaseDir, { plan, worktree, owns = [], summary, f
     } finally {
       fs.rmSync(tmp, { force: true });
     }
-    files.push({ path: c.path, sha256: contentHash(dest) });
+    files.push({ path: c.path, sha256: contentHash(dest), wt_sha256: sha256(data) });
   }
   const record = { plan, worktree: toSlash(worktree), base, files, dropped };
   writeJsonAtomic(path.join(resolveInside(root, phaseDir), "transfers", `${plan}.json`), record);
   fs.rmSync(pending, { force: true });
   return { ok: true, ...record };
+}
+
+// Kit feedback 75: removes a plan's executor worktree (reason landed: after its commit; halted: its halt was cleared and the plan
+// runs again). It never fails the run: a tree that stays is reported with the reason.
+export function discardWorktree(root, { plan, worktree, reason }) {
+  if (!/^\d+(\.\d+)?-\d+$/.test(plan)) throw new Error("invalid plan id");
+  if (!["landed", "halted"].includes(reason)) throw new Error("reason must be landed or halted");
+  if (typeof worktree !== "string" || !worktree) throw new Error("worktree must be a path");
+  return { ok: true, plan, worktree: toSlash(worktree), reason, ...retireWorktree(root, loadConfig(root), worktree, { reason, runsDir: path.resolve(root, DEFAULT_RUNS_DIR) }) };
+}
+
+// The harness worktrees of finished runs that are still there: {total, removable, names}.
+export function leftoverTrees(root) {
+  return leftoverWorktrees(root, loadConfig(root), { runsDir: path.resolve(root, DEFAULT_RUNS_DIR) });
 }
 
 const pendingTransferFile = (root, phaseDir, plan) => path.join(resolveInside(root, phaseDir), "transfers-pending", `${plan}.json`);

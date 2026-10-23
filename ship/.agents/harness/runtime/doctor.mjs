@@ -12,9 +12,10 @@ import { id8 } from "../lib/paths.mjs";
 import { FILE_PLUGIN_ID, MIN_CLAUDE_VERSION, NODE_REQUIREMENT, claudeVersion, nodeRuntimeProblem, paseoConfigFile, versionAtLeast } from "../platform.mjs";
 import { checkTarget } from "../gsd/upstream.mjs";
 import { workflowArgProblems } from "../gsd/workflow-args.mjs";
+import { DEFAULT_RUNS_DIR } from "../workflow/journal.mjs";
 import { AGENTS_DIR, listAgentTypes } from "./agents.mjs";
 import { resolveModel } from "./models.mjs";
-import { runGit } from "./worktrees.mjs";
+import { leftoverWorktrees, runGit } from "./worktrees.mjs";
 import { setupEntries, setupGaps, setupProblems } from "./worktree-setup.mjs";
 
 const MB_PER_AGENT = 350;
@@ -112,6 +113,12 @@ function adapterLines(ctx, line) {
   for (const gap of setupGaps(ctx.root, ctx.cfg, runGit)) line("note", gap);
 }
 
+// Kit feedback 75: harness worktrees of finished runs that are still on disk (603 MB over 23 of them in one project).
+function worktreeLines(ctx, line) {
+  const left = leftoverWorktrees(ctx.root, ctx.cfg, { runsDir: path.resolve(ctx.root, DEFAULT_RUNS_DIR) });
+  if (left.total) line("note", `${left.total} leftover harness worktree(s) of finished runs under ${ctx.cfg.worktree_dir} (${left.removable} removable): ph worktrees lists them, ph worktrees --prune removes the removable ones`);
+}
+
 // F62: the gsd workflows refuse some overlay values before their first agent; doctor reports them now, not at the run.
 function workflowArgLines(ctx, line) {
   if (ctx.configError) return line("note", "workflow arguments not checked: the overlay does not load (see the config problem above)");
@@ -165,6 +172,7 @@ export async function runDoctor(ctx, { freemem = os.freemem, claudeVersionText =
   await guard("file mod", () => modLines(ctx, line, claudeVersionText()));
   await guard("provider policy", () => paseoPolicyLines(ctx, line));
   await guard("adapter", () => adapterLines(ctx, line));
+  await guard("worktrees", () => worktreeLines(ctx, line));
   await guard("workflow arguments", () => workflowArgLines(ctx, line));
   await guard("gsd upstream", () => gsdUpstreamLines(ctx, line));
   await guard("agent types", () => {

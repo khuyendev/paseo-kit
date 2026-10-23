@@ -1,7 +1,8 @@
 // `ph gsd halt clear` (G055, kit-feedback 27): the owner's answer to a halted plan. gsd-execute removes a HALT record
 // only when it dispatches the plan, and a halted plan is never ready, so without this verb a rerun skips the plan and
 // its dependants for good. The record moves into <phase>/halt-answers.json with the answer; the next gsd-execute run
-// dispatches the plan again and hands every recorded answer of the plan to its executor.
+// dispatches the plan again and hands every recorded answer of the plan to its executor. The worktree the halted executor
+// left (kit feedback 75) moves with it as haltWorktree; the dispatch discards it.
 import fs from "node:fs";
 import path from "node:path";
 import { readJsonIf, writeJsonAtomic } from "../lib/io.mjs";
@@ -23,7 +24,7 @@ export function haltClear(g, phase, planRef, answer) {
   const answersFile = path.join(phase.dir, HALT_ANSWERS);
   const list = readJsonIf(answersFile, []);
   if (!Array.isArray(list)) throw fail(`${rel(g.codeRoot, answersFile)} is not a JSON array`);
-  list.push({ plan: id, halt: halt?.reason ?? null, haltRunId: halt?.runId ?? null, answer: String(answer).trim(), at: new Date().toISOString() });
+  list.push({ plan: id, halt: halt?.reason ?? null, haltRunId: halt?.runId ?? null, ...(halt?.worktree ? { haltWorktree: halt.worktree } : {}), answer: String(answer).trim(), at: new Date().toISOString() });
   writeJsonAtomic(answersFile, list);
   fs.rmSync(file);
   return done({ cleared: id, halt: halt?.reason ?? null, answer: String(answer).trim(), answers: rel(g.codeRoot, answersFile) });
