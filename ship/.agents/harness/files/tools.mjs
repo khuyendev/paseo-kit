@@ -15,7 +15,7 @@ export const SUFFIX = " Supply operation arguments, or only continuation/receipt
 const BASE = [
   {
     name: "read_ranges",
-    description: "Read inclusive, 1-based ranges from several files with line numbers; omit from/to for a small whole file. Paths are cwd-relative. A unique missing-path substitute is explicitly identified; otherwise candidates are listed. Oversized or binary entries are not read; follow their diagnostics. Each entry header has a tag for line edits with edit_multiple_files.",
+    description: "Read inclusive, 1-based ranges from several files with line numbers; omit from/to for a small whole file. Paths are cwd-relative. A unique missing-path substitute is explicitly identified; otherwise candidates are listed. Oversized, binary or non-UTF-8 entries are not read; follow their diagnostics. Each entry header has a tag for line edits with edit_multiple_files.",
     inputSchema: obj({ ranges: list(obj({ path: str, from: int(1), to: int(1) }, ["path"])) }, ["ranges"]),
   },
   {

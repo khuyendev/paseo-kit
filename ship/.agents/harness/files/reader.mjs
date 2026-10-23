@@ -24,6 +24,24 @@ export function isBinary(file) {
 export const binaryText = (bytes) =>
   `not read: a binary file (${fmt(bytes)} bytes), not text; open images and PDFs with the native Read tool; read other binary files with a script or a tool made for them`;
 
+// true when every byte of the file is valid UTF-8 (a leading BOM kept). The whole file is checked, as an edit rewrites all
+// of it: a byte that is not valid would otherwise come back as U+FFFD with no error.
+export function isUtf8(file) {
+  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  const fd = fs.openSync(file, "r");
+  const buf = Buffer.alloc(65536);
+  try {
+    for (let n; (n = fs.readSync(fd, buf, 0, buf.length, null)) > 0; ) decoder.decode(buf.subarray(0, n), { stream: true });
+    decoder.decode();
+    return true;
+  } catch (e) {
+    if (e.code === "ERR_ENCODING_INVALID_ENCODED_DATA") return false;
+    throw e;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 // lines as read_ranges counts them: newlines + 1, counted in byte chunks
 export function lineCount(file) {
   const fd = fs.openSync(file, "r");
@@ -137,6 +155,10 @@ export function readRanges({ ranges }, ctx) {
     try {
       if (stat.size > 0 && isBinary(abs)) {
         errors.push(`${r.path}: ${binaryText(stat.size)}`);
+        continue;
+      }
+      if (!isUtf8(abs)) {
+        errors.push(`${r.path}: not read: not UTF-8 text (it holds bytes that are not valid UTF-8); convert it to UTF-8 with a script, then read it`);
         continue;
       }
       span = readSpan(abs, r.from ?? 1, r.to, limits.fileMaxChars);

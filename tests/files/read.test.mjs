@@ -116,6 +116,14 @@ test("FTOL-24 a binary entry is refused while a sibling text entry reads", () =>
   assert.match(r.text, /ERROR img\.png: not read: a binary file \(112 bytes\), not text; open images and PDFs with the native Read tool; read other binary files with a script or a tool made for them/);
 });
 
+test("G190 a text entry that is not valid UTF-8 is refused, not shown with replacement characters", () => {
+  const s = scratch({ "latin.txt": Buffer.from([0x61, 0xe9, 0x0a]), "t.txt": "text" });
+  const r = client({ cwd: s.root }).call("read_ranges", { ranges: [{ path: "latin.txt" }, { path: "t.txt" }] });
+  assert.match(r.text, /t\.txt lines 1-1 of 1/);
+  assert.match(r.text, /ERROR latin\.txt: not read: not UTF-8 text/);
+  assert.doesNotMatch(r.text, /�/);
+});
+
 test("FTOL-25 the reader keeps bounded memory on a 48 MiB line", () => {
   const s = scratch();
   const fd = fs.openSync(s.path("huge.txt"), "w");

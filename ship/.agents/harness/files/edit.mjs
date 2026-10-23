@@ -200,6 +200,8 @@ function load(env, abs) {
     const raw = fs.readFileSync(abs);
     if (raw.subarray(0, BINARY_PROBE_BYTES).includes(0)) return { reason: `a binary file (${raw.length} bytes), not text; edit it with a script or a tool made for it` };
     const text = raw.toString("utf8");
+    // the rewrite would write U+FFFD for every byte that is not valid UTF-8: refuse the whole file instead
+    if (!Buffer.from(text, "utf8").equals(raw)) return { reason: "not UTF-8 text (it holds bytes that are not valid UTF-8); convert it to UTF-8 with a script, then edit it" };
     if (hasMixedEndings(text)) return { reason: "mixed line endings; use native Edit" };
     const crlf = text.includes("\r\n");
     const base = crlf ? lf(text) : text;

@@ -158,6 +158,14 @@ test("FTOL-24 an edit of a binary file writes nothing and fails at file level", 
   assert.deepEqual(s.bytes("i.png"), png);
 });
 
+test("G190 an edit of a file that is not valid UTF-8 writes nothing; the bytes stay as they were", () => {
+  const bytes = Buffer.from([0x61, 0xff, 0x62, 0x0a]);
+  const s = scratch({ "latin.txt": bytes });
+  const r = edit(client({ cwd: s.root }), [{ path: "latin.txt", edits: [{ oldText: "b", newText: "B" }] }]);
+  assert.match(r.text, /latin\.txt: not UTF-8 text.*→ fix:/);
+  assert.deepEqual(s.bytes("latin.txt"), bytes);
+});
+
 test("FTOL-20 a wrong-folder edit leaves the real file untouched; the fix form carries the guess and applies", () => {
   const s = scratch({ "specs/20-creature/X.md": "old" });
   const c = client({ cwd: s.root });
