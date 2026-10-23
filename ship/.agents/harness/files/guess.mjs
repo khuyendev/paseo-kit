@@ -18,19 +18,20 @@ export function guessPath(abs, root) {
   if (path.dirname(dir) === dir) return { candidates: [] }; // only a drive root exists: too wide to search
   for (let d = dir; ; d = path.dirname(d)) {
     const hits = [];
-    find(d, name, hits, budget, done);
+    find(d, name, root, hits, budget, done);
     if (hits.length) {
       hits.sort((a, b) => shared(b, abs) - shared(a, abs) || a.length - b.length);
-      const unique = hits.length === 1 && within(hits[0], root) && budget.n <= GUESS.maxEntries;
+      const unique = hits.length === 1 && budget.n <= GUESS.maxEntries;
       return unique ? { unique: hits[0], candidates: hits } : { candidates: hits.slice(0, GUESS.maxListed) };
     }
     const up = path.dirname(d);
     if (up === d || !within(up, root) || budget.n > GUESS.maxEntries) break;
   }
-  return { candidates: lookAlike(dir, name) };
+  return { candidates: lookAlike(dir, name, root) };
 }
 
-function find(dir, name, hits, budget, done) {
+// walks and names only what is inside `root`: a folder outside it is listed for its in-root entries only
+function find(dir, name, root, hits, budget, done) {
   if (done.has(dir) || budget.n > GUESS.maxEntries) return;
   done.add(dir); // a wider search skips the folders a narrower one already walked
   let entries;
@@ -42,8 +43,9 @@ function find(dir, name, hits, budget, done) {
   for (const e of entries) {
     if (++budget.n > GUESS.maxEntries) return;
     const p = path.join(dir, e.name);
+    if (!within(p, root)) continue;
     if (e.isDirectory()) {
-      if (!GUESS.skipDirs.has(e.name)) find(p, name, hits, budget, done);
+      if (!GUESS.skipDirs.has(e.name)) find(p, name, root, hits, budget, done);
     } else if (lower(e.name) === name) hits.push(p);
   }
 }
@@ -56,7 +58,7 @@ function shared(a, b) {
   return n;
 }
 
-function lookAlike(dir, name) {
+function lookAlike(dir, name, root) {
   let names;
   try {
     names = fs.readdirSync(dir);
@@ -66,7 +68,7 @@ function lookAlike(dir, name) {
   const limit = Math.max(2, Math.floor(name.length / 4));
   return names
     .map((n) => ({ n, d: distance(lower(n), name) }))
-    .filter((x) => x.d <= limit)
+    .filter((x) => x.d <= limit && within(path.join(dir, x.n), root))
     .sort((a, b) => a.d - b.d)
     .slice(0, GUESS.maxListed)
     .map((x) => path.join(dir, x.n));
