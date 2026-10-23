@@ -4,6 +4,7 @@ import { CHILDREN_MAX_ITEMS, ERROR_MAX_CHARS, LABEL_MAX_CHARS, TODO_MAX_ITEMS, T
 import { agentName, providerChip, type ProviderChip } from "./names.ts";
 import { AGENT_STATUS_KEY, ATTENTION_KEY, TODO_STATUS_KEY, TOOL_KEY, WORKSPACE_KIND_KEY, clipText, text, type StringKey } from "./strings.ts";
 import { TOOL_KINDS, type OfficeSnapshot, type TodoStatus } from "../shared/model-types.ts";
+import type { TodoScan } from "./store.ts";
 
 export interface DrawerTodo {
   text: string;
@@ -28,6 +29,8 @@ export interface DrawerModel {
   provider: string | null;
   model: string | null;
   todos: readonly DrawerTodo[];
+  // What an empty todo list says: no todos, or why none can be shown (a failed read, a scan stopped at the page cap).
+  todoEmptyKey: StringKey;
   hiddenTodos: number;
   children: readonly DrawerChild[];
   hiddenChildren: number;
@@ -88,7 +91,8 @@ function activityKeyOf(activity: unknown): StringKey {
 }
 
 // nowMs is the wall clock of the screen, for the age; without it the age is null.
-export function drawerModel(snapshot: OfficeSnapshot, agentId: string | null, nowMs: number = Number.NaN): DrawerModel | null {
+// todoScan is the store's read state of the agent's todos (store.todoScan); ok when the store has none.
+export function drawerModel(snapshot: OfficeSnapshot, agentId: string | null, nowMs: number = Number.NaN, todoScan: TodoScan = "ok"): DrawerModel | null {
   if (typeof agentId !== "string") return null;
   const agents = listOf(snapshot?.agents);
   let agent: Record<string, unknown> | null = null;
@@ -146,6 +150,7 @@ export function drawerModel(snapshot: OfficeSnapshot, agentId: string | null, no
     provider: orNull(agent.provider, LABEL_MAX_CHARS),
     model: orNull(agent.model, LABEL_MAX_CHARS),
     todos,
+    todoEmptyKey: todoScan === "failed" ? "drawerTodosFailed" : todoScan === "capped" ? "drawerTodosCapped" : "drawerNoTodos",
     hiddenTodos: todoList.length - todos.length,
     children,
     hiddenChildren: childCount - children.length,

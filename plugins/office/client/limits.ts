@@ -22,7 +22,7 @@ export const PENDING_PERMISSIONS_MAX = 99;
 export const STORE_ENTRIES_MAX = 1000;
 // Entries asked per list page.
 export const LIST_PAGE_LIMIT = 100;
-// List pages read per collection and load.
+// List pages read per collection and load; a list that still has pages behind this cap is reported as capped (store status).
 export const LIST_PAGES_MAX = 10;
 // Timeline subscriptions open at once; the selected agent comes first.
 export const TIMELINE_SUBSCRIPTIONS_MAX = 12;
@@ -30,7 +30,7 @@ export const TIMELINE_SUBSCRIPTIONS_MAX = 12;
 export const TIMELINE_TAIL_LIMIT = 24;
 // Entries per older page read for the selected agent's todos.
 export const TIMELINE_TODO_PAGE_LIMIT = 100;
-// Older pages at most, so 800 entries behind the tail; a todo item older than that is not shown and is counted in the store stats.
+// Older pages at most, so 800 entries behind the tail; a todo item older than that is not shown, and the drawer says the scan stopped at the cap.
 export const TIMELINE_TODO_PAGES_MAX = 8;
 // Handoffs kept until the scene takes them; the oldest is dropped first.
 export const HANDOFF_QUEUE_MAX = 32;

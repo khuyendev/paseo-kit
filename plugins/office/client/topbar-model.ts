@@ -85,7 +85,8 @@ export function topbarModel(snapshot: OfficeSnapshot, selectedAgentId: string | 
       default:
         break;
     }
-    if (a.requiresAttention === true) counters.attention++;
+    // A pending permission needs the owner as much as a flagged attention does (hud.ts and moods.ts count it the same way).
+    if (a.requiresAttention === true || (typeof a.pendingPermissions === "number" && a.pendingPermissions > 0)) counters.attention++;
     if (typeof a.parentAgentId === "string" && a.parentAgentId !== a.id) counters.subAgents++;
     if (a.status === "idle" && isRecord(a.shell) && a.shell.status === "running") counters.shells++;
     if (selected === null && typeof selectedAgentId === "string" && a.id === selectedAgentId) selected = a;

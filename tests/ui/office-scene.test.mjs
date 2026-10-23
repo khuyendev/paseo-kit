@@ -1092,7 +1092,7 @@ test("OFFC-05 screen edges: an empty building, a failed read and hostile strings
     assert.ok(spriteKeys(host).some((k) => k.startsWith("room-layer:corridor-")));
   });
   await withScreen(fakePaseo({ listError: "daemon offline" }), async ({ handle }) => {
-    assert.ok(textsOf(handle).includes(str("screenFailed")));
+    assert.ok(textsOf(handle).includes(str("screenFailedAgents", { error: "daemon offline" })));
   });
   const hostile = "HOSTILE" + "\u0007x ".repeat(5000);
   const fake = fakePaseo({

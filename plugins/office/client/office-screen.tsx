@@ -59,7 +59,7 @@ import { footPx, SHEET_POSE_GROUPS, type CharacterSheet } from "./life/frames.ts
 import type { Journey } from "./life/journey.ts";
 import { departureModes, roomLights, trackSpawns, type LeaveMode, type SpawnBook } from "./presence.ts";
 import { ROOM_ID_PREFIX } from "../shared/layout/building.ts";
-import { buildModel, resolveHandoff, visibleSnapshot, workspaceLight } from "./model.ts";
+import { buildModel, resolveHandoff, screenStateText, visibleSnapshot, workspaceLight } from "./model.ts";
 import { moodLook, moodSignature, stepMoods, type MoodEntry, type MoodLook } from "./moods.ts";
 import { agentName, providerChip } from "./names.ts";
 import { appearanceSeed, poseFor, type PoseChoice } from "./poses.ts";
@@ -840,13 +840,13 @@ export function OfficeScreen(props: PluginScreenProps) {
     return lit === undefined ? [] : [{ rect: area.rect, dark: !lit }];
   });
 
-  const drawer = drawerModel(snapshot, selectedAgentId, dayNow.getTime());
+  const drawer = drawerModel(snapshot, selectedAgentId, dayNow.getTime(), office.todoScan(selectedAgentId));
   const bar = topbarModel(visibleSnap, selectedAgentId, model.rooms.length);
   const feedLines = feedOpen ? feedRows(feed, hidden, beat.current) : [];
   // The collapsed Activity bar of the narrow layout shows the newest visible line.
   const latestFeed = narrow ? (feedLines[0] ?? feedRows(feed, hidden, beat.current)[0] ?? null) : null;
   const size = sceneSize(building.rect, zoom);
-  const stateText = status.state === "failed" ? text("screenFailed") : status.state === "ready" ? (snapshot.projects.length === 0 ? text("sidebarEmpty") : null) : text("screenLoading");
+  const stateText = screenStateText(status, snapshot.projects.length);
 
   const roomsPanel = (onPick: (agentId: string) => void) => (
     <>

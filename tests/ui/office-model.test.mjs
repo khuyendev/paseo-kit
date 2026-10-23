@@ -419,7 +419,7 @@ test("OFFC-05 store: start seeds agents, workspaces and projects with subscribe 
   assert.equal(fake.calls.filter((c) => c === "workspaces.list").length, 1);
   assert.equal(fake.calls.filter((c) => c === "projects.list").length, 1);
   assert.deepEqual(fake.observed, [["project.update"]]);
-  assert.deepEqual(store.getStatus(), { state: "ready", error: null });
+  assert.deepEqual(store.getStatus(), { state: "ready", failed: null, error: null, capped: [] });
   const snap = store.getSnapshot();
   assert.deepEqual([snap.agents.length, snap.workspaces.length, snap.projects.length], [5, 1, 1]);
   store.dispose();
@@ -438,7 +438,7 @@ test("OFFC-05 store: a failing list leaves status failed with the error text and
   const store = createStore(fake);
   await store.start();
   await settleAll();
-  assert.deepEqual(store.getStatus(), { state: "failed", error: "daemon offline" });
+  assert.deepEqual(store.getStatus(), { state: "failed", failed: "agents", error: "daemon offline", capped: [] });
   assert.deepEqual(store.getSnapshot(), { projects: [], workspaces: [], agents: [], departing: [] });
   assert.ok(store.stats().listErrors >= 1);
   store.dispose();

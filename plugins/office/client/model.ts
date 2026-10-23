@@ -2,6 +2,8 @@
 // Pure and deterministic: plain string comparison (never a locale one), no React, no SDK, no timer, no Node API.
 import type { AgentView, BuildingModel, ClusterModel, DrawnAgent, OfficeSnapshot, ProjectView, RoomModel, WorkspaceStatus, WorkspaceView } from "../shared/model-types.ts";
 import { AGENTS_PER_CLUSTER_MAX, CLUSTERS_PER_ROOM_MAX, MAX_DRAWN_CHARACTERS, ROOMS_PER_BUILDING_MAX } from "./limits.ts";
+import type { StoreStatus } from "./store.ts";
+import { text } from "./strings.ts";
 
 export interface BuildCaps {
   agentsPerCluster: number;
@@ -25,6 +27,17 @@ export function workspaceLight(status: WorkspaceStatus): LightState {
     case "done":
       return "idle";
   }
+}
+
+const FAILED_KEYS = { agents: "screenFailedAgents", workspaces: "screenFailedWorkspaces", projects: "screenFailedProjects" } as const;
+
+// The line in the corner of the office: a failed read with its error, a list cut at the page cap, the empty project list, or the loading
+// text. Null when the office is ready and has projects.
+export function screenStateText(status: StoreStatus, projectCount: number): string | null {
+  if (status.state === "failed") return text(FAILED_KEYS[status.failed ?? "projects"], { error: status.error ?? "" });
+  if (status.state !== "ready") return text("screenLoading");
+  if (status.capped.length > 0) return text(status.capped[0] === "agents" ? "screenCappedAgents" : "screenCappedWorkspaces");
+  return projectCount === 0 ? text("sidebarEmpty") : null;
 }
 
 interface ClusterDraft {

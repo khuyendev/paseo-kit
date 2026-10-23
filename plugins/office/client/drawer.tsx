@@ -87,7 +87,7 @@ export function Drawer(props: { model: DrawerModel | null; colors: PanelColors; 
         </Card>
 
         <Card colors={colors} heading={text("drawerSectionTodos")}>
-          {model.todos.length === 0 ? <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{text("drawerNoTodos")}</Text> : null}
+          {model.todos.length === 0 ? <Text style={{ color: colors.foregroundMuted, fontSize: 11 }}>{text(model.todoEmptyKey)}</Text> : null}
           {model.todos.map((todo, index) => (
             <Row key={index} colors={colors} caption={todo.statusKey !== null ? text(todo.statusKey) : ""} value={todo.text} />
           ))}

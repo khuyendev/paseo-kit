@@ -37,13 +37,16 @@ measured (D-12).
 - An effect on a wave or phase completion, drawn from the wave link described below.
 - The agent drawer: state, tool, todos, child agents, last error, and stats (tokens used of the context with a bar,
   model, provider, session name and kind, lines added and removed, tool calls by kind over the loaded timeline, cost
-  when the provider reports it, age). Follow keeps the camera on the agent (also a double press on a character).
+  when the provider reports it, age). Follow keeps the camera on the agent (also a double press on a character). An empty
+  todo list says why when it cannot be known: the timeline read failed (selecting the agent reads it again), or the older
+  history scan stopped at its page cap.
 - Camera controls: zoom, Overview (the whole building at the smallest zoom) and Next request (the next agent that
   needs you).
 - A toggleable activity feed of the visible projects (arrived, finished its turn, asks for permission, error, handed
   its result back, shell command finished, left), newest first, at most 40 lines.
 - Counters for rooms, agents, sub-agents, states and shells running, and the context taken from the last usage of each
-  agent.
+  agent. An agent with a pending permission counts as needing you, as it does in the HUD. A failed read names its
+  collection and the error in the corner of the screen, and a list that stops at its page cap (10 pages of 100) says so there.
 - A "+N agents" group above the caps, so a large host stays readable.
 - An empty slot for provider usage. Nothing fills it.
 

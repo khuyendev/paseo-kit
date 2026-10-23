@@ -67,12 +67,16 @@ export interface WorkspaceRecord extends WorkspaceView {
   projectDisplayName: string | null;
 }
 
+// How the todo read of an agent went: ok when no read failed and no older scan hit the page cap; failed or capped otherwise.
+export type TodoScan = "ok" | "failed" | "capped";
+
 export interface TimelineDerived {
   lastTool: ToolKind | null;
   activity: "reasoning" | "tool" | "message" | null;
   todos: readonly TodoView[];
   // Store-internal: true once a todo item was applied (live, tail or older history).
   todoSeen: boolean;
+  todoScan: TodoScan;
   lastError: string | null;
   // The latest shell call (it outlives the turn, so an idle agent can wait on it).
   shell: ShellView | null;
@@ -133,6 +137,7 @@ export type StoreAction =
   | { type: "timeline.tail"; agentId: string; entries: unknown }
   | { type: "timeline.older"; agentId: string; entries: unknown }
   | { type: "timeline.reset"; agentId: string }
+  | { type: "timeline.scan"; agentId: string; scan: TodoScan }
   | { type: "select"; agentId: string | null }
   | { type: "handoffs.take"; upToSeq: number }
   | { type: "departed.release"; ids: unknown };
@@ -260,7 +265,7 @@ export function normalizeProject(payload: unknown): ProjectView | null {
 
 // ---------- timeline derivation ----------
 
-export const EMPTY_DERIVED: TimelineDerived = { lastTool: null, activity: null, todos: [], todoSeen: false, lastError: null, shell: null, calls: new Map() };
+export const EMPTY_DERIVED: TimelineDerived = { lastTool: null, activity: null, todos: [], todoSeen: false, todoScan: "ok", lastError: null, shell: null, calls: new Map() };
 
 function todosOf(items: unknown): TodoView[] {
   const out: TodoView[] = [];
@@ -284,7 +289,7 @@ const sameShell = (a: ShellView | null, b: ShellView | null): boolean => a === b
 
 function withDerived(prev: TimelineDerived, next: TimelineDerived): TimelineDerived {
   const same =
-    prev.lastTool === next.lastTool && prev.activity === next.activity && prev.todoSeen === next.todoSeen && prev.lastError === next.lastError && sameTodos(prev.todos, next.todos) && sameShell(prev.shell, next.shell) && prev.calls === next.calls;
+    prev.lastTool === next.lastTool && prev.activity === next.activity && prev.todoSeen === next.todoSeen && prev.todoScan === next.todoScan && prev.lastError === next.lastError && sameTodos(prev.todos, next.todos) && sameShell(prev.shell, next.shell) && prev.calls === next.calls;
   return same ? prev : next;
 }
 
@@ -559,6 +564,8 @@ export function reduce(state: StoreState, action: StoreAction, options?: ReduceO
         if (newest === null) return prev;
         return withDerived(prev, { ...prev, todos: todosOf((newest.item as Record<string, unknown>).items), todoSeen: true });
       });
+    case "timeline.scan":
+      return applyDerived(state, action.agentId, (prev) => withDerived(prev, { ...prev, todoScan: action.scan }));
     case "timeline.reset": {
       if (!state.derived.has(action.agentId)) return state;
       const derived = new Map(state.derived);
@@ -672,7 +679,11 @@ export interface StoreOptions {
 
 export interface StoreStatus {
   state: "idle" | "loading" | "ready" | "failed";
+  // The collection whose read failed first, with its error text; null when no read failed.
+  failed: "agents" | "workspaces" | "projects" | null;
   error: string | null;
+  // Collections whose list stopped at the page cap: the snapshot holds their first pages only.
+  capped: ("agents" | "workspaces")[];
 }
 
 export interface StoreStats {
@@ -694,6 +705,8 @@ export interface OfficeStore {
   // Drops the tombstones of departed agents once the scene has walked them out.
   release(ids: readonly string[]): void;
   getStatus(): StoreStatus;
+  // The todo read state of one agent (ok, failed or capped); ok for null and unknown agents.
+  todoScan(agentId: string | null): TodoScan;
   stats(): StoreStats;
   dispose(): void;
 }
@@ -747,7 +760,7 @@ export function createStore(paseo: StorePaseo, options: StoreOptions = {}): Offi
   const limits: StoreLimits = { ...DEFAULT_STORE_LIMITS, ...(options.limits ?? {}) };
   const reduceOptions: ReduceOptions = { handoffSignal: options.handoffSignal ?? HANDOFF_SIGNAL, limits };
   let state = emptyState();
-  let status: StoreStatus = { state: "idle", error: null };
+  let status: StoreStatus = { state: "idle", failed: null, error: null, capped: [] };
   let disposed = false;
   let started = false;
   let scheduled = false;
@@ -757,7 +770,9 @@ export function createStore(paseo: StorePaseo, options: StoreOptions = {}): Offi
   const held = new Set<unknown>();
   const seeded: Record<Collection | "projects", boolean> = { agents: false, workspaces: false, projects: false };
   const pending: Record<Collection | "projects", unknown[]> = { agents: [], workspaces: [], projects: [] };
-  const reseedToken: Record<Collection, number> = { agents: 0, workspaces: 0 };
+  const reseedToken: Record<Collection | "projects", number> = { agents: 0, workspaces: 0, projects: 0 };
+  // Set while a re-read after a daemon restore replaces the collection; updates arriving meanwhile wait in pending.
+  const reseeding: Record<Collection | "projects", boolean> = { agents: false, workspaces: false, projects: false };
   const timelines = new Map<string, TimelineEntry>();
 
   const filter = { includeArchived: false };
@@ -796,27 +811,29 @@ export function createStore(paseo: StorePaseo, options: StoreOptions = {}): Offi
   }
 
   // Reads the first page (given or listed) and the following pages by cursor, without subscribe, at most listPagesMax pages.
+  // capped is true when a page remained behind the cap, so the entries are the first pages only.
   async function pull(
     list: (options: unknown) => Promise<unknown>,
     firstOptions: unknown,
     firstPage: unknown,
     withFilter: boolean,
     onHead: (head: unknown) => void,
-  ): Promise<{ entries: unknown[]; complete: boolean }> {
+  ): Promise<{ entries: unknown[]; complete: boolean; capped: boolean }> {
     let page = firstPage !== undefined ? firstPage : await list(firstOptions);
     onHead(page);
     const entries: unknown[] = [];
     for (let n = 1; ; n++) {
-      if (disposed) return { entries, complete: false };
+      if (disposed) return { entries, complete: false, capped: false };
       const rec = isRecord(page) ? page : null;
       if (rec === null) break;
       if (Array.isArray(rec.entries)) entries.push(...rec.entries.slice(0, limits.storeEntriesMax));
       const info = isRecord(rec.pageInfo) ? rec.pageInfo : null;
       const cursor = info && info.hasMore === true && typeof info.nextCursor === "string" ? info.nextCursor : null;
-      if (cursor === null || n >= limits.listPagesMax || entries.length >= limits.storeEntriesMax) break;
+      if (cursor === null) break;
+      if (n >= limits.listPagesMax || entries.length >= limits.storeEntriesMax) return { entries, complete: !disposed, capped: true };
       page = await list(pageOptions(cursor, false, withFilter));
     }
-    return { entries, complete: !disposed };
+    return { entries, complete: !disposed, capped: false };
   }
 
   // Keeps the owned subscription of a list head until dispose; a head that arrives after dispose is released on the spot.
@@ -849,18 +866,37 @@ export function createStore(paseo: StorePaseo, options: StoreOptions = {}): Offi
     return collection === "agents" ? { type: "agents.seed", entries } : { type: "workspaces.seed", entries };
   }
 
+  function updateAction(collection: Collection | "projects", payload: unknown): StoreAction {
+    if (collection === "agents") return { type: "agent.update", payload };
+    if (collection === "workspaces") return { type: "workspace.update", payload };
+    return { type: "project.update", payload };
+  }
+
+  // Ends a re-read of a collection and replays the updates that arrived during it, over the list as it now stands.
+  function endReseed(collection: Collection | "projects"): void {
+    reseeding[collection] = false;
+    for (const update of pending[collection].splice(0)) dispatch(updateAction(collection, update));
+  }
+
+  // Records whether a collection's list stopped at the page cap (status.capped).
+  function setCapped(collection: Collection, capped: boolean): void {
+    const rest = status.capped.filter((c) => c !== collection);
+    status = { ...status, capped: capped ? [...rest, collection] : rest };
+  }
+
   async function load(collection: Collection): Promise<boolean> {
     try {
       const result = await pull(listFor(collection), pageOptions(null, true, collection === "agents"), undefined, collection === "agents", (head) => adopt(collection, head));
       if (!result.complete || disposed) return true;
       dispatch(seedAction(collection, result.entries));
+      setCapped(collection, result.capped);
       seeded[collection] = true;
-      for (const update of pending[collection].splice(0)) dispatch({ type: collection === "agents" ? "agent.update" : "workspace.update", payload: update });
+      for (const update of pending[collection].splice(0)) dispatch(updateAction(collection, update));
       return true;
     } catch (error) {
       counters.listErrors++;
       if (!disposed) {
-        status = { state: "failed", error: errorText(error) };
+        status = { ...status, state: "failed", failed: collection, error: errorText(error) };
         seeded[collection] = true;
         pending[collection].length = 0;
       }
@@ -869,38 +905,47 @@ export function createStore(paseo: StorePaseo, options: StoreOptions = {}): Offi
   }
 
   async function loadProjects(first: boolean): Promise<boolean> {
+    const token = ++reseedToken.projects;
+    if (!first) reseeding.projects = true;
     try {
       const result = await paseo.projects.list();
-      if (disposed) return true;
+      if (disposed || reseedToken.projects !== token) return true;
       const rec = isRecord(result) ? result : null;
       dispatch({ type: "projects.seed", projects: rec ? rec.projects : [] });
-      if (first) {
-        seeded.projects = true;
-        for (const update of pending.projects.splice(0)) dispatch({ type: "project.update", payload: update });
-      }
+      seeded.projects = true;
+      endReseed("projects");
       return true;
     } catch (error) {
       counters.listErrors++;
-      if (!disposed) {
-        status = { state: "failed", error: errorText(error) };
+      if (disposed) return false;
+      if (first) {
+        status = { ...status, state: "failed", failed: "projects", error: errorText(error) };
         seeded.projects = true;
         pending.projects.length = 0;
+      } else if (reseedToken.projects === token) {
+        // A re-list after a restore that fails keeps the office it has: the error is counted, the status stays ready.
+        endReseed("projects");
       }
       return false;
     }
   }
 
   // The owned list subscription says the daemon restored it: the first page of the snapshot plus the later pages replace the collection.
+  // Updates that arrive while those pages are read wait in pending and replay over the replacement.
   function onRestore(collection: Collection, snapshot: unknown): void {
     if (disposed || !seeded[collection]) return;
     const token = ++reseedToken[collection];
+    reseeding[collection] = true;
     void (async () => {
       try {
         const result = await pull(listFor(collection), null, snapshot, collection === "agents", () => undefined);
         if (!result.complete || disposed || reseedToken[collection] !== token) return;
         dispatch(seedAction(collection, result.entries));
+        setCapped(collection, result.capped);
+        endReseed(collection);
       } catch {
         counters.listErrors++;
+        if (!disposed && reseedToken[collection] === token) endReseed(collection);
       }
       await loadProjects(false);
     })();
@@ -909,7 +954,7 @@ export function createStore(paseo: StorePaseo, options: StoreOptions = {}): Offi
   function onUpdate(collection: Collection | "projects", type: "agent.update" | "workspace.update" | "project.update"): (update: unknown) => void {
     return (update) => {
       if (disposed) return;
-      if (!seeded[collection]) {
+      if (!seeded[collection] || reseeding[collection]) {
         if (pending[collection].length < limits.storeEntriesMax) pending[collection].push(update);
         return;
       }
@@ -920,7 +965,7 @@ export function createStore(paseo: StorePaseo, options: StoreOptions = {}): Offi
   async function start(): Promise<void> {
     if (started || disposed) return;
     started = true;
-    status = { state: "loading", error: null };
+    status = { state: "loading", failed: null, error: null, capped: [] };
     // Local handlers first, so no update falls between a list and its subscription.
     for (const hook of [
       () => paseo.agents.subscribe(onUpdate("agents", "agent.update")),
@@ -946,7 +991,7 @@ export function createStore(paseo: StorePaseo, options: StoreOptions = {}): Offi
     });
     const outcomes = await Promise.all([load("agents"), load("workspaces"), loadProjects(true)]);
     if (disposed) return;
-    if (outcomes.every(Boolean)) status = { state: "ready", error: null };
+    if (outcomes.every(Boolean)) status = { ...status, state: "ready", failed: null, error: null };
     schedule();
   }
 
@@ -1055,6 +1100,7 @@ export function createStore(paseo: StorePaseo, options: StoreOptions = {}): Offi
     if (!current()) return;
     const rec = isRecord(payload) ? payload : null;
     if (rec) dispatch({ type: "timeline.tail", agentId: entry.agentId, entries: rec.entries });
+    dispatch({ type: "timeline.scan", agentId: entry.agentId, scan: rec ? "ok" : "failed" });
     for (const event of entry.buffer.splice(0)) dispatch({ type: "timeline.event", agentId: entry.agentId, event });
     entry.live = true;
     entry.tailInfo = rec ? { hasOlder: rec.hasOlder === true, startCursor: rec.startCursor ?? null } : null;
@@ -1068,12 +1114,14 @@ export function createStore(paseo: StorePaseo, options: StoreOptions = {}): Offi
     try {
       let current = info;
       let pages = 0;
+      dispatch({ type: "timeline.scan", agentId: entry.agentId, scan: "ok" });
       for (;;) {
         if (disposed || entry.dead || entry.token !== token || state.selectedAgentId !== entry.agentId) return;
         if (state.derived.get(entry.agentId)?.todoSeen) return;
         if (!current.hasOlder || current.startCursor === null || current.startCursor === undefined) return;
         if (pages >= limits.timelinePagesMax) {
           counters.todoScanCapped++;
+          dispatch({ type: "timeline.scan", agentId: entry.agentId, scan: "capped" });
           return;
         }
         pages++;
@@ -1082,6 +1130,7 @@ export function createStore(paseo: StorePaseo, options: StoreOptions = {}): Offi
           payload = await paseo.agents.ref(entry.agentId).timeline.refetch({ direction: "before", cursor: current.startCursor, limit: limits.timelinePageLimit, projection: "projected" });
         } catch {
           if (!disposed) counters.refetchErrors++;
+          if (entry.token === token && !entry.dead) dispatch({ type: "timeline.scan", agentId: entry.agentId, scan: "failed" });
           return;
         }
         if (disposed || entry.dead || entry.token !== token || state.selectedAgentId !== entry.agentId) return;
@@ -1101,6 +1150,8 @@ export function createStore(paseo: StorePaseo, options: StoreOptions = {}): Offi
     if (agentId === null || before === agentId) return;
     const entry = timelines.get(agentId);
     if (entry && entry.live && entry.tailInfo && !state.derived.get(agentId)?.todoSeen) void pageOlder(entry, entry.tailInfo, entry.token);
+    // A tail read that failed leaves no cursor to page from, so selecting the agent reads the tail again.
+    else if (entry && entry.live && !entry.tailInfo && state.derived.get(agentId)?.todoScan === "failed") void readTail(entry);
   }
 
   function takeHandoffs(upToSeq: number = Number.MAX_SAFE_INTEGER): Handoff[] {
@@ -1137,6 +1188,7 @@ export function createStore(paseo: StorePaseo, options: StoreOptions = {}): Offi
     takeHandoffs,
     release: (ids) => dispatch({ type: "departed.release", ids }),
     getStatus: () => status,
+    todoScan: (agentId) => (agentId === null ? "ok" : (state.derived.get(agentId)?.todoScan ?? "ok")),
     stats: () => ({ ...counters }),
     dispose,
   };

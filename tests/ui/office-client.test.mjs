@@ -83,7 +83,7 @@ test("OFFC-19 strings: every value is text, text() substitutes one pass, clipTex
   assert.ok(long.endsWith("…"));
   assert.equal(clipText("short", 40), "short");
   assert.equal(clipText("x".repeat(40), 40), "x".repeat(40));
-  const scene = { sceneSurplus: "+{count} agents", sceneDiff: "+{additions} -{deletions}", sceneZoomIn: "Zoom in", sceneZoomOut: "Zoom out", sceneZoomLevel: "{zoom}x", screenLoading: "Loading projects", screenFailed: "Could not read your projects" };
+  const scene = { sceneSurplus: "+{count} agents", sceneDiff: "+{additions} -{deletions}", sceneZoomIn: "Zoom in", sceneZoomOut: "Zoom out", sceneZoomLevel: "{zoom}x", screenLoading: "Loading projects", screenFailedAgents: "Could not read your agents: {error}" };
   for (const [key, value] of Object.entries(scene)) assert.equal(STRINGS[key], value, key);
   assert.equal(text("sceneSurplus", { count: 3 }), "+3 agents");
   assert.equal(text("sceneDiff", { additions: 12, deletions: 4 }), "+12 -4");

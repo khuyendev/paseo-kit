@@ -61,6 +61,8 @@ export const STRINGS = {
   drawerSectionError: "Last error",
   drawerSectionDetails: "Details",
   drawerNoTodos: "No todos",
+  drawerTodosFailed: "Todos could not be read",
+  drawerTodosCapped: "No todo in the recent history; older entries are not scanned",
   drawerNoChildren: "No child agents",
   drawerNoError: "No error",
   drawerUntitled: "Untitled agent",
@@ -93,7 +95,12 @@ export const STRINGS = {
   sceneZoomOut: "Zoom out",
   sceneZoomLevel: "{zoom}x",
   screenLoading: "Loading projects",
-  screenFailed: "Could not read your projects",
+  // A failed read names its collection and carries the error text; a list cut at the page cap says so.
+  screenFailedAgents: "Could not read your agents: {error}",
+  screenFailedWorkspaces: "Could not read your workspaces: {error}",
+  screenFailedProjects: "Could not read your projects: {error}",
+  screenCappedAgents: "Not every agent is shown: the list stops at its page cap.",
+  screenCappedWorkspaces: "Not every workspace is shown: the list stops at its page cap.",
   // Glyphs over a character: the activity of a working agent and the moods (step C).
   glyphRead: "📖",
   glyphEdit: "✏️",
