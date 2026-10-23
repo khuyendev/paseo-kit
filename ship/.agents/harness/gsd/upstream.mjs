@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { withMutex } from "../adapter/mutex.mjs";
 import { readJson, writeJsonAtomic, writeTextAtomic } from "../lib/io.mjs";
 import { textDigest } from "../lib/hash.mjs";
 import { isInside as isInsideReal, toSlash } from "../lib/paths.mjs";
@@ -140,10 +141,15 @@ export function vendor(L, clone, commitArg) {
     texts.set(rel, buf.toString("utf8"));
   }
   for (const rel of [...files, "UPSTREAM.json"]) refuseLinkedWrite(L.target, `${SNAPSHOT_REL}/${rel}`);
-  fs.rmSync(L.snapshot, { recursive: true, force: true });
+  // The new tree and its pin are built aside and swapped in with two renames: the old snapshot stays whole until the
+  // new one is complete, and a rename that Windows refuses (a file in the snapshot is open) changes nothing.
+  const staging = `${L.snapshot}.staging`;
+  const previous = `${L.snapshot}.previous`;
+  fs.rmSync(staging, { recursive: true, force: true });
+  fs.rmSync(previous, { recursive: true, force: true });
   const hashes = {};
   for (const [rel, text] of texts) {
-    writeTextAtomic(path.join(L.snapshot, ...rel.split("/")), text);
+    writeTextAtomic(path.join(staging, ...rel.split("/")), text);
     hashes[rel] = textDigest(text);
   }
   const record = {
@@ -156,7 +162,20 @@ export function vendor(L, clone, commitArg) {
     absent_upstream: absent,
     files: hashes,
   };
-  writeJsonAtomic(L.pinFile, record);
+  writeJsonAtomic(path.join(staging, "UPSTREAM.json"), record);
+  const hadSnapshot = fs.existsSync(L.snapshot);
+  try {
+    if (hadSnapshot) fs.renameSync(L.snapshot, previous);
+    fs.renameSync(staging, L.snapshot);
+  } catch (e) {
+    if (hadSnapshot && !fs.existsSync(L.snapshot)) fs.renameSync(previous, L.snapshot);
+    fs.rmSync(staging, { recursive: true, force: true });
+    throw e;
+  }
+  // Best effort: a previous tree that Windows will not delete is cleared by the next vendor, not by this one.
+  try {
+    fs.rmSync(previous, { recursive: true, force: true, maxRetries: 3 });
+  } catch {}
   return { commit: want, files: files.length, absent_upstream: absent.length };
 }
 
@@ -447,6 +466,9 @@ export async function checkTarget(target) {
   return check(L, new Set([...Object.keys(VERBS), ...Object.keys(L.inventory.extra_verbs ?? {})]));
 }
 
+// One upstream verb at a time per target: a second bump, build or check waits for the first. Named by the target.
+export const upstreamLock = (target) => `gsd-upstream-${textDigest(path.resolve(target)).slice(0, 16)}`;
+
 export async function upstreamVerb(g, sub, args) {
   const opts = optionsOf(args, ["from", "commit", "target"]);
   const L = layout(path.resolve(g.harnessRoot, opts.target ?? INSTALL_ROOT));
@@ -457,26 +479,27 @@ export async function upstreamVerb(g, sub, args) {
     if (r.verbose) for (const w of r.warnings) g.out(`warning: ${w}`);
     g.out(`check: ${r.problems.length} problems, ${r.warnings.length} warnings; ${r.references} references followed, ${r.verbs} verbs mapped`);
   };
+  const locked = (fn) => withMutex(upstreamLock(L.target), fn, { log: g.out });
   if (sub === "vendor") {
     if (!opts.from) throw fail("upstream vendor needs --from <clone>");
-    return done(vendor(L, path.resolve(opts.from), opts.commit));
+    return done(await locked(() => vendor(L, path.resolve(opts.from), opts.commit)));
   }
-  if (sub === "build") return done(build(L));
+  if (sub === "build") return done(await locked(() => build(L)));
   if (sub === "check") {
-    const r = check(L, known, opts);
+    const r = await locked(() => check(L, known, opts));
     report(r);
     return done({ status: r.problems.length ? "problems" : "ok", problems: r.problems, warnings: r.warnings.length, references: r.references, verbs: r.verbs }, r.problems.length ? 1 : 0);
   }
   if (!opts.from || !opts.commit) throw fail("upstream bump needs --from <clone> --commit <sha>");
-  const before = { snapshot: { ...(readPin(L)?.files ?? {}) }, generated: generatedHashes(L) };
-  const pin = readPin(L) ?? { repo: "open-gsd/gsd-core" };
-  refuseLinkedWrite(L.target, `${SNAPSHOT_REL}/UPSTREAM.json`);
-  writeJsonAtomic(L.pinFile, { ...pin, commit: opts.commit });
-  vendor(L, path.resolve(opts.from), opts.commit);
-  const built = build(L);
-  const r = check(L, known, opts);
-  report(r);
-  const stat = { snapshot: diffStat(before.snapshot, readPin(L).files), generated: diffStat(before.generated, generatedHashes(L)) };
-  g.out(`snapshot: +${stat.snapshot.added} ~${stat.snapshot.changed} -${stat.snapshot.removed}; generated: +${stat.generated.added} ~${stat.generated.changed} -${stat.generated.removed}`);
-  return done({ status: r.problems.length ? "problems" : "ok", commit: opts.commit, written: built.written, diff: stat, problems: r.problems }, r.problems.length ? 1 : 0);
+  return locked(() => {
+    const before = { snapshot: { ...(readPin(L)?.files ?? {}) }, generated: generatedHashes(L) };
+    // vendor writes the pin only once the new tree is in place, so a refused bump leaves the pin unchanged.
+    vendor(L, path.resolve(opts.from), opts.commit);
+    const built = build(L);
+    const r = check(L, known, opts);
+    report(r);
+    const stat = { snapshot: diffStat(before.snapshot, readPin(L).files), generated: diffStat(before.generated, generatedHashes(L)) };
+    g.out(`snapshot: +${stat.snapshot.added} ~${stat.snapshot.changed} -${stat.snapshot.removed}; generated: +${stat.generated.added} ~${stat.generated.changed} -${stat.generated.removed}`);
+    return done({ status: r.problems.length ? "problems" : "ok", commit: opts.commit, written: built.written, diff: stat, problems: r.problems }, r.problems.length ? 1 : 0);
+  });
 }
