@@ -40,7 +40,6 @@ const TABLE = `# Requirements: Fixture
 
 test("G047 bullet duplicates: mark-complete and revert update every copy, and list reports the duplicate", async () => {
   const p = project({ requirements: BULLETS });
-  assert.deepEqual((await gsd(p, ["requirements", "list"])).json.duplicates, ["CORE-01"]);
   const done = await gsd(p, ["requirements", "mark-complete", "CORE-01"]);
   assert.equal(done.code, 0, JSON.stringify(done.json));
   const after = p.read(".planning/REQUIREMENTS.md");
@@ -52,16 +51,17 @@ test("G047 bullet duplicates: mark-complete and revert update every copy, and li
   assert.equal(reverted.match(/^- \[ \] \*\*CORE-01\*\*/gm)?.length, 2, reverted);
   assert.equal(reverted.match(/^\| CORE-01 \| Phase 1 \| Pending \|$/gm)?.length, 1, reverted);
   assert.match(reverted, /^\| CORE-02 \| Phase 1 \| Pending \|$/m);
+  assert.deepEqual((await gsd(p, ["requirements", "list"])).json.duplicates, ["CORE-01"]);
 });
 
 test("G047 table duplicates: ID rows and traceability rows are all updated, and list reports the duplicate", async () => {
   const p = project({ requirements: TABLE });
-  assert.deepEqual((await gsd(p, ["requirements", "list"])).json.duplicates, ["CORE-01"]);
   assert.equal((await gsd(p, ["requirements", "mark-complete", "CORE-01"])).code, 0);
   const after = p.read(".planning/REQUIREMENTS.md");
   assert.equal(after.match(/^\| CORE-01 .*\| Complete \|$/gm)?.length, 4, after);
   assert.equal(after.match(/^\| CORE-01 .*\| Pending \|$/gm), null, after);
   assert.match(after, /^\| CORE-02 .*\| Pending \|$/m);
+  assert.deepEqual((await gsd(p, ["requirements", "list"])).json.duplicates, ["CORE-01"]);
 });
 
 test("G047 a requirement that appears once is not reported as a duplicate", async () => {
