@@ -118,6 +118,8 @@ async function debugSession() {
       `Goal: ${fm.goal ?? "find_and_fix"}`,
       "Code root: the current working directory.",
       `Edit scope (owns): ${JSON.stringify(fm.owns ?? [])}; never a shared file; remove instrumentation before closing.`,
+      // The gate reads owns, so the session file is granted here instead of being added to owns.
+      `Session file: ${st.json.path}, the one file you may write outside owns (Current Focus, Evidence, Eliminated, Resolution and frontmatter; never Symptoms or Checkpoints; product edits stay inside owns).`,
       `Budget left: ${now.turns} turns, ${Math.floor(now.minutes)} minutes.`,
       "Never ask the owner: return a checkpoint {id, type, question, options} instead. Never commit, stage or stash.",
       "A completed fix returns status checkpoint type human-verify with the verify obligation {kind, command, target} that reproduces the failure.",

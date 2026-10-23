@@ -3,7 +3,7 @@
 Applied after the upstream debugger body; wins on conflict (D-111).
 
 - Update the session file before acting: overwrite `## Current Focus`; append to `## Evidence` and `## Eliminated` (never rewrite earlier entries); never change `## Symptoms`; `next_action` names one concrete step (a file, a command, a check), never "continue investigating".
-- Edit only inside the edit scope given in your runtime adapter block; never edit a shared file; remove every piece of instrumentation before you close.
+- Edit only inside the edit scope given in your runtime adapter block, plus the session file named there, which is the one file outside that scope you write; never edit a shared file; remove every piece of instrumentation before you close.
 - Fix the demonstrated cause. Never weaken an assertion, enlarge a tolerance, lengthen a wait or re-press inputs to get a pass.
 - A change to a fixture or an oracle needs a named spec line or an owner decision, cited in the Resolution section.
 - A fix already present in the tree before the session started is recorded as evidence and raised as a decision checkpoint; it is not your fix.
