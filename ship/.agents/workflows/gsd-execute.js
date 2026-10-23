@@ -290,6 +290,7 @@ const execRuntime = (t) => [
   "- Rule 3 never covers package installs: a needed install, or one that fails, returns a blocking human checkpoint (task status blocked, deviation {rule: 3, kind: checkpoint}).",
   "- Rule 4 (architectural change): stop the task and return status partial with the decision needed in the deviation notes ({rule: 4, note}).",
   "- A change needed in a file you do not own: do not edit it; return it in requests [{path, change, reason}].",
+  "- Before you return, delete every file you created outside owns (your SUMMARY excepted): scratch files are cleanup, not a Rule-4 decision.",
   "- Never commit, stage or stash; never write STATE, ROADMAP or REQUIREMENTS.",
   "- The orchestrator's gate runs the build and the tests after the wave: do not run them yourself.",
   "Return JSON {taskResults: [{task, status: implemented|partial|blocked|skipped, evidence}], deviations: [{rule, kind, note}], requests: [{path, change, reason}]}.",
@@ -393,6 +394,7 @@ async function integrate(outcomes, tasks) {
       const tr = await flow(["transfer", phaseDir], { plan: t.plan, worktree: o.wt, owns: t.owns ?? [], summary: t.summary, files_deleted: t.files_deleted ?? [] });
       if (tr.code !== 0) { Object.assign(o, await halt(t.plan, `transfer refused: ${(tr.json?.refused ?? []).map((r) => `${r.path} (${r.reason})`).join(", ") || tr.json?.error}`), { ok: false }); continue; }
       ev(`transfer ${t.plan}`);
+      for (const d of tr.json?.dropped ?? []) log(`transfer ${t.plan}: ${d.path} not copied to the main tree (${d.reason})`);
     }
     const sc = await flow(["spot-check", t.summary]);
     if (sc.code !== 0) Object.assign(o, await halt(t.plan, `SUMMARY spot-check: missing ${(sc.json?.missing ?? []).join(", ")}`), { ok: false });

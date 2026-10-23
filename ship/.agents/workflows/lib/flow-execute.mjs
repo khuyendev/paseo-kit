@@ -52,13 +52,15 @@ export function cwdGuard(root, worktreeDir, cwd) {
 
 // Orchestrator bookkeeping (planning records, run records) is not plan output; owned SUMMARY files still count.
 const bookkeeping = (p) => p.startsWith(".planning/") || p.startsWith("_workspace/");
-// adapter.ownership.ignore: paths the orchestrator or the owner edits during a run (notes, feedback logs, kit-feedback
-// 23); neither the resume gate nor the commit check treats them as plan output.
-const ignoredBy = (root) => {
+// adapter.ownership.<key> globs as a path test; an unreadable config matches nothing.
+const ownershipGlobs = (root, key) => {
   let globs = [];
-  try { globs = loadConfig(root).adapter.ownership.ignore ?? []; } catch { globs = []; }
+  try { globs = loadConfig(root).adapter.ownership[key] ?? []; } catch { globs = []; }
   return (p) => globs.some((g) => matchesGlob(p, g));
 };
+// adapter.ownership.ignore: paths the orchestrator or the owner edits during a run (notes, feedback logs, kit-feedback
+// 23); neither the resume gate nor the commit check treats them as plan output.
+const ignoredBy = (root) => ownershipGlobs(root, "ignore");
 
 const baselineFile = (root, phaseDir) => path.join(resolveInside(root, phaseDir), "execute-baseline.json");
 
@@ -255,7 +257,14 @@ export function worktreeChanges(dir) {
   };
 }
 
+// A tracked file whose only difference from its base commit is line endings (a toolchain rewrote CRLF or LF). An
+// untracked file has no base copy to compare with, so it never qualifies.
+const eolOnly = (wt, base, rel) => git(wt, ["cat-file", "-e", `${base}:${rel}`], { allowFail: true }).code === 0
+  && git(wt, ["diff", "--ignore-cr-at-eol", "--quiet", base, "--", rel], { allowFail: true }).code === 0;
+
 // GSDF-94: validate everything first, then copy file by file; a refusal writes nothing and keeps the worktree.
+// kit-feedback 26: a path outside owns that matches adapter.ownership.regenerated, or differs only in line endings, is
+// dropped (not copied; the main tree keeps its own version) and listed in the record, instead of refusing the transfer.
 export function transfer(root, phaseDir, { plan, worktree, owns = [], summary, files_deleted = [] }) {
   const prefixes = ownsPrefixes(root);
   const wt = path.resolve(root, worktree);
@@ -268,17 +277,23 @@ export function transfer(root, phaseDir, { plan, worktree, owns = [], summary, f
   // A worker restoring a seed to HEAD is still a change, even though git status is clean for it.
   for (const [p, hash] of seeded) if (!delta.changes.some((c) => c.path === p) && contentHash(resolveInside(wt, p)) !== hash) changes.push({ path: p, kind: fs.existsSync(resolveInside(wt, p)) ? "modified" : "deleted" });
   const allowed = [...owns, summary].filter(Boolean);
+  const regenerated = ownershipGlobs(root, "regenerated");
   const refused = [];
+  const dropped = [];
   for (const c of changes) {
-    if (!owned(c.path, allowed, prefixes)) refused.push({ path: c.path, reason: "outside owns" });
-    else if (c.kind === "deleted" && !files_deleted.some((d) => toSlash(d) === c.path)) refused.push({ path: c.path, reason: "deletion not declared in files_deleted" });
+    if (owned(c.path, allowed, prefixes)) {
+      if (c.kind === "deleted" && !files_deleted.some((d) => toSlash(d) === c.path)) refused.push({ path: c.path, reason: "deletion not declared in files_deleted" });
+    } else if (regenerated(c.path)) dropped.push({ path: c.path, reason: "regenerated" });
+    else if (c.kind === "modified" && eolOnly(wt, base, c.path)) dropped.push({ path: c.path, reason: "line endings only" });
+    else refused.push({ path: c.path, reason: "outside owns" });
   }
+  const kept = changes.filter((c) => !dropped.some((d) => d.path === c.path));
   const baseline = readJsonIf(baselineFile(root, phaseDir), null);
   const mainNow = new Map(status(root).map((e) => [e.path, e]));
   const baseDirty = new Map((baseline?.dirty ?? []).map((d) => [d.path, d.sha256]));
   const { transfers } = accounted(root, phaseDir);
   const baseUntracked = new Set(baseline?.untracked ?? []);
-  for (const c of changes) {
+  for (const c of kept) {
     if (refused.some((r) => r.path === c.path)) continue;
     // CR-GSF-03: the worktree started from HEAD without the owner's pre-baseline edit; copying would drop that edit.
     if ((baseDirty.has(c.path) || baseUntracked.has(c.path)) && transfers[c.path] === undefined) {
@@ -293,9 +308,9 @@ export function transfer(root, phaseDir, { plan, worktree, owns = [], summary, f
   // A copy that dies half way (a kill, a Windows rename refused by a lock) must not look done on resume: the intent is
   // recorded first and removed only with the final record, and the SUMMARY is copied last, after the code it describes.
   const pending = pendingTransferFile(root, phaseDir, plan);
-  writeJsonAtomic(pending, { plan, worktree: toSlash(worktree), base, paths: changes.map((c) => c.path) });
+  writeJsonAtomic(pending, { plan, worktree: toSlash(worktree), base, paths: kept.map((c) => c.path) });
   const files = [];
-  const order = [...changes.filter((c) => c.path !== summary), ...changes.filter((c) => c.path === summary)];
+  const order = [...kept.filter((c) => c.path !== summary), ...kept.filter((c) => c.path === summary)];
   for (const c of order) {
     const dest = resolveInside(root, c.path);
     if (c.kind === "deleted") {
@@ -314,7 +329,7 @@ export function transfer(root, phaseDir, { plan, worktree, owns = [], summary, f
     }
     files.push({ path: c.path, sha256: contentHash(dest) });
   }
-  const record = { plan, worktree: toSlash(worktree), base, files };
+  const record = { plan, worktree: toSlash(worktree), base, files, dropped };
   writeJsonAtomic(path.join(resolveInside(root, phaseDir), "transfers", `${plan}.json`), record);
   fs.rmSync(pending, { force: true });
   return { ok: true, ...record };

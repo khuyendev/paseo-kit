@@ -97,7 +97,8 @@
       "owns_forms": [{ "prefix": "Path:", "maps_to": "<path>" }],
       "shared": { "globs": [], "predicate": null },
       "source_roots": [],
-      "ignore": []
+      "ignore": [],
+      "regenerated": []
     },
     "review_lenses": [],
     "syntax_checkers": {},

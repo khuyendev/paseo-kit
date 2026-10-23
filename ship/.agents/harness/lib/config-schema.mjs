@@ -103,7 +103,8 @@ export const SCHEMA = obj({
       shared: obj({ globs: strs(), predicate: nullable(str({ nonEmpty: true, repoPath: true })) }),
       source_roots: strs(),
       ignore: strs(),
-    }, ["ignore"]),
+      regenerated: strs(),
+    }, ["ignore", "regenerated"]),
     review_lenses: arr(obj({
       name: str({ nonEmpty: true }),
       text: str({ nonEmpty: true }),

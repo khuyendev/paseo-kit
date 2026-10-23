@@ -229,7 +229,7 @@ test("ADPT-16 the kit ships a neutral adapter and no project adapter", () => {
   const a = kit().adapter;
   assert.deepEqual(a, {
     commands: COMMANDS(), verify_vocabulary: VOCAB(),
-    ownership: { owns_forms: [{ prefix: "Path:", maps_to: "<path>" }], shared: { globs: [], predicate: null }, source_roots: [], ignore: [] },
+    ownership: { owns_forms: [{ prefix: "Path:", maps_to: "<path>" }], shared: { globs: [], predicate: null }, source_roots: [], ignore: [], regenerated: [] },
     review_lenses: [], syntax_checkers: {}, instructions: [], envelope: null, stack_skill: null, agents: {}, mutex: null,
     startup_globs: [], hook_timeout_s: 30, attribution: null, worktree_setup: { copy: [], link: [] },
   });
