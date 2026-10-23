@@ -9,9 +9,11 @@
 //   plan-linked        the plans a plan edit can affect (incremental recheck, kit feedback 76)
 //   plan-realloc-diff  what an outline reallocation changed (kit feedback 69)
 import fs from "node:fs";
+import path from "node:path";
 import { read } from "./flow-files.mjs";
 import { fillTemplate, templateFile, templateText } from "./flow-prompt.mjs";
 import { readText } from "../../harness/lib/io.mjs";
+import { decisionLines, decisionsOf } from "../../harness/lib/owner-answers.mjs";
 import { kitHelpers } from "../../harness/workflow/script.mjs";
 
 const { PH, policyBlock, digestLine } = kitHelpers({ shell: null, agent: null });
@@ -131,11 +133,13 @@ function phasePaths(ctx) {
   const P = (name) => `${ctx.phaseDir}/${ctx.nn}-${name}`;
   return { P, OUTLINE: P("PLAN-OUTLINE.md"), MANIFEST: P("PLAN-OUTLINE.manifest.json"), WIRING: P("WIRING.md"), planPath: (id) => `${ctx.phaseDir}/${id}-PLAN.md` };
 }
+// Kit feedback 99 F1: the owner's decisions of the phase (`ph gsd decide`, owner-answers.json), one line each; empty without any.
+const decisionsText = (root, ctx) => decisionLines(decisionsOf(path.join(root, ctx.phaseDir)));
 function planningContext(root, ctx, mode) {
   const { P } = phasePaths(ctx);
   const limits = ctx.planLimits ?? {};
   return renderPlanTemplate(root, "plan-context", {
-    phase: `${ctx.N}${ctx.phaseName ? ` (${ctx.phaseName})` : ""}`, phaseDir: ctx.phaseDir, mode, contextFile: P("CONTEXT.md"),
+    phase: `${ctx.N}${ctx.phaseName ? ` (${ctx.phaseName})` : ""}`, phaseDir: ctx.phaseDir, mode, contextFile: P("CONTEXT.md"), decisions: decisionsText(root, ctx),
     research: ctx.approvedResearch ? `${ctx.approvedResearch} (approved research)` : "research: NONE approved",
     requirements: ctx.reqIds?.length ? ctx.reqIds.join(", ") : "none declared", instructions: (ctx.instructions ?? []).join(", ") || "none", stackSkill: ctx.stackSkill ?? "none",
     tracer: String(ctx.tracer), reversibilityGates: String(ctx.reversibilityGates), granularity: String(ctx.granularity),
@@ -187,6 +191,8 @@ const KINDS = {
   "skeleton-lane": (root, ctx, d) => renderPlanTemplate(root, "plan-skeleton-lane", {
     lens: d.lens, phase: String(ctx.N), goal: ctx.goal ? ` (goal: ${ctx.goal})` : "", files: d.files.join(", "), requirements: (ctx.reqIds ?? []).join(", ") || "none", tracer: String(ctx.tracer),
     warnings: json(d.warnings ?? []), edges: json(d.edges ?? []), focusNamed: d.focus ? d.focus.named.join(", ") : "", focusChanged: d.focus ? d.focus.changed.join(", ") : "",
+    // Kit feedback 99 F1, 101 F2: the owner's decisions, and the existing test files the verify commands run with their owner plans.
+    decisions: decisionsText(root, ctx), inherited: d.tests?.length ? json(d.tests) : "",
     policy: policyBlock(ctx.approvedResearch ?? null), digest: digestLine("freeze", d.digest),
   }),
   "skeleton-resolve": (root, ctx, d) => renderPlanTemplate(root, "plan-skeleton-resolve", { lens: d.lens, files: d.files.join(", "), issues: json(issueView(d.open, ["id", "plan", "required_property", "description", "fix_hint"])), policy: policyBlock(ctx.approvedResearch ?? null), digest: digestLine("freeze", d.digest) }),

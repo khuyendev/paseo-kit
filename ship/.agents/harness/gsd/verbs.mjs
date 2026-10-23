@@ -9,6 +9,7 @@ import { contractsChange, contractsShow, verifyContractsVerb } from "./contracts
 import { debugBudget, debugCheckpoint, debugClose, debugCreate, debugExtend, debugList, debugStatus } from "./debug.mjs";
 import { commitVerb, evaluationScope, selectRevertCommits } from "./gitverbs.mjs";
 import { allowVerb } from "./allow.mjs";
+import { decideVerb, questionsVerb } from "./decisions.mjs";
 import { grantPath } from "./grants.mjs";
 import { haltClear } from "./halts.mjs";
 import { requestClear, sharedClear } from "./owner-answers.mjs";
@@ -126,6 +127,8 @@ export const verbHandlers = {
   "request.clear": { usage: "ph gsd request.clear <phase> --plan <NN-MM> --path <file> --reason <text>", options: { plan: "string", path: "string", reason: "string" }, run: (g, a, o) => requestClear(g, phaseOf(g, a), o.plan, o) },
   grant: { usage: "ph gsd grant <phase> --path <file> [--plan <NN-MM>]", options: { path: "string", plan: "string" }, run: (g, a, o) => grantPath(g, phaseOf(g, a), o.path, o.plan) },
   allow: { usage: "ph gsd allow <phase | debug> --path <file> --reason <text>", options: { path: "string", reason: "string" }, run: (g, a, o) => allowVerb(g, a[0], o) },
+  // Kit feedback 99 F1: an owner decision of planning (owner-answers.json), read by the outline and the planners; no research input.
+  decide: { usage: 'ph gsd decide <phase> --text "<decision>" (--plans <ids> | --outline | --question <n|title>) [--id D-NN]', options: { id: "string", text: "string", plans: "string", outline: "bool", question: "string" }, run: (g, a, o) => decideVerb(g, a[0], o) },
   "verify.plan-structure": {
     usage: "ph gsd verify.plan-structure <phase | path/NN-MM-PLAN.md> [--plans <ids>]",
     options: { plans: "string" },
@@ -199,11 +202,11 @@ export const verbHandlers = {
   },
   "outline.parse": { usage: "ph gsd outline.parse <phase>", options: {}, run: (g, a) => outlineParseVerb(g, phaseOf(g, a)) },
   "outline.check": {
-    usage: "ph gsd outline.check <phase> [--tracer <bool>] [--plans-per-phase <n>] [--waves-per-phase <n>] [--files-per-plan error|warn]",
-    options: { tracer: "string", "plans-per-phase": "string", "waves-per-phase": "string", "files-per-plan": "string" },
+    usage: "ph gsd outline.check <phase> [--tracer <bool>] [--plans-per-phase <n>] [--waves-per-phase <n>] [--files-per-plan error|warn] [--inherited-tests error|warn]",
+    options: { tracer: "string", "plans-per-phase": "string", "waves-per-phase": "string", "files-per-plan": "string", "inherited-tests": "string" },
     run: (g, a, o) => {
-      if (o["files-per-plan"] !== undefined && !["error", "warn"].includes(o["files-per-plan"])) throw fail("--files-per-plan takes error or warn");
-      return outlineCheck(g, phaseOf(g, a), { tracer: bool(o.tracer, true), plansPerPhase: Number(o["plans-per-phase"]) || undefined, wavesPerPhase: Number(o["waves-per-phase"]) || undefined, filesPerPlan: o["files-per-plan"] });
+      for (const k of ["files-per-plan", "inherited-tests"]) if (o[k] !== undefined && !["error", "warn"].includes(o[k])) throw fail(`--${k} takes error or warn`);
+      return outlineCheck(g, phaseOf(g, a), { tracer: bool(o.tracer, true), plansPerPhase: Number(o["plans-per-phase"]) || undefined, wavesPerPhase: Number(o["waves-per-phase"]) || undefined, filesPerPlan: o["files-per-plan"], inheritedTests: o["inherited-tests"] });
     },
   },
   waves: { usage: "ph gsd waves <phase> [--plans <ids>]", options: { plans: "string" }, run: (g, a, o) => wavesVerb(g, phaseOf(g, a), subset(o, phaseOf(g, a))) },
@@ -251,6 +254,7 @@ export const verbHandlers = {
   hash: { usage: "ph gsd hash (text on stdin)", options: {}, run: (g) => done({ hash: textDigest(g.stdin()) }) },
   "research.status": { usage: "ph gsd research.status <phase>", options: {}, run: (g, a) => researchStatus(g, phaseOf(g, a)) },
   "research.prompt": { usage: "ph gsd research.prompt <phase>", options: {}, run: (g, a) => researchPrompt(g, phaseOf(g, a)) },
+  "research.questions": { usage: "ph gsd research.questions <phase>", options: {}, run: (g, a) => questionsVerb(g, phaseOf(g, a)) },
   "frontmatter.get": { usage: "ph gsd frontmatter.get <file> <key>", options: {}, run: (g, a) => frontmatterGet(g, a[0], a[1]) },
   "frontmatter.validate": { usage: "ph gsd frontmatter.validate <file> --schema <name>", options: { schema: "string" }, run: (g, a, o) => frontmatterValidate(g, a[0], o.schema) },
   "summary-extract": {

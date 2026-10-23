@@ -1,5 +1,6 @@
 // Kit feedback #87 part B for planning (RE): every needs-owner stop of gsd-plan names its answer (`answer: {verb, command, args?}`):
-// forceProceed or reviewGuidance args, a rerun with other args, a decision in CONTEXT, another workflow, or a fix and a rerun. The
+// forceProceed or reviewGuidance args, a rerun with other args, an owner decision (`ph gsd decide`, kit feedback 99; it was a CONTEXT
+// edit before), another workflow, or a fix and a rerun. The
 // static test enumerates every stop of the script; the driven ones check an answer holds what the owner needs to give it.
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -10,7 +11,7 @@ import { runScript } from "../gsd-flows/host.mjs";
 import { makeWorld, PHASE_DIR, plannerResponder } from "../gsd-flows/world.mjs";
 
 const SCRIPT = path.join(SHIP_DIR, ".agents/workflows/gsd-plan.js");
-const VERBS = ["forceProceed", "reviewGuidance", "args", "context", "workflow", "fix-and-rerun", "rerun"];
+const VERBS = ["forceProceed", "reviewGuidance", "args", "decide", "workflow", "fix-and-rerun", "rerun"];
 
 // The text of the call whose "(" is at `open`: strings, template literals (with ${...}) and comments are skipped while counting.
 function callText(src, open) {
@@ -107,11 +108,11 @@ test("RE the stops before planning answer with the workflow or the args that let
   assert.deepEqual([discuss.verb, /gsd-discuss 01/.test(discuss.command)], ["workflow", true]);
 });
 
-test("RE an owner marker, a skeleton stall and a coverage failure name a CONTEXT decision or a replan", async () => {
+test("RE an owner marker, a skeleton stall and a coverage failure name an owner decision (decide) or a replan", async () => {
   const marker = shape(await plan(makeWorld(), {}, { outline: () => ({ marker: "## PHASE SPLIT RECOMMENDED", question: "split?" }) }));
-  assert.equal(marker.verb, "context");
+  assert.equal(marker.verb, "decide");
   const stall = shape(await plan(makeWorld(), {}, { "skeleton-": () => ({ issues: [{ plan: "01-01", severity: "blocker", description: "no tracer", target: "outline" }] }) }));
-  assert.equal(stall.verb, "context");
+  assert.equal(stall.verb, "decide");
   const w = makeWorld();
   w.coverage = { passed: false, decisions: { uncovered: ["D-02"] } };
   const coverage = shape(await plan(w));
