@@ -13,6 +13,7 @@ import { id8 } from "../lib/paths.mjs";
 import { FILE_PLUGIN_ID, MIN_CLAUDE_VERSION, NODE_REQUIREMENT, claudeVersion, nodeRuntimeProblem, paseoConfigFile, versionAtLeast } from "../platform.mjs";
 import { checkTarget } from "../gsd/upstream.mjs";
 import { workflowArgProblems } from "../gsd/workflow-args.mjs";
+import { compositionPolicyLines } from "../gsd/policies.mjs";
 import { DEFAULT_RUNS_DIR } from "../workflow/journal.mjs";
 import { AGENTS_DIR, listAgentTypes } from "./agents.mjs";
 import { resolveModel } from "./models.mjs";
@@ -181,6 +182,8 @@ export async function runDoctor(ctx, { freemem = os.freemem, claudeVersionText =
   await guard("adapter", () => adapterLines(ctx, line));
   await guard("worktrees", () => worktreeLines(ctx, line));
   await guard("workflow arguments", () => workflowArgLines(ctx, line));
+  // Kit feedback 87: a composition policy the overlay sets that the project's own composition no longer reads.
+  if (!ctx.configError) await guard("composition policies", () => compositionPolicyLines(ctx.root).forEach(([kind, text]) => line(kind, text)));
   await guard("gsd upstream", () => gsdUpstreamLines(ctx, line));
   await guard("agent types", () => {
     const types = listAgentTypes(ctx.root);
