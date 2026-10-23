@@ -22,10 +22,11 @@ const wsArg = (ws) => {
   return /\s/.test(text) ? `"${text}"` : text;
 };
 
+// The name is written as a JSON string: its quotes and line breaks are escaped, so it cannot end the sentence or add a note.
 export function teammateNote({ name, leader, ws }) {
   const ph = phCommand();
   const w = wsArg(ws);
-  return `You are the teammate "${name}" of a Paseo agent team led by agent ${id8(leader)}. The leader sends you follow-up messages and you keep your context between them; end every turn with your reply to the leader. Shared task list: \`${ph} task list --ws ${w}\` and \`${ph} task update --ws ${w} <id> --status <status>\`; message a teammate: \`${ph} send --prompt "..." <teammate>\`.`;
+  return `You are the teammate ${JSON.stringify(name)} of a Paseo agent team led by agent ${id8(leader)}. The leader sends you follow-up messages and you keep your context between them; end every turn with your reply to the leader. Shared task list: \`${ph} task list --ws ${w}\` and \`${ph} task update --ws ${w} <id> --status <status>\`; message a teammate: \`${ph} send --prompt "..." <teammate>\`.`;
 }
 
 // Kit note, then the project's note, then the platform note; the kit note cannot be replaced by an overlay (CONF-14).
