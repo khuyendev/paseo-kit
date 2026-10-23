@@ -5,6 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { TESTED_PASEO_CLI } from "../../ship/.agents/harness/paseo-client/index.mjs";
+import { iconNames } from "../../plugins/smoke-icons.mjs";
 import { KIT_DIR, makeTempDir } from "../helpers/temp.mjs";
 
 const PLUGINS = path.join(KIT_DIR, "plugins");
@@ -250,18 +251,8 @@ test("OFFC-01 office registers with the current host calls", () => {
 // ---- OFFC-23 smoke: the script against a fake CLI directory and a fake daemon -------------------------------------
 const kebab = (name) => name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/([A-Za-z])(\d)/g, "$1-$2").toLowerCase();
 
-// The icon names smoke.mjs looks for: same two expressions, every client file of both plugins, found recursively.
-function clientIconNames() {
-  const names = new Set();
-  for (const id of IDS) {
-    for (const [file, text] of sources(id, ["client"])) {
-      if (!file.includes(`${path.sep}client${path.sep}`) || !/\.tsx?$/.test(file)) continue;
-      for (const m of text.matchAll(/(?:name|icon)[=:]\s*\{?"([A-Z][A-Za-z0-9]+)"/g)) names.add(m[1]);
-      for (const m of text.matchAll(/:\s*"([A-Z][A-Za-z0-9]+)",?\s*$/gm)) names.add(m[1]);
-    }
-  }
-  return [...names].sort();
-}
+// The icon names smoke.mjs looks for, from the scanner it uses (plugins/smoke-icons.mjs).
+const clientIconNames = () => iconNames(PLUGINS);
 
 // The fake client module: a daemon whose api answers the read calls of smoke.mjs; FAKE_SMOKE_OMIT holds dotted names to remove.
 const FAKE_CLIENT_JS = [

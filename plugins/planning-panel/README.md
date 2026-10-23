@@ -21,7 +21,8 @@ of this host.
 4. Paseo: `paseo plugin install <this folder>` (once, if not registered by step 1), then
    `paseo plugin reload planning-panel` after a change, `paseo plugin ls` (shows `running`) and `paseo plugin logs planning-panel`.
 5. After a Paseo upgrade: `node ../smoke.mjs` against the running daemon re-checks the SDK calls, fields and icon
-   names the plugins use, then update `requirements.paseo` in `paseo-plugin.json` and the `@getpaseo/plugin` pin.
+   names the plugins use (quoted names, ternary branches and `icon` constants of the client code; a lookup table such
+   as `COMPLETION_ICON[state]` is not followed), then update `requirements.paseo` in `paseo-plugin.json` and the `@getpaseo/plugin` pin.
 
 The plugin is read-only: it never sends prompts, spawns, archives, cancels or changes agents, never writes files
 and runs no subprocess. The only actions are navigation and copying an id or a path.

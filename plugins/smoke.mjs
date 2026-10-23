@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { daemonTarget, findCliDir } from "../ship/.agents/harness/paseo-client/locate.mjs";
+import { iconNames } from "./smoke-icons.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const AGENT_FIELDS = ["id", "provider", "model", "status", "title", "labels", "cwd", "workspaceId", "createdAt", "updatedAt", "thinkingOptionId", "currentModeId", "pendingPermissions", "requiresAttention", "attentionReason", "activeTurn", "lastUsage", "archivedAt"];
@@ -26,21 +27,6 @@ const hasFields = (obj, fields, what) => {
   check(missing.length === 0, `${what}${missing.length ? `: missing ${missing.join(", ")}` : ""}`);
 };
 
-function iconNames() {
-  const names = new Set();
-  for (const plugin of ["planning-panel", "office"]) {
-    const dir = path.join(HERE, plugin, "client");
-    for (const f of fs.readdirSync(dir, { recursive: true })) {
-      const file = path.join(dir, String(f));
-      if (!/\.tsx?$/.test(file) || !fs.statSync(file).isFile()) continue;
-      const text = fs.readFileSync(file, "utf8");
-      for (const m of text.matchAll(/(?:name|icon)[=:]\s*\{?"([A-Z][A-Za-z0-9]+)"/g)) names.add(m[1]);
-      for (const m of text.matchAll(/:\s*"([A-Z][A-Za-z0-9]+)",?\s*$/gm)) names.add(m[1]);
-    }
-  }
-  return [...names].sort();
-}
-
 const kebab = (name) => name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/([A-Za-z])(\d)/g, "$1-$2").toLowerCase();
 
 function checkIcons(appDir) {
@@ -48,7 +34,7 @@ function checkIcons(appDir) {
   if (!fs.existsSync(dist)) return check(false, `icons: no Paseo app bundle at ${dist} (pass --app-dir)`);
   let bundle = "";
   for (const f of fs.readdirSync(dist, { recursive: true })) if (String(f).endsWith(".js")) bundle += fs.readFileSync(path.join(dist, String(f)), "utf8");
-  for (const icon of iconNames()) check(bundle.includes(`"${kebab(icon)}"`), `icon ${icon} (${kebab(icon)})`);
+  for (const icon of iconNames(HERE)) check(bundle.includes(`"${kebab(icon)}"`), `icon ${icon} (${kebab(icon)})`);
 }
 
 async function main() {
