@@ -231,8 +231,9 @@ if (open) return owner("Discuss", open, { answer: answers.workflow(`gsd-discuss 
 // execute after the plans are paid for.
 const anti = await flow(["anti-patterns", phaseDir]);
 if (anti.code !== 0) return owner("Discuss", `blocking anti-patterns lack their three written answers in ${anti.json?.answersFile ?? `${phaseDir}/.continue-here.answers.json`}: ${(anti.json?.unanswered ?? [anti.json?.error ?? "check failed"]).join(", ")}; run gsd-discuss ${N} to write them (it reads CONTEXT)`, { rows: anti.json?.unanswered ?? [], answer: answers.workflow(`gsd-discuss ${N}`, "write the three answers of each blocking anti-pattern") });
-// Kit feedback 87: the run's record in plan-progress.json (a --resume keeps its logs, a new run starts them), with the settings digests
-// its plans are recorded with and the forceProceed it was given.
+// Kit feedback 87: the run's record in plan-progress.json: this start of the run (a --resume after a runner died continues the run: it
+// keeps the outline and the plans the run wrote and recorded, and its contract changes), the settings digests its plans are recorded
+// with and the forceProceed it was given.
 const started = await flow(["plan-run", phaseDir], { run: runId, settings: settingsDigest, force: a.forceProceed ? { reason: a.forceProceed.reason, issues: forcedIssues } : null });
 if (started.code !== 0) return result("failed", { reason: `plan state: ${started.json?.reason ?? started.json?.error ?? `exit ${started.code}`}` });
 // A resumed run (`ph workflow --resume` after a runner died): the plans an earlier instance of this run recorded, and the outline it wrote.
@@ -328,7 +329,7 @@ async function plannerCall(session, label, body, digestKey, digest, extra = {}) 
   return contractsOn && r.result && /^(revise|deprevise|contract|fix)-/.test(label) ? applyContractChanges(r, session, `${label}#${nth}`) : r;
 }
 // Kit feedback 87: one step of the run's planning log in plan-progress.json (flow-plan-state.mjs); the verb keeps the bookkeeping
-// and answers per op. A resumed run replays the same steps and gets the same answers.
+// and answers per op. The answers are a function of the ops sent, so a resumed run that replays the same replies gets the same answers.
 async function planStep(verb, part, step, ops) {
   const r = await flow([verb, phaseDir], { run: runId, part, step, ops });
   if (r.code !== 0 || !Array.isArray(r.json?.replies)) throw new Error(`${verb} ${part} ${step}: ${r.json?.reason ?? r.json?.error ?? `exit ${r.code}`}`);
@@ -338,7 +339,8 @@ const partView = async (part) => (await flow(["plan-state", phaseDir])).json?.vi
 // Kit feedback 67 F2: a reviser's CONTRACT_CHANGE entries become the manifest's new signatures (the one writer, ph gsd contracts
 // change); the consumers are revised by the next contract gate. A change the manifest refuses, or a CONTRACT_CHANGE marker with no
 // entry, comes back as a REVISION_CONFLICT, which every caller already stops on (needs-owner). A reply replayed on resume repeats
-// a change already applied, which the verb accepts (`already`); the contracts log of the run still holds it as this run's change.
+// a change already applied, which the verb accepts (`already`); plan-progress.json still names it as this run's change (its consumers
+// are revised as in the first run).
 async function applyContractChanges(r, session, callId) {
   const list = Array.isArray(r.result.contract_changes) ? r.result.contract_changes : [];
   const conflict = (why, change) => ({ ...r, result: { ...r.result, marker: "REVISION_CONFLICT", summary: why, conflict: { contract_change: change ?? null, rejected: why } } });

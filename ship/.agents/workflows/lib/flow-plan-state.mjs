@@ -92,7 +92,7 @@ const cut300 = (s) => String(s ?? "").replace(/\s+/g, " ").replace(/\|/g, "/").s
 const keyOf = (scope, i) => (i.plan && (scope ?? []).includes(i.plan) ? i.plan : null);
 // The same blocker as an earlier checker iteration raised it: same plan, dimension and invariant.
 const sameIssue = (a, b) => (a.plan ?? null) === (b.plan ?? null) && a.dimension === b.dimension && a.required_property === b.required_property;
-export const dimensionOf = (i) => String(i.dimension || i.probe || "").trim().toLowerCase();
+const dimensionOf = (i) => String(i.dimension || i.probe || "").trim().toLowerCase();
 const isBlocker = (i) => i.severity === "blocker";
 const blockerOf = (scope, list, key) => list.filter((i) => isBlocker(i) && keyOf(scope, i) === key);
 const groupBy = (list, fn) => {
