@@ -65,8 +65,10 @@ export function createRetier({ session, runtime, root, out, clock }) {
       out(`log warning: retier ${rec.label} ${id8(agentId)} not resolved, the agent keeps ${describe(rec)}: ${errText(e)}`);
       return;
     }
+    // A tier with no thinking level leaves the agent's current thinking as it is (null would turn thinking off).
     const thinking = sel.thinking ?? null;
-    if (sel.id === rec.model && thinking === rec.thinking) return;
+    const thinkingChanged = thinking !== null && thinking !== rec.thinking;
+    if (sel.id === rec.model && !thinkingChanged) return;
     if (sel.provider !== rec.provider) {
       out(`retier ${rec.label}: ${tier} moved to provider ${sel.provider}; the running agent keeps ${rec.model}, the next call uses the new tier`);
       return;
@@ -77,7 +79,7 @@ export function createRetier({ session, runtime, root, out, clock }) {
         await session.setModel(agentId, sel.model);
         rec.model = sel.id;
       }
-      if (thinking !== rec.thinking) {
+      if (thinkingChanged) {
         if (await session.setThinking(agentId, sel)) rec.thinking = thinking;
         else out(`log warning: retier ${rec.label} ${id8(agentId)}: ${sel.id} offers no ${thinking} thinking; the thinking stays ${rec.thinking ?? "default"}`);
       }

@@ -265,7 +265,8 @@ async function moveAgent(ctx, session, agent, sel) {
   }
   const from = `${agent.provider}/${agent.model}`;
   await session.setModel(agent.id, sel.model);
-  const thinkingSet = await session.setThinking(agent.id, sel);
+  // No thinking level (no --thinking and none on the tier) keeps the agent's thinking; null would turn it off.
+  const thinkingSet = sel.thinking === undefined || sel.thinking === null ? true : await session.setThinking(agent.id, sel);
   ctx.out(`model ${agent.title ?? id8(agent.id)} ${id8(agent.id)}: ${from} -> ${sel.id}`);
   if (!thinkingSet) ctx.out(`log warning: ${sel.id} offers no ${sel.thinking} thinking; the thinking stays`);
 }

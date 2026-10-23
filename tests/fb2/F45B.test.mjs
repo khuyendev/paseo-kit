@@ -39,6 +39,8 @@ test("F45B a tier edited while a call runs switches the live agent: setAgentMode
   await until(() => s.fake.callsOf("setAgentModel").length === 1);
   const [agentId, model] = s.fake.callsOf("setAgentModel")[0].args;
   assert.equal(model, "new");
+  // The tier names no thinking level, so the live agent keeps its thinking (a null option would turn it off).
+  assert.equal(s.fake.callsOf("setAgentThinkingOption").length, 0);
   s.fake.finish(agentId, [{ reply: "ok", usage: { outputTokens: 1 } }]);
   const r = await run;
   assert.equal(r.code, 0, r.stderr);
