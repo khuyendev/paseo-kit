@@ -605,36 +605,34 @@ issue:
 
 ## Dimension 11: Research Resolution (#1602)
 
-**Question:** Is every research open question resolved, in RESEARCH.md or in a plan, before planning proceeds?
+**Question:** Are all research questions resolved before planning proceeds?
 
 **Skip if:** No RESEARCH.md exists for this phase.
 
 **Process:**
 1. Read the phase's RESEARCH.md file
-2. Search for a `## Open Questions` section; if it is absent or lists no question → PASS
+2. Search for a `## Open Questions` section
 3. If section heading has `(RESOLVED)` suffix → PASS
-4. Otherwise check each listed question: it is resolved if it carries an inline `RESOLVED` marker, or if a plan of this phase states the question and its answer (in `<objective>` or a `must_haves.truths` entry)
-5. FAIL if any question is neither resolved in RESEARCH.md nor answered in a plan
+4. If section exists: check each listed question for inline `RESOLVED` marker
+5. FAIL if any question lacks a resolution
 
 **Red flags:**
-- RESEARCH.md has `## Open Questions` section with questions, no `(RESOLVED)` suffix, and no plan that answers them
-- Individual questions listed without resolution status and without a plan answer
+- RESEARCH.md has `## Open Questions` section without `(RESOLVED)` suffix
+- Individual questions listed without resolution status
 - Prose-style open questions that haven't been addressed
-
-**The fix lives in the plans:** the revising planner may not edit RESEARCH.md, so the `required_property` and `fix_hint` for this dimension must never ask for a RESEARCH.md edit. A question the plans answer is resolved for planning.
 
 **Example — unresolved questions:**
 ```yaml
 issue:
   dimension: research_resolution
   severity: blocker
-  required_property: "Every RESEARCH.md open question is resolved in RESEARCH.md or answered in a plan"
-  description: "RESEARCH.md has open questions that no plan answers"
+  required_property: "RESEARCH.md carries no unresolved open question"
+  description: "RESEARCH.md has unresolved open questions"
   file: "01-RESEARCH.md"
   unresolved_questions:
     - "Hash prefix — keep or change?"
     - "Cache TTL — what duration?"
-  fix_hint: "State each question and its answer in the plan that depends on it (in <objective> or a must_haves.truths entry). Do not edit RESEARCH.md: the planner may not make that edit."
+  fix_hint: "Resolve questions and mark section as '## Open Questions (RESOLVED)'"
 ```
 
 **Example — resolved (PASS):**
