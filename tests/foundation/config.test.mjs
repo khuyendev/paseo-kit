@@ -289,6 +289,7 @@ const GOLDEN = {
     plan_limits: { tasks_per_plan: 3, plans_per_phase: 12, waves_per_phase: 4 },
     tracer_extra_files: 0,
     execution_mode: "per-wave",
+    execute_schedule: "waves",
     batch_review: true,
     isolation: "worktree",
     fixer_verifies_itself: true,
