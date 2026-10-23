@@ -18,8 +18,8 @@ test("G016 a failed lane keeps the findings of the answering lane, whichever lan
     assert.equal(labels(r).filter((l) => l === `skeleton-${failing}`).length, 2);
     const review = w.read(`${PHASE_DIR}/01-OUTLINE-REVIEW.md`);
     assert.match(review, new RegExp(`Status: failed \\(skeleton lane ${failing} \\(`));
-    assert.match(review, new RegExp(`\\| ${failing} \\|[^\\n]*failed`));
     assert.match(review, new RegExp(`\\| ${answering}-1 \\| ${answering} \\| 01-01 \\| blocker \\| outline \\| sibling blocker`));
+    assert.match(review, new RegExp(`\\| ${failing} \\|[^\\n]*failed`));
   }
 });
 
