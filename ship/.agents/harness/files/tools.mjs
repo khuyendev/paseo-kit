@@ -6,7 +6,7 @@ export const TOOL_NAMES = Object.freeze(["read_ranges", "edit_multiple_files", "
 
 const str = { type: "string" };
 const int = (minimum) => ({ type: "integer", minimum });
-const obj = (properties, required = []) => ({ type: "object", required, properties });
+const obj = (properties, required = []) => ({ type: "object", additionalProperties: false, required, properties });
 const list = (items) => ({ type: "array", minItems: 1, items });
 
 // Supplied after the base description of every tool (FTOL-03).
@@ -51,7 +51,7 @@ const RECOVERY = {
 export const TOOLS = BASE.map(({ name, description, inputSchema }) => ({
   name,
   description: description + SUFFIX,
-  inputSchema: { type: "object", properties: { ...inputSchema.properties, ...RECOVERY } },
+  inputSchema: { type: "object", additionalProperties: false, properties: { ...inputSchema.properties, ...RECOVERY } },
   isDeferred: false,
 }));
 
@@ -61,6 +61,8 @@ function check(value, schema, label) {
   if (schema.type === "object") {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
     for (const key of schema.required ?? []) if (value[key] === undefined) throw new Error(`${label}.${key} is required`);
+    // Unknown keys fail, never drop: a misspelled option such as atomik would otherwise silently disable atomic mode
+    for (const key of Object.keys(value)) if (!Object.hasOwn(schema.properties ?? {}, key)) throw new Error(`${label}.${key} is not a valid field`);
     for (const [key, child] of Object.entries(schema.properties ?? {})) if (value[key] !== undefined) check(value[key], child, `${label}.${key}`);
   } else if (schema.type === "array") {
     if (!Array.isArray(value) || value.length < (schema.minItems ?? 0)) throw new Error(`${label} must be a nonempty array`);
