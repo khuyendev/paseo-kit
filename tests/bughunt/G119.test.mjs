@@ -13,6 +13,7 @@ const DOCS = { overlay: { gsd: { commit_policy: { docs: true, code: "per-wave" }
 const FOCUS = { tech: ["STACK", "INTEGRATIONS"], arch: ["ARCHITECTURE", "STRUCTURE"], quality: ["CONVENTIONS", "TESTING"], concerns: ["CONCERNS"] };
 const body = (n) => Array.from({ length: n }, (_, i) => `line ${i}`).join("\n");
 const mapper = (w, extra = "") => (p, o) => {
+  if (o.label.startsWith("review-")) return { issues: [] };
   const docs = FOCUS[o.label.replace("mapper-", "")];
   for (const d of docs) w.write(`.planning/codebase/${d}.md`, `# ${d}\n${body(25)}\n${d === "CONCERNS" ? extra : ""}`);
   return { focus: o.label, written: docs };

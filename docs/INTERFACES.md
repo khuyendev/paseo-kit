@@ -209,7 +209,7 @@ Paths in the adapter are repo-relative script paths (validated at load: no drive
 | `review_depth` | `quick\|standard\|deep` | `standard` |
 | `code_review` | `{max_concurrent: int >= 1, reviewers: [{model?: string, effort?: level}]}` (both keys required; each reviewer's `model` and `effort` are optional) | `{max_concurrent: 1, reviewers: []}` |
 
-`GSD_ROLES` (ADPT-11): `research, project_researcher, synthesizer, outline, planner, checker, skeleton_lane, architect, plan_finder, plan_verifier, plan_judge, plan_editor, executor, reviewer, finding_verifier, fixer, verifier, mapper, roadmapper, debugger`.
+`GSD_ROLES` (ADPT-11): `research, project_researcher, synthesizer, outline, planner, checker, skeleton_lane, architect, plan_finder, plan_verifier, plan_judge, plan_editor, executor, reviewer, finding_verifier, fixer, verifier, mapper, map_reviewer, roadmapper, debugger`.
 
 #### Role catalog
 
@@ -235,7 +235,8 @@ Each row is a role, the workflows that pass it, the agent type it starts (`adapt
 | `finding_verifier` | gsd-execute | `finding-verifier` | `pro` | confirms or refutes a review finding |
 | `fixer` | gsd-execute | `gsd-code-fixer` | `standard` | effort `high` unless `gsd.roles.fixer.effort` is set |
 | `verifier` | gsd-verify, gsd-quick | `gsd-verifier` | `pro` | |
-| `mapper` | gsd-map-codebase | `gsd-codebase-mapper` | `standard` | one per focus area |
+| `mapper` | gsd-map-codebase | `gsd-codebase-mapper` | `standard` | one per focus area; also the one fix round of a review finding |
+| `map_reviewer` | gsd-map-codebase | `gsd-map-reviewer` | `pro` | one read-only reviewer per focus area; fact-checks that area's docs |
 | `debugger` | gsd-debug | `gsd-debugger` | `pro` | |
 
 Error messages name the dotted key: `invalid harness config gsd.plan_limits.waves_per_phase: missing key`, `invalid harness config adapter.unknown_x: unknown key`, `invalid harness config read_limits.fileMaxChars: must be <= replyMaxChars`, `invalid harness config max_subagents: expected integer`. Texts after the colon: `unknown key`, `missing key`, `expected <integer|string|boolean|object|array|array of strings|...>`, `expected one of a|b|c`, `must be >= N`, `must be between A and B`, or a named rule.
@@ -450,6 +451,7 @@ Test naming: each v1 requirement of a coder's prefixes has at least one test who
 - Execute, debug and quick acquire the root writer lock `debug` (the file keeps its name) for their whole run; execute also holds `phase-<NN>` for its whole run. Plan holds only `phase-<NN>` for its whole run (kit-feedback 2), so planning phase N+1 runs while phase N executes; a second plan of the same phase, or an execute of it, is refused with the holder's kind and run id. Acquire/reap/release use an exclusive transition claim, live host PID and owner token (not run-id equality). Interrupted transition claims fail closed and may require manual recovery.
 - `ph gsd commit` takes `_workspace/locks/git-writer.lock` and waits for it (the STATE.md lock rule), so a plan's docs commit and an execute's code commit never collide on the git index. STATE.md and ROADMAP writes already take `STATE.md.lock` inside `writeShared`.
 - Map-codebase acquires its own `codebase-map` lease for the whole run (not the debug one, so plan and execute keep pipelining); a second map on the same root is refused. The stamp refuses when HEAD moved since the mappers were dispatched (a commit landed during the map).
+- Map-codebase checks the written docs before anything is stamped: the doc check rejects a Known Bug in CONCERNS.md that is neither `Status: verified` with its `Evidence:` nor `Status: suspected`; then the secrets scan; then the Review stage, one `map_reviewer` per focus area (read only) fact-checks its docs against the code. Its findings go back to that focus's mapper once, the docs are checked and the group reviewed again; findings that still stand stop the run `needs-owner` at stage Review, with nothing stamped or committed. The mapped result carries `review: {checked, fixed}`.
 - Verify acquires a per-phase lock `verify-<NN>` from its attempt record through readback and routing, not the root writer lock; a second verify of the same phase returns `refused` while the first runs.
 - Research acquires a per-phase lock `research-<NN>` from its status check through readback, not the root writer lock; a second research of the same phase returns `refused` while the first runs. `revisions record` reads, merges and writes `revisions.json` under `revisions.json.lock` (the STATE.md lock rules), so concurrent records keep each other's keys.
 

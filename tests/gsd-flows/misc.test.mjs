@@ -9,6 +9,7 @@ import { makeWorld, planText } from "./world.mjs";
 const body = (n) => Array.from({ length: n }, (_, i) => `line ${i}`).join("\n");
 const FOCUS = { tech: ["STACK", "INTEGRATIONS"], arch: ["ARCHITECTURE", "STRUCTURE"], quality: ["CONVENTIONS", "TESTING"], concerns: ["CONCERNS"] };
 const mapper = (w, extra = "") => (p, o) => {
+  if (o.label.startsWith("review-")) return { issues: [] };
   const docs = FOCUS[o.label.replace("mapper-", "")];
   for (const d of docs) w.write(`.planning/codebase/${d}.md`, `# ${d}\n${body(25)}\n${d === "CONCERNS" ? extra : ""}`);
   return { focus: o.label, written: docs };
@@ -18,7 +19,7 @@ test("GSDF-05 map-codebase: 4 mappers write 7 docs and get stamped; bad --paths 
   const w = makeWorld({ overlay: { gsd: { commit_policy: { docs: true, code: "per-wave" } } } });
   const r = await runScript("gsd-map-codebase", { root: w.root, gsd: w.gsd, agent: mapper(w) });
   assert.equal(r.result.status, "mapped");
-  assert.equal(r.calls.length, 4);
+  assert.equal(r.calls.length, 8);
   assert.equal(r.result.docs.length, 7);
   assert.match(w.read(".planning/codebase/TESTING.md"), /^---\nlast_mapped_commit: [0-9a-f]{40}\n/);
   assert.ok(w.events.some((e) => e.startsWith("commit docs: map codebase")));

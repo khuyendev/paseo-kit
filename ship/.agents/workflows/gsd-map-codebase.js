@@ -1,7 +1,7 @@
 export const meta = {
   name: "gsd-map-codebase",
   description: "GSD map-codebase: 4 parallel gsd-codebase-mapper workers write the 7 docs of .planning/codebase/; doc check, secrets scan, stamp",
-  phases: [{ title: "Map" }, { title: "Check" }, { title: "Stamp" }],
+  phases: [{ title: "Map" }, { title: "Check" }, { title: "Review" }, { title: "Stamp" }],
 };
 
 // ---- shared GSD script helpers (scripts cannot import; keep identical across gsd-*.js) ----
@@ -51,10 +51,14 @@ async function fileSha(path) { const r = await flow(["read", path]); return r.js
 const FOCUS = { tech: ["STACK", "INTEGRATIONS"], arch: ["ARCHITECTURE", "STRUCTURE"], quality: ["CONVENTIONS", "TESTING"], concerns: ["CONCERNS"] };
 const SAFE_PATH = /^(?!\/)(?![A-Za-z]:)[A-Za-z0-9_][A-Za-z0-9_ ./-]*$/;
 const CONFIRM_SCHEMA = { type: "object", properties: { focus: { type: "string" }, written: { type: "array", items: { type: "string" } } }, required: ["written"] };
+// Kit-feedback 43: a reviewer returns the claims of its group the code does not support; an empty list when all hold.
+const REVIEW_SCHEMA = { type: "object", properties: { focus: { type: "string" }, issues: { type: "array", items: { type: "object", properties: { doc: { type: "string" }, claim: { type: "string" }, problem: { type: "string", enum: ["false", "outdated", "misleading"] }, evidence: { type: "string" }, fix_hint: { type: "string" } }, required: ["doc", "claim", "problem", "evidence", "fix_hint"] } } }, required: ["issues"] };
 // The doc a confirmation names: `.planning/codebase/STACK.md`, `STACK.md` or `STACK`.
 const docName = (p) => String(p).split("/").pop().replace(/\.md$/i, "").toUpperCase();
 // G117: a mapper counts only when its confirmation names exactly the docs of its focus; otherwise the map is not this run's.
 const confirmed = (j, r) => { const names = (r?.result?.written ?? []).map(docName); return j.docs.every((d) => names.includes(d)) && names.every((n) => j.docs.includes(n)); };
+// Kit-feedback 43: a reviewer counts only when its reply carries an issue list.
+const reviewed = (r) => Array.isArray(r?.result?.issues);
 
 const a = args ?? {};
 const paths = a.paths === undefined ? [] : String(a.paths).split(",").map((p) => p.trim()).filter(Boolean);
@@ -67,6 +71,13 @@ const unknown = docs.filter((d) => !Object.values(FOCUS).flat().includes(d));
 if (unknown.length) return { status: "failed", reason: `unknown map docs ${unknown.join(", ")}` };
 const cfg = await loadCfg();
 const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
+// G117: a mapper that gives no confirmation naming its docs is retried once unless the reason is fatal.
+const mapperCall = async (j, prompt, label) => {
+  const opts = { label, agentType: agentFor("mapper", "gsd-codebase-mapper"), role: "mapper", schema: CONFIRM_SCHEMA };
+  let r = await call(prompt, opts);
+  if (!confirmed(j, r) && !fatal(r.reason)) r = await call(prompt, opts);
+  return r;
+};
 // G119: a map holds its own root lease, not the debug one (plan and execute keep pipelining); two map runs never write
 // or stamp the same documents at once.
 const lease = await flow(["lock", "codebase-map", runId, "gsd-map-codebase"]);
@@ -85,10 +96,7 @@ const replies = await parallel(jobs.map((j) => async () => {
     "Do not write last_mapped_commit or last_mapped_at (the orchestrator stamps the map). Never copy secrets, keys or tokens into a document. Do not commit.",
     "Return only a confirmation JSON {focus, written: [paths]}, not the documents.",
   ].filter(Boolean).join("\n\n");
-  const opts = { label: `mapper-${j.focus}`, agentType: agentFor("mapper", "gsd-codebase-mapper"), role: "mapper", schema: CONFIRM_SCHEMA };
-  let r = await call(prompt, opts);
-  if (!confirmed(j, r) && !fatal(r.reason)) r = await call(prompt, opts);
-  return r;
+  return mapperCall(j, prompt, `mapper-${j.focus}`);
 }));
 const failedJob = jobs.findIndex((j, i) => !confirmed(j, replies[i]));
 if (failedJob >= 0) {
@@ -96,12 +104,62 @@ if (failedJob >= 0) {
   return { status: "failed", reason: `mapper ${jobs[failedJob].focus} failed: ${r?.result ? "its confirmation does not name exactly its docs" : (r?.reason ?? "no reply")}` };
 }
 
-phase("Check");
-const check = await flow(["map-check", ...docs]);
-if (check.code !== 0) return { status: "failed", reason: `map incomplete: ${(check.json?.problems ?? []).join("; ")}` };
 const docPaths = docs.map((d) => `.planning/codebase/${d}.md`);
-const scan = await flow(["secrets", ...docPaths]);
-if (scan.code !== 0) return { status: "needs-owner", stage: "Map", reason: "possible secrets in the codebase map; nothing committed", findings: scan.json?.findings ?? [], options: ["remove them and rerun the check", "confirm they are not secrets"] };
+// The mechanical checks of the written docs: the doc check, then the secrets scan. Returns the stop result, or null when both pass.
+const checkDocs = async () => {
+  const check = await flow(["map-check", ...docs]);
+  if (check.code !== 0) return { status: "failed", reason: `map incomplete: ${(check.json?.problems ?? []).join("; ")}` };
+  const scan = await flow(["secrets", ...docPaths]);
+  if (scan.code !== 0) return { status: "needs-owner", stage: "Map", reason: "possible secrets in the codebase map; nothing committed", findings: scan.json?.findings ?? [], options: ["remove them and rerun the check", "confirm they are not secrets"] };
+  return null;
+};
+phase("Check");
+const checked = await checkDocs();
+if (checked) return checked;
+
+// Kit-feedback 43: one read-only reviewer per focus fact-checks its docs against the code (paths, symbols, behaviour, Known Bugs).
+// Its findings go back to that focus's mapper once; the docs are checked again and the group is reviewed again. Findings that
+// still stand are the owner's to decide, so nothing is stamped or committed.
+phase("Review");
+const reviewJob = async (j) => {
+  const prompt = [
+    `Focus: ${j.focus}. Fact-check ${j.docs.map((d) => `.planning/codebase/${d}.md`).join(" and ")} against this repository.`,
+    "Every concrete claim counts: file paths, symbols, commands, configuration keys, behaviour, counts, versions, and each Known Bug. Resolve each one in the code; do not trust the document's wording.",
+    "Return only JSON {focus, issues: [{doc, claim, problem (false|outdated|misleading), evidence, fix_hint}]}; an empty list when every claim holds.",
+  ].join("\n\n");
+  const opts = { label: `review-${j.focus}`, agentType: agentFor("map_reviewer", "gsd-map-reviewer"), role: "map_reviewer", readOnly: true, schema: REVIEW_SCHEMA };
+  let r = await call(prompt, opts);
+  if (!reviewed(r) && !fatal(r.reason)) r = await call(prompt, opts);
+  return r;
+};
+// A group whose reviewer gave no usable reply stops the run; the others report their open issues.
+const reviewGroups = async (list) => {
+  const replies = await parallel(list.map((j) => () => reviewJob(j)));
+  const silent = list.findIndex((_, i) => !reviewed(replies[i]));
+  if (silent >= 0) return { failed: `map review ${list[silent].focus} failed: ${replies[silent].reason ?? "no usable reply"}` };
+  return { open: list.map((j, i) => ({ job: j, issues: replies[i].result.issues })).filter((g) => g.issues.length) };
+};
+let review = await reviewGroups(jobs);
+if (review.failed) return { status: "failed", reason: review.failed };
+const fixed = review.open.map((g) => g.job.focus);
+if (review.open.length) {
+  const fixes = await parallel(review.open.map(({ job, issues }) => () => mapperCall(job, [
+    `Focus: ${job.focus}. The review found these problems in the docs you wrote (${job.docs.map((d) => `.planning/codebase/${d}.md`).join(" and ")}). Check each listed claim in the code again, correct it, and keep the rest of each document.`,
+    `Findings (JSON): ${JSON.stringify(issues)}`,
+    "Do not write last_mapped_commit or last_mapped_at. Never copy secrets, keys or tokens into a document. Do not commit.",
+    "Return only a confirmation JSON {focus, written: [paths]}, not the documents.",
+  ].join("\n\n"), `mapper-fix-${job.focus}`)));
+  const unfixed = review.open.findIndex(({ job }, i) => !confirmed(job, fixes[i]));
+  if (unfixed >= 0) {
+    const r = fixes[unfixed];
+    return { status: "failed", reason: `mapper ${review.open[unfixed].job.focus} failed to fix its review findings: ${r?.result ? "its confirmation does not name exactly its docs" : (r?.reason ?? "no reply")}` };
+  }
+  const rechecked = await checkDocs();
+  if (rechecked) return rechecked;
+  review = await reviewGroups(review.open.map((g) => g.job));
+  if (review.failed) return { status: "failed", reason: review.failed };
+}
+if (review.open.length) return needsOwner("Review", "the codebase map still has claims the code does not support after one fix round; nothing committed", { findings: review.open.flatMap(({ job, issues }) => issues.map((i) => ({ focus: job.focus, ...i }))), options: ["correct the listed claims by hand, then rerun the map", "rerun the map"] });
 
 phase("Stamp");
 const stampHead = (await flow(["head"])).json?.commit ?? null;
@@ -112,7 +170,7 @@ if (cfg.gsd.commit_policy.docs) {
   const c = await gsd(["commit", "docs: map codebase", "--files", ...docPaths]);
   if (c.code !== 0) log(`warning: docs commit failed: ${c.json?.error ?? c.code}`);
 }
-return { status: "mapped", docs: docPaths, commit: stamp.json.commit, paths };
+return { status: "mapped", docs: docPaths, commit: stamp.json.commit, paths, review: { checked: jobs.map((j) => j.focus), fixed } };
 } finally {
   await flow(["unlock", "codebase-map", lease.json.token]);
 }

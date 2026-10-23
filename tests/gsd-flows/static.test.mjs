@@ -64,7 +64,7 @@ test("GSDF-03 scripts read no clock or randomness, share one verb helper and onl
 });
 
 test("GSDF-04 scripts and skills name only roster agents; a shipped agent dir matches the roster", () => {
-  const ROSTER = ["gsd-planner", "gsd-plan-checker", "gsd-phase-researcher", "gsd-executor", "gsd-verifier", "gsd-debugger", "gsd-codebase-mapper", "gsd-project-researcher", "gsd-research-synthesizer", "gsd-roadmapper", "gsd-code-reviewer", "gsd-code-fixer", "gsd-skeleton-reviewer", "finding-verifier"];
+  const ROSTER = ["gsd-planner", "gsd-plan-checker", "gsd-phase-researcher", "gsd-executor", "gsd-verifier", "gsd-debugger", "gsd-codebase-mapper", "gsd-project-researcher", "gsd-research-synthesizer", "gsd-roadmapper", "gsd-code-reviewer", "gsd-code-fixer", "gsd-skeleton-reviewer", "gsd-map-reviewer", "finding-verifier"];
   for (const f of SCRIPTS) for (const m of read(path.join(WF, f)).matchAll(/"(gsd-[a-z-]+|finding-verifier)"/g)) {
     if (m[1].startsWith("gsd-") && SCRIPTS.includes(`${m[1]}.js`)) continue;
     assert.ok(ROSTER.includes(m[1]), `${f} names ${m[1]}`);

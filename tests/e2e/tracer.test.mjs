@@ -46,7 +46,7 @@ test("INST-01 PHCL-04 tracer: install, ph doctor, spawn/watch/result round and a
   assert.ok(lineMatching(doctor, /^ok default_tier standard -> circle-agent\/small/), doctor.text);
   assert.ok(lineMatching(doctor, /^ok main provider circle: Agent, Workflow disallowed/), doctor.text);
   assert.ok(lineMatching(doctor, /^ok gsd upstream check: 0 problems/), doctor.text);
-  assert.ok(lineMatching(doctor, /^ok agent types in \.agents\/agents\/ \(14\)/), doctor.text);
+  assert.ok(lineMatching(doctor, /^ok agent types in \.agents\/agents\/ \(15\)/), doctor.text);
 
   const spawn = await w.ph(["spawn", "--name", "a", "--prompt", "say ok"]);
   assert.equal(spawn.code, 0, spawn.text);

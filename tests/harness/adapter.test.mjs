@@ -147,7 +147,7 @@ test("ADPT-11 roles resolve per entry; the defaults name no concrete model id", 
   assert.deepEqual(k.gsd.roles, {});
   for (const t of Object.values(k.tiers)) assert.equal(t.provider, "");
   assert.ok(!JSON.stringify(k.gsd).match(/"[a-z-]+\/[\w.[\]-]+"/), "no provider/model in the gsd defaults");
-  assert.equal(GSD_ROLES.length, 20);
+  assert.equal(GSD_ROLES.length, 21);
   const cfg = loadConfig(makeTempProject({ git: false, overlay: { gsd: { roles: { checker: { model: "pro", reason: "deeper checks" }, custom_role: { effort: "low", reason: "r" } } } } }).root);
   assert.equal(cfg.gsd.roles.checker.model, "pro");
   assert.equal(cfg.gsd.roles.custom_role.effort, "low");

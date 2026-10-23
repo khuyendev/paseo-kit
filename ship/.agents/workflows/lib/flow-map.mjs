@@ -20,14 +20,36 @@ const SECRET_PATTERNS = [
   ["stripe-key", /\b(?:sk|rk)_live_[0-9A-Za-z]{20,}/],
 ];
 
+// Kit-feedback 41: each Known Bug entry of CONCERNS.md is `Status: verified` with the `Evidence:` of the command or test it ran,
+// or `Status: suspected`. Returns the titles of the entries that are neither.
+export function unverifiedBugs(text) {
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((l) => /^## Known Bugs\s*$/.test(l));
+  if (start < 0) return [];
+  const next = lines.findIndex((l, i) => i > start && /^## /.test(l));
+  const entries = [];
+  for (const line of lines.slice(start + 1, next < 0 ? undefined : next)) {
+    if (/^\*\*.+\*\*:?\s*$/.test(line)) entries.push({ title: line.replace(/\*/g, "").replace(/:\s*$/, "").trim(), body: [] });
+    else if (entries.length) entries[entries.length - 1].body.push(line);
+  }
+  const field = (body, key) => body.map((l) => /^\s*-\s*(\w+):\s*(.*)$/.exec(l)).find((m) => m?.[1].toLowerCase() === key)?.[2].trim() ?? "";
+  const judged = (body) => {
+    const status = field(body, "status");
+    return /^suspected\b/i.test(status) || (/^verified\b/i.test(status) && field(body, "evidence") !== "");
+  };
+  return entries.filter((e) => !judged(e.body)).map((e) => e.title);
+}
+
 export function mapCheck(root, docs = MAP_DOCS) {
   const problems = [];
   for (const doc of docs) {
     const rel = `${MAP_DIR}/${doc}.md`;
     const abs = path.join(root, rel);
     if (!fs.existsSync(abs)) { problems.push(`${rel}: missing`); continue; }
-    const lines = readText(abs).split(/\r?\n/).length;
+    const text = readText(abs);
+    const lines = text.split(/\r?\n/).length;
     if (lines < MIN_LINES) problems.push(`${rel}: ${lines} lines < ${MIN_LINES}`);
+    if (doc === "CONCERNS") for (const title of unverifiedBugs(text)) problems.push(`${rel}: Known Bug "${title}" is neither verified (with its Evidence) nor suspected`);
   }
   return { ok: problems.length === 0, problems, code: problems.length ? 1 : 0 };
 }

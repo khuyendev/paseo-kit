@@ -13,6 +13,7 @@ const named = (focus) => FOCUS[focus].map((d) => `.planning/codebase/${d}.md`);
 
 // A mapper that rewrites and confirms its docs; `bad` gives a focus the reply it should not have.
 const mapper = (w, bad = {}) => (p, o) => {
+  if (o.label.startsWith("review-")) return { issues: [] };
   const focus = o.label.replace("mapper-", "");
   if (bad[focus]) return bad[focus];
   for (const d of FOCUS[focus]) w.write(`.planning/codebase/${d}.md`, `# ${d}\n${body(25)}\nrevised\n`);
@@ -66,7 +67,7 @@ test("G117 map-codebase: a non-fatal miss is retried once and the run still maps
     return (p, o) => (o.label === "mapper-tech" && tries++ === 0 ? NULL("no reply within 3600 s") : inner(p, o));
   });
   assert.equal(r.result.status, "mapped");
-  assert.equal(r.calls.length, 5);
+  assert.equal(r.calls.filter((c) => c.opts.label.startsWith("mapper-")).length, 5);
   assert.match(w.read(".planning/codebase/TESTING.md"), /^---\nlast_mapped_commit: [0-9a-f]{40}\n/);
 });
 

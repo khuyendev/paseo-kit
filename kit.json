@@ -7,6 +7,7 @@
     ".agents/agents/gsd-code-reviewer.md",
     ".agents/agents/gsd-codebase-mapper.md",
     ".agents/agents/gsd-debugger.md",
+    ".agents/agents/gsd-map-reviewer.md",
     ".agents/agents/gsd-executor.md",
     ".agents/agents/gsd-phase-researcher.md",
     ".agents/agents/gsd-plan-checker.md",

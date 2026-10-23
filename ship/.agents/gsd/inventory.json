@@ -608,6 +608,13 @@
       "overlay": null
     },
     {
+      "installed": ".agents/agents/gsd-map-reviewer.md",
+      "kind": "agent",
+      "source": "kit-authored",
+      "transformations": [],
+      "overlay": null
+    },
+    {
       "installed": ".agents/agents/finding-verifier.md",
       "kind": "agent",
       "source": "kit-authored",

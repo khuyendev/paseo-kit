@@ -15,7 +15,7 @@ export const THINKING_LEVELS = Object.freeze(["off", "low", "medium", "high", "x
 export const GSD_ROLES = Object.freeze([
   "research", "project_researcher", "synthesizer", "outline", "planner", "checker", "skeleton_lane", "architect",
   "plan_finder", "plan_verifier", "plan_judge", "plan_editor", "executor", "reviewer", "finding_verifier", "fixer",
-  "verifier", "mapper", "roadmapper", "debugger",
+  "verifier", "mapper", "map_reviewer", "roadmapper", "debugger",
 ]);
 
 const MODEL_ID = /^[^/]+\/.+$/;
