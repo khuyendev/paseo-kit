@@ -179,9 +179,12 @@ export const verbHandlers = {
   },
   "outline.parse": { usage: "ph gsd outline.parse <phase>", options: {}, run: (g, a) => outlineParseVerb(g, phaseOf(g, a)) },
   "outline.check": {
-    usage: "ph gsd outline.check <phase> [--tracer <bool>] [--plans-per-phase <n>] [--waves-per-phase <n>]",
-    options: { tracer: "string", "plans-per-phase": "string", "waves-per-phase": "string" },
-    run: (g, a, o) => outlineCheck(g, phaseOf(g, a), { tracer: bool(o.tracer, true), plansPerPhase: Number(o["plans-per-phase"]) || undefined, wavesPerPhase: Number(o["waves-per-phase"]) || undefined }),
+    usage: "ph gsd outline.check <phase> [--tracer <bool>] [--plans-per-phase <n>] [--waves-per-phase <n>] [--files-per-plan error|warn]",
+    options: { tracer: "string", "plans-per-phase": "string", "waves-per-phase": "string", "files-per-plan": "string" },
+    run: (g, a, o) => {
+      if (o["files-per-plan"] !== undefined && !["error", "warn"].includes(o["files-per-plan"])) throw fail("--files-per-plan takes error or warn");
+      return outlineCheck(g, phaseOf(g, a), { tracer: bool(o.tracer, true), plansPerPhase: Number(o["plans-per-phase"]) || undefined, wavesPerPhase: Number(o["waves-per-phase"]) || undefined, filesPerPlan: o["files-per-plan"] });
+    },
   },
   waves: { usage: "ph gsd waves <phase> [--plans <ids>]", options: { plans: "string" }, run: (g, a, o) => wavesVerb(g, phaseOf(g, a), subset(o, phaseOf(g, a))) },
   handoff: { usage: "ph gsd handoff <phase> [--plans <ids>] [--prefix <text>] [--no-tracer-split]", options: { plans: "string", prefix: "string", "no-tracer-split": "bool" }, run: (g, a, o) => handoff(g, phaseOf(g, a), { subset: subset(o, phaseOf(g, a)), prefix: o.prefix, noTracerSplit: o["no-tracer-split"] === true }) },

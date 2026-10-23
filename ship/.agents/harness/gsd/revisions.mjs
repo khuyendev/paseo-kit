@@ -9,13 +9,23 @@ import { done, fail, none, nowIso, readIf, rel, withFileLock } from "./common.mj
 import { loadAgentDef } from "../runtime/agents.mjs";
 import { isInside } from "../lib/paths.mjs";
 import { headOf } from "./git.mjs";
-import { phaseFile, planPath, planIds } from "./planning.mjs";
+import { phaseFile, planPath, planIds, readPlan } from "./planning.mjs";
 import { loadRequirements } from "./requirements.mjs";
 import { loadRoadmap, roadmapPhase, sectionContent } from "./roadmap.mjs";
 
 const RESEARCHER = "gsd-phase-researcher";
 export const RESEARCH_FRAGMENT = ".agents/gsd/upstream/capabilities/research/fragments/plan-pre.md";
-export const FIXED_KEYS = new Set(["research", "inputs", "freeze", "skeleton", "plans", "checked", "handoff"]);
+export const FIXED_KEYS = new Set(["research", "inputs", "freeze", "skeleton", "plans", "checked", "checkedbody", "handoff"]);
+
+// Kit feedback 76: a plan's content without the write sets (`owns`, `files_modified`), so a recheck can tell an edit of the write sets from an
+// edit of what the plan says. A plan whose frontmatter does not parse is its whole text.
+function planContent(phase, id) {
+  const p = readPlan(phase, id);
+  if (!p) return null;
+  if (p.error) return p.text;
+  const { owns, files_modified, ...rest } = p.fm;
+  return JSON.stringify([rest, p.body]);
+}
 
 // An agent's effective role text: its definition plus every include, resolved as prompt assembly resolves
 // them, so an edited or added include changes the research revision (INV-22). A definition that does not load
@@ -85,9 +95,10 @@ export function keyFiles(g, phase, key) {
   if (key === "freeze") return freeze();
   if (key === "skeleton") return skeleton();
   if (key === "plans" || key === "checked" || key === "handoff") return allPlans();
+  if (key === "checkedbody") return [...freeze(), ...planIds(phase).map((id) => ({ label: rel(g.codeRoot, planPath(phase, id)), text: planContent(phase, id) }))];
   const m = /^plan:(.+)$/.exec(key);
   if (m) return [...freeze(), code(rel(g.codeRoot, planPath(phase, m[1])))];
-  throw fail(`unknown revisions key ${key} (research, inputs, freeze, skeleton, plan:<id>, plans, checked, handoff)`);
+  throw fail(`unknown revisions key ${key} (research, inputs, freeze, skeleton, plan:<id>, plans, checked, checkedbody, handoff)`);
 }
 
 function digestOf(entry) {

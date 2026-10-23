@@ -78,6 +78,9 @@ const ISSUE = { type: "object", properties: { plan: { type: ["string", "null"] }
 const ISSUES_SCHEMA = { type: "object", properties: { issues: { type: "array", items: ISSUE } }, required: ["issues"] };
 const RESOLUTION_SCHEMA = { type: "object", properties: { resolved: { type: "array", items: { type: "object", properties: { id: { type: "string" }, evidence: { type: "string" } }, required: ["id"] } } }, required: ["resolved"] };
 const CHECKER_SCHEMA = { type: "object", properties: { issues: { type: "array", items: ISSUE }, resolved: RESOLUTION_SCHEMA.properties.resolved }, required: ["issues"] };
+// Kit feedback 69: with gsd.checker_reallocate the checker names, per issue, whether the fix is a revision or a new allocation.
+const OUTCOME_ISSUE = { ...ISSUE, properties: { ...ISSUE.properties, outcome: { type: "string", enum: ["revise", "reallocate"] } } };
+const CHECKER_SCHEMA_REALLOC = { ...CHECKER_SCHEMA, properties: { ...CHECKER_SCHEMA.properties, issues: { type: "array", items: OUTCOME_ISSUE } } };
 const ARCHITECT_SCHEMA = { type: "object", properties: { status: { type: "string", enum: ["complete", "conflict"] }, sharedChanges: { type: "array" }, outlineChanges: { type: "array" }, conflicts: { type: "array" } }, required: ["status"] };
 
 // ---- arguments (GSDF-15): every check runs before the first agent ----
@@ -96,6 +99,9 @@ const wiringMode = a.wiring ?? "auto";
 const planReview = a.planReview ?? g.plan_review;
 // O65 (kit-feedback 65): `staged` runs every plan through each stage together; `streams` gives each plan its own review stream.
 const planFlow = a.planFlow ?? g.plan_flow ?? "staged";
+// Kit feedback 69, 76: reallocation rounds the checker may send plans back to the outline (staged flow, plan mode only), and the recheck scope.
+const reallocRounds = planFlow === "staged" && mode === "plan" ? g.checker_reallocate ?? 0 : 0;
+const recheckMode = mode === "plan" ? g.checker_recheck ?? "full" : "full";
 const roleOverrides = a.roles ?? {};
 if (!["plan", "gaps"].includes(mode)) return { status: "failed", reason: `mode must be plan or gaps, not ${mode}` };
 if (!isInt13(maxSkeletonPasses)) return { status: "failed", reason: `maxSkeletonPasses must be an integer 1..3, not ${maxSkeletonPasses}` };
@@ -104,6 +110,9 @@ if (!Array.isArray(lanesArg) || !lanesArg.length || lanesArg.some((l) => typeof 
 if (!["auto", "always", "never"].includes(wiringMode)) return { status: "failed", reason: `wiring must be auto, always or never, not ${wiringMode}` };
 if (!["staged", "streams"].includes(planFlow)) return { status: "failed", reason: `planFlow must be staged or streams, not ${planFlow}` };
 if (a.forceProceed !== undefined && !String(a.forceProceed?.reason ?? "").trim()) return { status: "failed", reason: "forceProceed needs a non-empty reason" };
+// Kit feedback 71: forceProceed.issues names the checker issues the owner accepts; without it every issue still stuck is accepted.
+const forcedIssues = a.forceProceed?.issues ?? null;
+if (forcedIssues !== null && (!Array.isArray(forcedIssues) || !forcedIssues.length || forcedIssues.some((i) => !i || typeof i !== "object" || !(i.plan === null || (typeof i.plan === "string" && i.plan.trim())) || typeof i.dimension !== "string" || !i.dimension.trim()))) return { status: "failed", reason: "forceProceed.issues needs a non-empty list of {plan (a plan id, null for a phase-level issue), dimension}" };
 if (a.reviewGuidance !== undefined && (typeof a.reviewGuidance !== "string" || !a.reviewGuidance.trim())) return { status: "failed", reason: "reviewGuidance needs non-empty text" };
 if (a.skipResearch && typeof a.researchSkipReason !== "string") return needsOwner("Research", "skipResearch needs a researchSkipReason");
 const N = phaseNumber(phaseDir);
@@ -146,7 +155,10 @@ const dependents = [];
 let handEdits = null;
 // Kit feedback 70: what the validation strategy step did ({status, path}), returned with every result once it ran.
 let validationReport = null;
-const result = (status, extra = {}) => ({ status, phaseDir, mode, warnings, advisories, ...(flowReport ?? {}), ...(handEdits ? { handEdits } : {}), ...(validationReport ? { validation: validationReport } : {}), ...extra });
+// Kit feedback 69, 76: what the checker stage did beyond the plain loop: the plans it sent back to the outline and the scope of an incremental recheck.
+const reallocated = [];
+let recheckReport = null;
+const result = (status, extra = {}) => ({ status, phaseDir, mode, warnings, advisories, ...(flowReport ?? {}), ...(handEdits ? { handEdits } : {}), ...(validationReport ? { validation: validationReport } : {}), ...(reallocated.length ? { reallocated } : {}), ...(recheckReport ? { recheck: recheckReport } : {}), ...extra });
 const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reason, ...extra });
 // G017: the effective settings each gated judgment reads, hashed into its revision key (`--settings`). A changed lane,
 // role or limit reruns the judgments it decides; each key takes only the settings its own judgments read. The inputs
@@ -160,7 +172,7 @@ const tracerExtraFiles = g.tracer_extra_files;
 const settingsOf = {
   freeze: { lanes: lanes.map((l) => ({ lens: l.lens, text: lensText(l.lens), model: l.model ?? null, effort: l.effort ?? null })), skeleton_lane: roleOf("skeleton_lane"), tracer, maxSkeletonPasses },
   plan: { ...planning, planner: roleOf("planner") },
-  checked: { ...planning, checker: roleOf("checker"), maxCheckIterations, ...(tracerExtraFiles ? { tracerExtraFiles } : {}) },
+  checked: { ...planning, checker: roleOf("checker"), maxCheckIterations, ...(tracerExtraFiles ? { tracerExtraFiles } : {}), ...(g.files_per_plan ? { filesPerPlan: g.files_per_plan } : {}), ...(reallocRounds ? { reallocRounds } : {}) },
 };
 const settingsDigest = {};
 for (const [key, value] of Object.entries(settingsOf)) settingsDigest[key] = await sha(JSON.stringify(value));
@@ -307,6 +319,10 @@ const depLedger = checkerLedger("D");
 const sharedChanges = [];
 // F40 (kit-feedback 40): the plans a planner wrote in this run; forceProceed does not accept them in the run that wrote them.
 const plansPlanned = new Set();
+// Kit feedback 71: the checker issues forceProceed.issues named and that occurred, taken out of the blockers instead of revised.
+const acceptedSeen = [];
+// Kit feedback 69: reallocation rounds still open to this run.
+let reallocLeft = reallocRounds;
 // Digest line of plan and checker prompts: the freeze hash, or the verification report in gap mode.
 let freezeHash = "none";
 
@@ -342,7 +358,10 @@ if (mode === "gaps") return await gapMode();
 phase("Outline");
 // The writer runs the same check the gate runs (G027), so a deterministic outline failure is repaired in its own turn.
 const outlineCheckArgs = ["outline", "check", N, ...(tracer ? [] : ["--tracer", "false"])];
-const outlineCheck = async () => gsd(outlineCheckArgs);
+// Kit feedback 69: the check holds a plan whose owns reach the Files/plan blocker line as an error, so the outline writer reallocates it
+// in its own turn; an outline reused from an earlier run was reviewed and may have plans, so this run's first check only warns.
+let outlineFilesMode = "error";
+const outlineCheck = async () => gsd([...outlineCheckArgs, ...(outlineFilesMode === "warn" ? ["--files-per-plan", "warn"] : [])]);
 async function fixOutline(turns, stage) {
   let check = await outlineCheck();
   for (let t = 0; check.code !== 0 && t < turns; t++) {
@@ -382,7 +401,9 @@ if (parsed.json?.complete && inputsSame && !a.replan) {
   if (beforeSha && afterSha === beforeSha) return result("failed", { reason: `outline regeneration ${r === null ? "returned nothing" : "left the old outline unchanged"} after an input change` });
   if (!after.json?.complete) return r === null ? failedCall("outline planner", reason) : owner("Outline", "outline has no `## OUTLINE COMPLETE` marker", { options: ["rerun", "adjust CONTEXT", "abandon"] });
 }
+outlineFilesMode = outlineReused ? "warn" : "error";
 const fixed = await fixOutline(2, "Outline");
+outlineFilesMode = "error";
 if (fixed.stop) return fixed.stop;
 let outline = fixed.check.json;
 if (!outlineReused || !inputsSame) await gsd(["revisions", "record", phaseDir, "inputs"]);
@@ -436,6 +457,8 @@ const hasEdges = (o) => Boolean(o?.needsWiring || (o?.crossPlan ?? []).length);
 const openIssues = () => [...issues.values()].filter((i) => i.state === "open");
 const openBlockers = () => openIssues().filter((i) => i.severity === "blocker");
 let laneSeq = 0;
+// Kit feedback 69: set while the skeleton is reviewed again after the checker reallocated plans: the plans that changed.
+let skeletonFocus = null;
 // The issues a lane reviewer raised, not the ones the flow added (architect outline changes, new cross-plan edges).
 const laneIssueIds = new Set();
 function addIssue(laneId, raw) {
@@ -457,6 +480,7 @@ async function reviewLane(lane) {
     `Review the skeleton of phase ${N}${roadmapPhase.goal ? ` (goal: ${roadmapPhase.goal})` : ""} read-only. Frozen snapshot: ${files.join(", ")}.`,
     `Requirement IDs: ${reqIds.join(", ") || "none"}. TRACER_MODE: ${tracer}.`,
     `Mechanical warnings: ${JSON.stringify(outline?.warnings ?? [])}. Cross-plan edges: ${JSON.stringify(outline?.crossPlan ?? [])}.`,
+    ...(skeletonFocus ? [`Reallocation: the plan checker sent ${skeletonFocus.named.join(", ")} back to the outline and the allocation of ${skeletonFocus.changed.join(", ")} changed (owned paths split or moved). The rest of the skeleton passed review before: judge the changed plans and the edges to and from them.`] : []),
     "Return JSON {issues: [{plan, dimension, severity (blocker|warning|info), required_property, description, evidence, fix_hint, target (outline|wiring|both)}]}; an empty list when the skeleton holds under this lens.",
     POLICY,
     digestLine("freeze", await skeletonDigest()),
@@ -610,7 +634,7 @@ if ((await gsd(["revisions", "check", phaseDir, "freeze", "--settings", settings
 
 // ---- per-plan planning (GSDF-24, GSDF-25, GSDF-34) ----
 phase("Plans");
-const frozen = (await gsd(["outline", "parse", N])).json ?? {};
+let frozen = (await gsd(["outline", "parse", N])).json ?? {};
 const rows = frozen.rows ?? outline?.rows ?? [];
 const planIds = rows.map((r) => r.id);
 const manifestOf = (id) => (frozen.manifest?.plans ?? []).find((p) => p.id === id) ?? { id };
@@ -624,22 +648,30 @@ const wiringQuotes = (id) => wiringText.split(/\r?\n/).filter((l) => l.includes(
 const notesPath = `${phaseDir}/plan-review-notes.json`;
 streamed = planFlow === "streams" ? await planStreams() : null;
 if (streamed?.stop) return streamed.stop;
-if (!streamed) for (const ids of wavesOf(rows)) {
-  const todo = [];
-  for (const id of ids) {
-    const same = (await gsd(["revisions", "check", phaseDir, `plan:${id}`, "--settings", settingsDigest.plan])).code === 0;
-    const st = !skeletonFresh && same ? await gsd(["verify", "plan-structure", planPath(id)]) : null;
-    if (st?.code === 0) {
-      setStructureWarnings(id, st.json?.warnings);
-      log(`plan ${id} kept: unchanged since recorded`);
-    } else todo.push(id);
+// Wave by wave, the plans without a valid record are written; returns the stop, or null. The checker's reallocation runs it again.
+async function stagedWaves() {
+  for (const ids of wavesOf(rows)) {
+    const todo = [];
+    for (const id of ids) {
+      const same = (await gsd(["revisions", "check", phaseDir, `plan:${id}`, "--settings", settingsDigest.plan])).code === 0;
+      const st = !skeletonFresh && same ? await gsd(["verify", "plan-structure", planPath(id)]) : null;
+      if (st?.code === 0) {
+        setStructureWarnings(id, st.json?.warnings);
+        log(`plan ${id} kept: unchanged since recorded`);
+      } else todo.push(id);
+    }
+    const outcomes = await parallel(todo.map((id) => () => planOne(id)));
+    // G015: the plans that finished are recorded before the batch stops, so a failed sibling does not drop them.
+    const recorded = await recordEach(todo.filter((_, i) => outcomes[i]?.ok), false);
+    const failed = outcomes.findIndex((o) => !o || o.stop);
+    if (failed >= 0) return outcomes[failed]?.stop ?? failedCall(`planner ${todo[failed]}`, null);
+    if (recorded) return recorded;
   }
-  const outcomes = await parallel(todo.map((id) => () => planOne(id)));
-  // G015: the plans that finished are recorded before the batch stops, so a failed sibling does not drop them.
-  const recorded = await recordEach(todo.filter((_, i) => outcomes[i]?.ok), false);
-  const failed = outcomes.findIndex((o) => !o || o.stop);
-  if (failed >= 0) return outcomes[failed]?.stop ?? failedCall(`planner ${todo[failed]}`, null);
-  if (recorded) return recorded;
+  return null;
+}
+if (!streamed) {
+  const stop = await stagedWaves();
+  if (stop) return stop;
 }
 // O65 (kit-feedback 65): the planner waves keep their order (GSDF-24), but each plan is structure-checked and recorded on its own
 // and its review stream (gsd-plan-review with `stream`) starts as soon as its planner returns, never waiting for the other
@@ -849,9 +881,21 @@ async function recordEach(ids, gapScoped) {
 
 // ---- checker loop (GSDF-26..28) ----
 phase("Checker");
-const checked = streamed ? await checkerJoin(planIds) : await checkerLoop(planIds, false);
+let checked = null;
+for (let again = 0; ; again++) {
+  checked = streamed ? await checkerJoin(planIds) : await checkerLoop(planIds, false, again ? `reallocated-${again}` : undefined);
+  if (!checked.reallocate) break;
+  // Kit feedback 69: plans the checker could only fix by a new allocation go back to the outline stage, then to the checker again.
+  phase("Outline");
+  const back = await reallocateStage(checked.reallocate);
+  if (back.stop) return back.stop;
+  phase("Checker");
+}
 if (checked.stop) return checked.stop;
-if (!checked.skipped) await gsd(["revisions", "record", phaseDir, "checked", "--settings", settingsDigest.checked]);
+if (!checked.skipped) {
+  await gsd(["revisions", "record", phaseDir, "checked", "--settings", settingsDigest.checked]);
+  if (recheckMode === "incremental") await gsd(["revisions", "record", phaseDir, "checkedbody"]);
+}
 docPaths.push(...planIds.map(planPath));
 
 // ---- optional plan review (GSDF-37) ----
@@ -888,20 +932,37 @@ async function countProbes(scopeIds, gapScoped) {
       found.push({ probe, plan: it.plan ?? null, severity: sev === "warning" ? "warning" : "blocker", description: typeof it === "string" ? it : it.detail ?? it.message ?? it.description ?? JSON.stringify(it) });
     }
   }
+  if (reallocRounds && !gapScoped) found.push(...filesPerPlanProbes(runs[2][1].json));
   return found;
+}
+// Kit feedback 69: the Files/plan lines judged here, not by the checker agent, when plans may be sent back to the outline: a plan at the
+// blocker line is a blocker whose only fix is a new allocation (outcome reallocate).
+function filesPerPlanProbes(owns) {
+  const lines = owns?.files_per_plan;
+  if (!lines) return [];
+  const out = [];
+  for (const p of owns.plans ?? []) {
+    const n = (p.files_modified ?? []).length;
+    const more = p.tracer ? tracerExtraFiles : 0;
+    if (n >= lines.blocker + more) out.push({ probe: "files-per-plan", plan: p.id, severity: "blocker", outcome: "reallocate", description: `${p.id} lists ${n} files in files_modified, blocker at ${lines.blocker + more}+ (its owned paths need a new allocation in the outline)` });
+    else if (n >= lines.warning + more) out.push({ probe: "files-per-plan", plan: p.id, severity: "warning", description: `${p.id} lists ${n} files in files_modified, warning at ${lines.warning + more}+` });
+  }
+  return out;
 }
 // One fresh read-only checker over the plans `live` (GSDF-26), with the probe file and the still-open blockers `earlier`;
 // a null reply is retried once. In the streams flow the carried warnings are sorted, so the order in which the plan streams
 // finished does not change the prompt a resumed run replays.
-async function checkerCall(iter, live, scopeIds, gapScoped, probeFile, earlier) {
+async function checkerCall(iter, live, scopeIds, gapScoped, probeFile, earlier, judged = scopeIds) {
   const carriedText = streamed ? [...warnings].sort() : warnings;
+  const sendBack = reallocRounds > 0 && !gapScoped;
   // The Files/plan thresholds grow with the phase's files, so the checker judges them against this phase's plans.
-  const filesPerPlan = (await gsd(["check", "owns", N])).json?.files_per_plan;
+  const filesPerPlan = sendBack ? null : (await gsd(["check", "owns", N])).json?.files_per_plan;
   const prompt = [
     `Check the plans of phase ${N} read-only: ${live.map(planPath).join(", ")}.`,
     planningContext(gapScoped ? "gap_closure" : "standard"),
     filesPerPlan ? `Files per plan: warning at ${filesPerPlan.warning}+, blocker at ${filesPerPlan.blocker}+ (use these for the Files/plan thresholds).` : "",
     filesPerPlan && tracerExtraFiles ? `Tracer files per plan (a plan with a type="tracer" task): warning at ${filesPerPlan.warning + tracerExtraFiles}+, blocker at ${filesPerPlan.blocker + tracerExtraFiles}+.` : "",
+    sendBack ? `Files per plan is judged by a deterministic probe (${probeFile}): do not raise a Files/plan issue. Give an issue "outcome": "reallocate" only when its only fix is a different split of the owned paths between plans (the plan's owns, which a revision of the plan cannot change); every other issue has outcome "revise".` : "",
     `Deterministic probe results are in ${probeFile}: they are already counted; do not re-derive them, do not repeat them as issues.`,
     carriedText.length ? `Carried warnings:\n${carriedText.map((w) => `- ${w}`).join("\n")}` : "",
     earlier.length ? `Blockers from earlier checker iterations, still open? Judge each against the plans as they are now. Repeat it in issues (same plan, dimension and required_property) while it holds; list its id in resolved, with evidence, once it is fixed. An id you do not list stays open.\n${JSON.stringify(earlier.map(({ id, plan, dimension, required_property, description, fix_hint }) => ({ id, plan, dimension, required_property, description, fix_hint })))}` : "",
@@ -911,7 +972,7 @@ async function checkerCall(iter, live, scopeIds, gapScoped, probeFile, earlier) 
     // The checker judges PLAN contents, which the freeze key does not cover (CR-GSF-19).
     digestLine("checked", (await gsd(["revisions", "hash", phaseDir, "checked", "--settings", settingsDigest.checked])).json?.hash ?? "none"),
   ].filter(Boolean).join("\n\n");
-  const opts = { label: `checker-${iter}`, agentType: agentFor("checker", "gsd-plan-checker"), readOnly: true, schema: CHECKER_SCHEMA, judges: await plansJudges(scopeIds), ...roleOpts("checker") };
+  const opts = { label: `checker-${iter}`, agentType: agentFor("checker", "gsd-plan-checker"), readOnly: true, schema: sendBack ? CHECKER_SCHEMA_REALLOC : CHECKER_SCHEMA, judges: await plansJudges(judged), ...roleOpts("checker") };
   let c = await call(prompt, opts);
   if (c.result === null && !fatal(c.reason)) c = await call(prompt, opts);
   return c;
@@ -926,12 +987,13 @@ function checkerFindings(c) {
   return out;
 }
 // Kit feedback 64: the checker's findings are recorded when the loop ends (pass, stop or failure), if a checker ran.
-async function checkerLoop(scopeIds, gapScoped) {
+// Kit feedback 69: a checker that ran after a reallocation is its own record (`part`), the first one is kept.
+async function checkerLoop(scopeIds, gapScoped, part) {
   const ledger = checkerLedger("K");
   try {
     return await checkerRounds(scopeIds, gapScoped, ledger);
   } finally {
-    if (ledger.ran) await prereview("checker", ledger.findings());
+    if (ledger.ran) await prereview("checker", ledger.findings(), part);
   }
 }
 async function checkerRounds(scopeIds, gapScoped, ledger) {
@@ -939,6 +1001,9 @@ async function checkerRounds(scopeIds, gapScoped, ledger) {
     log("checker skipped: plans unchanged since the last passing check");
     return { skipped: true };
   }
+  // Kit feedback 76: after a plan edit the checker agent judges the changed plans and the plans linked to them (null = all plans).
+  const scope = gapScoped ? null : await recheckScope(scopeIds);
+  let agentScope = scope ? scope.agent : scopeIds;
   // The cap and the stall test count per plan (kit-feedback 9): a plan that stops converging leaves the loop as stuck, and
   // the other plans keep being checked and revised until they pass or get stuck too. Blockers with no plan use key null.
   const tally = new Map(); // key -> { rounds, prev }
@@ -951,14 +1016,20 @@ async function checkerRounds(scopeIds, gapScoped, ledger) {
   // "still open?" and leave the count only when a checker lists their id in `resolved`, never because a checker went silent.
   let pending = [];
   for (let iter = 1; ; iter++) {
-    const live = scopeIds.filter((id) => !stuck.has(id));
+    const live = scopeIds.filter((id) => !stuck.has(id) && agentScope.includes(id));
     const probeIssues = await countProbes(scopeIds, gapScoped);
     const probeFile = `${phaseDir}/checker-probes.json`;
     await flow(["write", probeFile], JSON.stringify({ iteration: iter, probes: probeIssues }, null, 2));
+    // Kit feedback 69: a probe that says reallocate ends the round before the checker agent is paid for.
+    const sendBack = reallocLeft > 0 ? takeAccepted(probeIssues.filter((i) => wantsReallocation(i, scopeIds)), scopeIds) : [];
+    if (sendBack.length) return { reallocate: sendBack };
     const earlier = pending.filter((i) => !stuck.has(keyOf(i))).map((i, n) => ({ ...i, id: `open-${n + 1}` }));
-    ledger.ran = true;
-    const c = await checkerCall(iter, live, scopeIds, gapScoped, probeFile, earlier);
-    if (c.result === null) return { stop: failedCall("plan checker", c.reason) };
+    let c = { result: { issues: [], resolved: [] } };
+    if (!scope || live.length || earlier.length) {
+      ledger.ran = true;
+      c = await checkerCall(iter, live, scopeIds, gapScoped, probeFile, earlier, scope ? agentScope : scopeIds);
+      if (c.result === null) return { stop: failedCall("plan checker", c.reason) };
+    } else log(`checker iteration ${iter}: no plan for the checker agent (a write-set edit only); the probes ran on all ${scopeIds.length} plans`);
     const confirmed = new Set((c.result.resolved ?? []).map((r) => r.id));
     const kept = earlier.filter((i) => !confirmed.has(i.id));
     // An open blocker has one open ledger entry with its plan, dimension and invariant, so the lookup needs no id on the issue.
@@ -967,12 +1038,15 @@ async function checkerRounds(scopeIds, gapScoped, ledger) {
     const checkerIssues = checkerFindings(c);
     // A still-open blocker the checker repeats is the same issue: the repeat replaces the carried copy, so it is counted once.
     const fresh = checkerIssues.filter((i) => i.severity === "blocker");
-    pending = [...kept.filter((k) => !fresh.some((f) => sameIssue(k, f))), ...fresh];
+    // Kit feedback 71: a blocker forceProceed names is accepted, never counted, revised or carried.
+    pending = takeAccepted([...kept.filter((k) => !fresh.some((f) => sameIssue(k, f))), ...fresh], scopeIds);
     // Only blockers drive the stall test, the cap and the revisions; warnings are carried into the result (kit-feedback 13, 20).
     const all = [...checkerIssues, ...probeIssues];
-    const blockers = [...pending, ...probeIssues.filter((i) => i.severity === "blocker")];
+    const blockers = [...pending, ...takeAccepted(probeIssues.filter((i) => i.severity === "blocker"), scopeIds)];
     const carried = all.filter((i) => i.severity === "warning");
     log(`checker iteration ${iter}: ${checkerIssues.length} checker + ${probeIssues.length} probe issues, ${blockers.length} blockers (${earlier.length - kept.length} of ${earlier.length} earlier blockers confirmed resolved)`);
+    const reallocate = reallocLeft > 0 ? blockers.filter((i) => wantsReallocation(i, scopeIds)) : [];
+    if (reallocate.length) return { reallocate };
     for (const key of [...live, null]) {
       if (!stuck.has(key)) carriedBy.set(key, carried.filter((w) => keyOf(w) === key).map((w) => `checker${w.plan ? ` (${w.plan})` : ""}: ${w.description}`));
     }
@@ -1006,6 +1080,7 @@ async function checkerRounds(scopeIds, gapScoped, ledger) {
     // A revision that returned nothing or stopped for an owner is never recorded as revised (G008).
     const answered = perPlan.filter((_, i) => revised[i] && revised[i].result !== null && !ownerMarker(revised[i].result)).map(([id]) => id);
     const stop = await recordEach(answered, gapScoped);
+    if (scope) agentScope = [...new Set([...agentScope, ...answered, ...(await linkedPlans(answered, scopeIds))])];
     // kit-feedback 37: a REVISION_CONFLICT on one plan does not skip the phase-level issues. Their revision still runs, and the
     // conflict stops the loop after it, so the owner's answer reruns a phase whose other revisions are recorded.
     const owned = revised.find((r) => ownerMarker(r?.result));
@@ -1021,6 +1096,7 @@ async function checkerRounds(scopeIds, gapScoped, ledger) {
       if (ownerMarker(r.result)) return { stop: conflict ?? ownerStop("Checker", r.result) };
       if (r.result === null) return { stop: conflict ?? failedCall(`phase-level planner revision (checker iteration ${iter})`, r.reason) };
       // The phase-level revision can change any plan, so every plan is checked and recorded again.
+      agentScope = scopeIds;
       const s = await recordEach(scopeIds, gapScoped);
       if (s) return { stop: conflict ?? s };
     }
@@ -1030,26 +1106,162 @@ async function checkerRounds(scopeIds, gapScoped, ledger) {
   return settleStuck(stuck, scopeIds);
 }
 // The end of a checker loop or join: passed, or the stuck plans as a needs-owner stop or a forceProceed override (GSDF-28).
+// Kit feedback 71: `forceProceed {reason, issues}` accepts only the issues it names ({plan, dimension}); they are taken out of the blockers
+// of every round, so the cap and stall tests never count them and no reviser is asked for what the owner accepted. `{reason}` alone keeps
+// its meaning: every issue still stuck at the end is accepted. A probe's dimension is its name.
+function dimensionOf(i) { return String(i.dimension || i.probe || "").trim().toLowerCase(); }
+function takeAccepted(list, scopeIds) {
+  if (!forcedIssues) return list;
+  return list.filter((i) => {
+    if (i.severity !== "blocker") return true;
+    const plan = i.plan && scopeIds.includes(i.plan) ? i.plan : null;
+    if (!forcedIssues.some((f) => f.plan === plan && f.dimension.trim().toLowerCase() === dimensionOf(i))) return true;
+    if (!acceptedSeen.some((x) => x.plan === plan && x.dimension === dimensionOf(i) && x.description === (i.description ?? ""))) acceptedSeen.push({ plan, dimension: dimensionOf(i), description: i.description ?? "" });
+    return false;
+  });
+}
+function wantsReallocation(i, scopeIds) { return i.outcome === "reallocate" && i.severity === "blocker" && Boolean(i.plan) && scopeIds.includes(i.plan); }
 async function settleStuck(stuck, scopeIds) {
-  if (!stuck.size) return { passed: true };
+  if (!stuck.size && !acceptedSeen.length) return { passed: true };
   const why = [...stuck.values()].map((s) => s.why).join("; ");
   const remaining = [...stuck.values()].flatMap((s) => s.issues);
-  if (a.forceProceed) {
-    // F40 (kit-feedback 40): forceProceed accepts the stuck plans unchecked, so it may not accept a plan this run planned (a planner
-    // call, e.g. a re-plan after the outline or skeleton changed). Checker revisions of plans the loop already checked do not count.
-    // A rerun accepts the stuck plan once it is kept and the checker judges it again.
-    const accepted = [...stuck.keys()].flatMap((key) => (key === null ? scopeIds : [key]));
-    const fresh = accepted.filter((id) => plansPlanned.has(id));
-    if (fresh.length) return { stop: owner("Checker", `forceProceed refused: ${fresh.join(", ")} written by a planner in this run; a rerun can accept them`, { issues: remaining, options: ["rerun with forceProceed {reason}", "give guidance and retry", "abandon"] }) };
-    const override = { reason: a.forceProceed.reason, why, remaining };
-    const saved = await gsd(["state", "override", "--phase", N], { reason: a.forceProceed.reason, issues: remaining.map((x) => `${x.plan ?? "phase"}: ${x.description}`) });
-    if (saved.code !== 0) return { stop: failedCall("state override failed", saved.json?.error ?? `exit ${saved.code}`) };
-    log(`override: ${why}; proceeding (${a.forceProceed.reason})`);
-    return { passed: true, override };
-  }
-  return { stop: owner("Checker", why, { issues: remaining, options: ["force proceed (rerun with forceProceed {reason})", "give guidance and retry", "abandon"] }) };
+  const listed = acceptedSeen.map(({ plan, dimension, description }) => ({ plan, dimension, description }));
+  if (stuck.size && !a.forceProceed) return { stop: owner("Checker", why, { issues: remaining, options: ["force proceed (rerun with forceProceed {reason})", "give guidance and retry", "abandon"] }) };
+  // The issues forceProceed {reason, issues} named do not cover a stuck one: the run stops with both lists.
+  if (stuck.size && forcedIssues) return { stop: owner("Checker", why, { issues: remaining, accepted: listed, options: ["rerun with forceProceed {reason, issues} naming these issues too (plan and dimension)", "give guidance and retry", "abandon"] }) };
+  const all = stuck.size > 0;
+  const accepted = all ? remaining.map((x) => ({ plan: x.plan ?? null, dimension: dimensionOf(x), description: x.description ?? "" })) : listed;
+  // F40 (kit-feedback 40): forceProceed accepts plans unchecked, so it may not accept a plan this run planned (a planner call, e.g. a
+  // re-plan after the outline or skeleton changed). Checker revisions of plans the loop already checked do not count.
+  // A rerun accepts the stuck plan once it is kept and the checker judges it again.
+  const plans = all ? [...stuck.keys()].flatMap((key) => (key === null ? scopeIds : [key])) : accepted.flatMap((x) => (x.plan === null ? scopeIds : [x.plan]));
+  const fresh = [...new Set(plans.filter((id) => plansPlanned.has(id)))];
+  if (fresh.length) return { stop: owner("Checker", `forceProceed refused: ${fresh.join(", ")} written by a planner in this run; a rerun can accept them`, { issues: all ? remaining : accepted, options: ["rerun with forceProceed {reason}", "give guidance and retry", "abandon"] }) };
+  const unused = (forcedIssues ?? []).filter((f) => !accepted.some((x) => x.plan === f.plan && x.dimension === f.dimension.trim().toLowerCase()));
+  const override = { reason: a.forceProceed.reason, mode: all ? "all" : "issues", why, remaining, accepted, ...(unused.length ? { unused } : {}) };
+  const line = (x) => `${x.plan ?? "phase"}${x.dimension ? ` [${x.dimension}]` : ""}: ${x.description}`;
+  const saved = await gsd(["state", "override", "--phase", N], { reason: a.forceProceed.reason, issues: accepted.map(line) });
+  if (saved.code !== 0) return { stop: failedCall("state override failed", saved.json?.error ?? `exit ${saved.code}`) };
+  if (all && !forcedIssues) warnings.push("forceProceed without issues accepted every issue still stuck; name them with forceProceed.issues [{plan, dimension}] to accept only those");
+  log(`override: ${why || `${accepted.length} accepted issues`}; proceeding (${a.forceProceed.reason})`);
+  return { passed: true, override };
 }
 
+// Kit feedback 76 F2 (gsd.checker_recheck incremental): after an edit of some plans the checker agent judges those plans and the plans
+// linked to them; every deterministic probe still runs on all plans. `revisions check checked` names the plan files that changed since the
+// last passing check, `checkedbody` those whose content (not their owns / files_modified) changed. Anything else that changed (outline,
+// manifest, wiring, settings, roadmap, a removed plan), a missing record or an unknown part list is a full check (null).
+async function recheckScope(scopeIds) {
+  if (recheckMode !== "incremental" || a.replan) return null;
+  const chk = await gsd(["revisions", "check", phaseDir, "checked", "--settings", settingsDigest.checked]);
+  const planOf = (label) => (label.startsWith(`${phaseDir}/`) && label.endsWith("-PLAN.md") && scopeIds.includes(label.slice(phaseDir.length + 1, -"-PLAN.md".length)) ? label.slice(phaseDir.length + 1, -"-PLAN.md".length) : null);
+  const labels = chk.json?.changed;
+  if (!Array.isArray(labels) || !labels.length) { log(`checker: full check (${chk.code === 66 ? "no earlier passing check" : "the changed parts are unknown"})`); return null; }
+  const other = labels.filter((l) => planOf(l) === null);
+  if (other.length) { log(`checker: full check (not a plan edit: ${other.join(", ")})`); return null; }
+  const changed = labels.map(planOf);
+  const body = await gsd(["revisions", "check", phaseDir, "checkedbody"]);
+  const bodyLabels = body.code === 66 || !Array.isArray(body.json?.changed) ? null : body.json.changed;
+  const bodyChanged = bodyLabels ? changed.filter((id) => bodyLabels.some((l) => planOf(l) === id)) : changed;
+  const linked = await linkedPlans(bodyChanged, scopeIds);
+  const agent = scopeIds.filter((id) => bodyChanged.includes(id) || linked.includes(id));
+  recheckReport = { mode: "incremental", changed, bodyChanged, linked, agent };
+  log(`checker: incremental recheck: changed ${changed.join(", ")}; content changed ${bodyChanged.join(", ") || "none"}; checker agent on ${agent.join(", ") || "no plan"}; probes on all ${scopeIds.length} plans`);
+  return { agent };
+}
+// The plans a plan edit can affect: depends_on in both directions, manifest consumes edges in both directions, and plans whose write set
+// (owns, files_modified) holds an endpoint of the other's must_haves.key_links.
+async function linkedPlans(ids, scopeIds) {
+  if (!ids.length) return [];
+  const linked = new Set();
+  for (const p of (await gsd(["phase-plan-index", N])).json?.plans ?? []) {
+    const deps = p.depends_on ?? [];
+    if (ids.includes(p.id)) deps.forEach((d) => linked.add(d));
+    else if (deps.some((d) => ids.includes(d))) linked.add(p.id);
+  }
+  for (const m of (await gsd(["outline", "parse", N])).json?.manifest?.plans ?? []) {
+    const from = (m.consumes ?? []).map((c) => String(c.plan));
+    if (ids.includes(String(m.id))) from.forEach((x) => linked.add(x));
+    else if (from.some((x) => ids.includes(x))) linked.add(String(m.id));
+  }
+  const pathOf = (x) => String(x).replace(/^[A-Za-z][\w-]*:(?!\/\/)/, "").split(/[\s#]/)[0].replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
+  const under = (file, entry) => entry !== "" && (file === entry || file.startsWith(`${entry}/`));
+  const ends = new Map();
+  const sets = new Map();
+  for (const id of scopeIds) {
+    const mh = (await gsd(["frontmatter", "get", planPath(id), "must_haves"])).json?.value ?? {};
+    ends.set(id, (mh.key_links ?? []).flatMap((l) => [l?.from, l?.to]).filter(Boolean).map(pathOf));
+    const written = (await gsd(["frontmatter", "get", planPath(id), "files_modified"])).json?.value ?? [];
+    sets.set(id, [...(await planOwns(id)), ...written].map(pathOf));
+  }
+  const reaches = (from, to) => ends.get(from).some((e) => sets.get(to).some((s) => under(e, s)));
+  for (const id of ids) for (const other of scopeIds) if (other !== id && (reaches(id, other) || reaches(other, id))) linked.add(other);
+  return scopeIds.filter((id) => linked.has(id) && !ids.includes(id));
+}
+
+// Kit feedback 69: plans the checker could fix only by a new allocation go back to the outline stage, for those plans only. The outline
+// writer changes their owns (the outline check holds the Files/plan lines, so a plan still too large is repaired in that turn), the
+// skeleton is reviewed again on the new allocation and recorded, plans that did not change keep their records, and the plans whose
+// allocation changed (and new ones) are written again; the caller then runs the checker again over the whole set.
+async function reallocateStage(sent) {
+  const round = reallocRounds - reallocLeft + 1;
+  reallocLeft--;
+  const named = [...new Set(sent.map((i) => i.plan))];
+  log(`checker: ${named.join(", ")} go back to the outline (reallocation ${round} of ${reallocRounds})`);
+  const entryOf = (o, id) => JSON.stringify([(o.manifest?.plans ?? []).find((p) => String(p.id) === id) ?? null, (o.rows ?? []).find((r) => r.id === id) ?? null]);
+  const before = (await gsd(["outline", "parse", N])).json ?? {};
+  const valid = [];
+  for (const id of planIds) if (!named.includes(id) && (await gsd(["revisions", "check", phaseDir, `plan:${id}`, "--settings", settingsDigest.plan])).code === 0) valid.push(id);
+  const lines = (await outlineCheck()).json?.files_per_plan;
+  const body = [
+    planningContext("revision"),
+    revisionContext([OUTLINE, MANIFEST], sent.map(({ plan, probe, dimension, description }) => ({ plan, dimension: dimension || probe || "", severity: "blocker", description }))),
+    `Reallocation ${round}: the plan checker sent ${named.join(", ")} back to the outline because ${named.length > 1 ? "their" : "its"} owned paths do not fit one plan${lines ? ` (plan size lines: warning at ${lines.warning}+, blocker at ${lines.blocker}+ files)` : ""}. Change only the allocation of ${named.join(", ")} in ${OUTLINE} and ${MANIFEST}: split a named plan into plans with their own ids (new ids after the last existing id, in a wave after the plans they depend on), or move owned paths to another plan that stays under the lines. Every other plan keeps its id, wave, owns, produces and consumes; keep requirement coverage, the tracer and the consumes edges valid, within ${g.plan_limits.plans_per_phase} plans and ${g.plan_limits.waves_per_phase} waves.`,
+    `Before you return, run \`node ${PH} gsd ${outlineCheckArgs.join(" ")}\` and repair every error it reports until it exits 0.`,
+  ].join("\n\n");
+  const { result: r, reason } = await plannerCall("planner:outline", `reallocate-${round}`, body, "inputs", await inputsDigest(), { judges: await outlineJudges() });
+  if (fatal(reason) || r === null) return { stop: failedCall("outline reallocation", reason) };
+  if (ownerMarker(r)) return { stop: ownerStop("Checker", r) };
+  const fixed = await fixOutline(2, "Checker");
+  if (fixed.stop) return fixed;
+  outline = fixed.check.json;
+  const after = (await gsd(["outline", "parse", N])).json ?? {};
+  const idsAfter = (after.rows ?? []).map((row) => row.id);
+  const changed = idsAfter.filter((id) => entryOf(before, id) !== entryOf(after, id));
+  const removed = planIds.filter((id) => !idsAfter.includes(id));
+  const unchanged = named.filter((id) => idsAfter.includes(id) && !changed.includes(id));
+  if (unchanged.length) return { stop: owner("Checker", `outline reallocation left ${unchanged.join(", ")} unchanged`, { issues: sent, options: ["give guidance and rerun", "rerun with forceProceed {reason, issues: [{plan, dimension: \"files-per-plan\"}]} to accept the size", "abandon"] }) };
+  planIds.splice(0, planIds.length, ...idsAfter);
+  rows.splice(0, rows.length, ...(after.rows ?? []));
+  frozen = after;
+  if (wiringInUse && (await wiringExists())) {
+    const w = await runArchitect(`architect-reallocate-${round}`, `Reallocation: the allocation of ${changed.join(", ")} changed in the outline; realign ${WIRING} with it.`);
+    if (w.stop) return w;
+    outlineChangeIssues = w.changes;
+  }
+  issues.clear();
+  passCounts.length = 0;
+  laneFailures.clear();
+  laneIssueIds.clear();
+  skeletonFocus = { named, changed };
+  const gate = await skeletonGate();
+  skeletonFocus = null;
+  await gsd(["write", phaseDir, "OUTLINE-REVIEW"], renderReview(gate));
+  await prereview("skeleton", skeletonFindings(gate), `reallocated-${round}`);
+  if (gate.status !== "passed") return { stop: gate.stop };
+  await gsd(["revisions", "record", phaseDir, "freeze", "--settings", settingsDigest.freeze]);
+  await gsd(["revisions", "record", phaseDir, "skeleton"]);
+  for (const f of [P("OUTLINE-REVIEW.md"), ...((await wiringExists()) ? [WIRING] : [])]) if (!docPaths.includes(f)) docPaths.push(f);
+  freezeHash = (await gsd(["revisions", "hash", phaseDir, "freeze", "--settings", settingsDigest.freeze])).json?.hash ?? "none";
+  const moved = await gsd(["supersede", phaseDir, "--keep", planIds.join(",")]);
+  for (const m of moved.json?.moved ?? []) log(`superseded ${typeof m === "string" ? m : m.from ?? JSON.stringify(m)}`);
+  // The outline moved the freeze key under every plan; the plans that were valid and whose allocation did not change are valid still.
+  for (const id of valid) if (idsAfter.includes(id) && !changed.includes(id)) await gsd(["revisions", "record", phaseDir, `plan:${id}`, "--settings", settingsDigest.plan]);
+  skeletonFresh = false;
+  reallocated.push({ round, plans: named, changed, removed, issues: sent.map(({ plan, probe, description }) => ({ plan, ...(probe ? { probe } : {}), description })) });
+  const stop = await stagedWaves();
+  return stop ? { stop } : { ok: true };
+}
 // O65 (kit-feedback 65): the streams flow's one join point. The checker reads the frozen set once, with the probes; each plan
 // it names gets its blockers back in its own route stream (revision, structure check, record, then this plan's probes and a
 // resolution check of only its checker blockers), all plans at once and none waiting for another, under the loop's per-plan
@@ -1070,16 +1282,21 @@ async function checkerJoinRounds(scopeIds, ledger) {
     return { skipped: true };
   }
   const probeFile = `${phaseDir}/checker-probes.json`;
-  const probes = await countProbes(scopeIds, false);
+  const probes = takeAccepted(await countProbes(scopeIds, false), scopeIds);
   await flow(["write", probeFile], JSON.stringify({ iteration: 1, probes }, null, 2));
-  ledger.ran = true;
-  const c = await checkerCall(1, scopeIds, scopeIds, false, probeFile, []);
-  if (c.result === null) return { stop: failedCall("plan checker", c.reason) };
+  // Kit feedback 76: the one checker call judges the changed plans and the plans linked to them (no call for a write-set edit only).
+  const scope = await recheckScope(scopeIds);
+  let c = { result: { issues: [], resolved: [] } };
+  if (!scope || scope.agent.length) {
+    ledger.ran = true;
+    c = await checkerCall(1, scope ? scope.agent : scopeIds, scopeIds, false, probeFile, [], scope ? scope.agent : scopeIds);
+    if (c.result === null) return { stop: failedCall("plan checker", c.reason) };
+  } else log("checker join: no plan for the checker agent (a write-set edit only); the probes ran on all plans");
   ledger.add(c.result.issues);
   const checkerIssues = checkerFindings(c);
   const keyOf = (i) => (i.plan && scopeIds.includes(i.plan) ? i.plan : null);
   const blockerOf = (list, key) => list.filter((i) => i.severity === "blocker" && keyOf(i) === key);
-  const found = checkerIssues.filter((i) => i.severity === "blocker").map((i, n) => ({ ...i, id: `K${n + 1}` }));
+  const found = takeAccepted(checkerIssues, scopeIds).filter((i) => i.severity === "blocker").map((i, n) => ({ ...i, id: `K${n + 1}` }));
   const carried = [...checkerIssues, ...probes].filter((i) => i.severity === "warning");
   const keys = [...new Set([...found, ...probes.filter((i) => i.severity === "blocker")].map(keyOf))];
   log(`checker join: ${checkerIssues.length} checker + ${probes.length} probe issues, blockers for ${keys.length ? keys.map((k) => k ?? "phase").join(", ") : "no plan"}`);
@@ -1127,7 +1344,7 @@ async function checkerJoinRounds(scopeIds, ledger) {
         for (const i of asked) if (resolved.has(i.id)) ledger.entryOf(i, "blocker").fate = "applied";
         still = asked.filter((i) => !resolved.has(i.id));
       }
-      open = [...still, ...blockerOf(await countProbes(scopeIds, false), key)];
+      open = [...still, ...blockerOf(takeAccepted(await countProbes(scopeIds, false), scopeIds), key)];
       log(`checker join: ${name} round ${round}: ${open.length} blockers open`);
       if (!open.length) return { passed: true };
     }
@@ -1156,7 +1373,7 @@ async function checkerJoinRounds(scopeIds, ledger) {
   const dep = await propagate(changed);
   if (dep) return { stop: dep };
   // The final probe pass sees every revision together; a probe blocker left over is stuck with its plan.
-  const last = await countProbes(scopeIds, false);
+  const last = takeAccepted(await countProbes(scopeIds, false), scopeIds);
   await flow(["write", probeFile], JSON.stringify({ iteration: "final", probes: last }, null, 2));
   for (const i of last.filter((x) => x.severity === "blocker")) {
     const k = keyOf(i);
