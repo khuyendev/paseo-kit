@@ -128,7 +128,16 @@ function writeRunStart(p, ctx, pid) {
   return info;
 }
 
-function detach(ctx, p, deps) {
+// A detached start whose spawn failed never has a child to rewrite run.json, so the parent ends the record here (G128).
+function detachFailed(ctx, p, e) {
+  const runFile = path.join(p.runDir, RUN_FILES.run);
+  const info = { ...readJsonIf(runFile), status: "failed", endedAt: new Date(ctx.clock.now()).toISOString(), error: errText(e) };
+  writeJsonAtomic(runFile, info);
+  ctx.out(`workflow failed ${p.runId}: ${errText(e)}`);
+  return 2;
+}
+
+async function detach(ctx, p, deps) {
   const logFile = path.join(p.runDir, RUN_FILES.log);
   writeRunStart(p, ctx, process.pid);
   const fd = fs.openSync(logFile, "a");
@@ -139,9 +148,18 @@ function detach(ctx, p, deps) {
     child = (deps.spawn ?? spawn)(process.execPath, [PH_FILE, "workflow", ...childArgs], {
       cwd: ctx.root, detached: true, windowsHide: true, stdio: ["ignore", fd, fd], env: { ...ctx.env, PASEO_HARNESS_LOG_IS_STDOUT: "1", [CLAIMED_ENV]: p.runDir },
     });
+  } catch (e) {
+    return detachFailed(ctx, p, e);
   } finally {
     fs.closeSync(fd);
   }
+  // Node reports a missing binary or another failed spawn as an 'error' event, not a throw, so the start is announced
+  // only once the child has spawned.
+  const spawnError = await new Promise((resolve) => {
+    child.once("spawn", () => resolve(null));
+    child.once("error", resolve);
+  });
+  if (spawnError) return detachFailed(ctx, p, spawnError);
   child.unref?.();
   // The child rewrites run.json at its start; the parent only puts the child's pid into a still-running record.
   const runFile = path.join(p.runDir, RUN_FILES.run);
