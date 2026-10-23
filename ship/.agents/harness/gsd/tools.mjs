@@ -23,18 +23,21 @@ export async function runWithTimeout(g, secs, argv) {
 }
 
 // Known watch-mode runners rewritten to their one-shot form; any other command is returned byte-identical. Rewrites
-// work on whole argument tokens, so quoted arguments and unrelated options are never touched (GSDC-41).
+// work on whole argument tokens, so quoted arguments and unrelated options are never touched (GSDC-41). Tokens are
+// matched with their shell quotes removed, so "--watch" is the same flag as --watch (G023); every token keeps its text.
 const LAUNCHERS = new Set(["npx", "bunx", "yarn", "pnpm", "exec", "dlx"]);
 const WATCH_ON = /^--watch(?:All)?(?:=true)?$/;
 
-const dropWatch = (args) => args.filter((t) => !WATCH_ON.test(t));
-const ensure = (args, flag) => (args.includes(flag) ? args : [...args, flag]);
+const unquote = (t = "") => t.replace(/"((?:\\.|[^"\\])*)"|'([^']*)'|\\(.)/g, (_, d, s, e) => d?.replace(/\\(.)/g, "$1") ?? s ?? e);
+const dropWatch = (args) => args.filter((t) => !WATCH_ON.test(unquote(t)));
+const ensure = (args, flag) => (args.map(unquote).includes(flag) ? args : [...args, flag]);
 
 const RUNNERS = {
   vitest: (args) => {
     const rest = dropWatch(args);
-    if (rest[0] === "run" || rest[0] === "bench") return rest;
-    return ["run", ...(rest[0] === "watch" || rest[0] === "dev" ? rest.slice(1) : rest)];
+    const first = unquote(rest[0]);
+    if (first === "run" || first === "bench") return rest;
+    return ["run", ...(first === "watch" || first === "dev" ? rest.slice(1) : rest)];
   },
   jest: dropWatch,
   "react-scripts test": (args) => ensure(dropWatch(args), "--watchAll=false"),
@@ -49,10 +52,10 @@ export function normalizeTestCommand(command) {
   if (!original.trim()) throw fail("normalize-test-command needs a command");
   const tokens = splitTokens(original);
   let i = 0;
-  while (i < tokens.length - 1 && LAUNCHERS.has(tokens[i])) i++;
+  while (i < tokens.length - 1 && LAUNCHERS.has(unquote(tokens[i]))) i++;
   for (const [name, rewrite] of Object.entries(RUNNERS)) {
     const words = name.split(" ");
-    if (words.some((w, k) => tokens[i + k] !== w)) continue;
+    if (words.some((w, k) => unquote(tokens[i + k]) !== w)) continue;
     const head = tokens.slice(0, i + words.length);
     return [...head, ...rewrite(tokens.slice(i + words.length))].join(" ");
   }
