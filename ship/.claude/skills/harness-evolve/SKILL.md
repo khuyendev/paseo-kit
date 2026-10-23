@@ -7,7 +7,7 @@ description: "Evolves an existing harness from run experience: generalizes feedb
 
 The harness is not a fixed artifact; it is an evolving system. Capture the delta of “what worked and what did not” and feed it back into the harness so the next run measurably improves.
 
-Kit overlay: in this kit the harness output you evolve is the project adapter; follow `.claude/skills/harness/references/kit-adapter.md` (section 11) for its sources, the history row format and `ph harness lint`.
+Kit overlay: in this kit the harness output you evolve is the project adapter and, between workflow runs only, the project's workflow composition (`.agents/workflows/gsd-*.js`); follow `.claude/skills/harness/references/kit-adapter.md` (section 11) for its sources, the history row format, `ph harness lint` and the composition procedure (proposal from run evidence, review, apply between runs, a `composition:` history row, kit pull candidates).
 
 ```
 Initial harness ──▶ Real project use ──▶ Current harness

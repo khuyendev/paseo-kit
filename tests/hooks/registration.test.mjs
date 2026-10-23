@@ -24,6 +24,7 @@ const EXPECTED = [
   ["PostToolUse", "*", "context_guard.mjs", 10],
   ["PostToolUse", "Edit|MultiEdit|Write|mcp__.*__(edit|write)_multiple_files", "syntax_check.mjs", 90],
   ["UserPromptSubmit", undefined, "context_guard.mjs", 10],
+  ["PreToolUse", "Edit|MultiEdit|Write|NotebookEdit|mcp__.*__(edit|write)_multiple_files", "self_repair_guard.mjs", 10],
 ];
 const key = ([event, matcher, script, timeout]) => JSON.stringify([event, matcher ?? null, script, timeout]);
 
@@ -34,7 +35,7 @@ async function kit(argv, env) {
   return { code, out, err };
 }
 
-test("HOOK-01 template: exactly the eight kit entries with their matchers and timeouts", () => {
+test("HOOK-01 template: exactly the nine kit entries with their matchers and timeouts", () => {
   const regs = registrations(template());
   assert.ok(regs.every((r) => r.type === "command" && r.command === cmd(r.script)));
   assert.deepEqual(regs.map((r) => key([r.event, r.matcher, r.script, r.timeout])).sort(), EXPECTED.map(key).sort());

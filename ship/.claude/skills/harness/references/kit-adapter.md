@@ -363,3 +363,33 @@ and fix calls caused by a plan defect; for code the non-blocking findings later 
   <numbers after>` or with `not measured (<why>)`; never call an unmeasured change an improvement.
 Lessons that apply to every project go back to the kit with `node <kit>/kit.mjs pull <project> <files> --kit
 <kit dir>`.
+
+### Composition evolution (kit feedback 87)
+
+The kit owns the runtime, the verbs (`node .agents/workflows/lib/gsd-flow.mjs <verb>`, `ph gsd <verb>`) and the
+invariants; the project owns its workflow composition, the top-level scripts `.agents/workflows/gsd-*.js` (step order,
+when to stop or continue, which verbs run with which policy). The kit seeds the default; the project evolves its copy
+here, and only here:
+
+1. **Between runs only.** The self-repair guard hook denies every edit of `.agents/`, `.claude/`, `AGENTS.md` and
+   `CLAUDE.md` by an agent a workflow run started, and every edit of a composition script or
+   `.agents/harness.config.json` by any session while a workflow run of the project is live (run.json `running` and
+   its runner alive; `ph runs` lists them). Never change a composition to get past the stop a run is in: answer the
+   stop with the verb it names, rerun, and evolve afterwards.
+2. **Proposal from run evidence.** Name the runs (run ids), the stops or failures they share (`log.txt`, the `null`
+   reasons in `journal.jsonl`, the needs-owner stage in `result.json`, `ph evolve-stats --workflow <name>`), their
+   cause, and the change: which script, which step or switch, and what it leaves alone. A proposal must not relax a
+   gate, a check, a test or a kit invariant (checks may not be weakened, owner answers are logged, every needs-owner
+   stop names its answer); that is an owner answer or an owner config change, never a composition change.
+3. **Review.** A read-only reviewer agent (`ph fanout --collect` with a read-only role, or `agent(..., {readOnly:
+   true})`) or the owner checks the proposal against the evidence and the invariants. Apply only an approved
+   proposal, one change at a time.
+4. **Apply and lint.** Edit the script while no run is live, then run `node .agents/harness/ph.mjs harness lint`
+   (it checks the script's structure and that every verb it calls exists in the kit) and fix every failure.
+5. **History row of kind `composition`.** Append the row of section 10 with the Change cell starting with
+   `composition:` (for example `composition: gsd-execute stops before the commit when a request is open`), the
+   scripts in Scope, and in Reason the run ids, the review verdict and `measured: ...` or `not measured (<why>)`.
+6. **Kit pull candidate.** When the change fixes something any project would hit (not a project specific such as a
+   generator or a platform quirk), end the Reason with `kit pull candidate` and tell the owner: `node <kit>/kit.mjs
+   status <project>` shows the script as edited by the project, and `node <kit>/kit.mjs pull <project> <files> --kit
+   <kit dir>` offers it to the kit default once it has proved itself (fewer stops over a phase).

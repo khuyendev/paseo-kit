@@ -81,6 +81,16 @@ export function changedPathsInResult(text) {
   return out;
 }
 
+// Files an edit tool call names (syntax_check, self_repair_guard). Batch writers of the mod and of fsbatch name files in
+// files[].path and fixes[].path; filesystem-style servers in path / paths; NotebookEdit in notebook_path.
+export function targetPaths(input, event) {
+  const i = input.tool_input ?? {};
+  const named = (list) => (Array.isArray(list) ? list.map((f) => (typeof f === "string" ? f : f?.path)) : []);
+  const raw = [i.file_path, i.notebook_path, i.path, ...named(i.files), ...named(i.fixes), ...named(i.paths)];
+  if (event === "PostToolUse" && isBatchWriter(input.tool_name)) raw.push(...changedPathsInResult(resultText(input.tool_response)));
+  return raw.filter((p) => typeof p === "string" && p);
+}
+
 // A file published whole and only if its name is free: written to a private temp name, then hard-linked (exclusive,
 // atomic), so no reader ever sees a partial record and exactly one of several writers wins the name.
 export function publishExclusive(file, text) {

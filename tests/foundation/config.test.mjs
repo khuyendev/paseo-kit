@@ -251,6 +251,7 @@ const GOLDEN = {
   compact_resume: "Compaction done. Continue where you left off; re-arm any Monitor you stopped.",
   context_guard: { window_tokens: 1000000, start_pct: 60, step_pct: 5 },
   io_guard: { start_rounds: 2, step_rounds: 2, edit_start_rounds: 2, edit_step_rounds: 2 },
+  self_repair: { enabled: true, allow: [] },
   read_limits: { fileMaxChars: 36000, replyMaxChars: 38000 },
   worktree_dir: ".claude/worktrees",
   runs_keep: 20,
@@ -368,7 +369,7 @@ test("CONF-14 complete key table; first_prompt_note is kit-owned, project_prompt
     "agent_provider_env", "main_provider_disallowed_tools", "max_subagents", "max_live_subagents", "max_agents_per_workflow",
     "wait_timeout_s", "schema_retries", "prime_role", "warmup", "warmup_s", "warmup_timeout_s", "max_prompt_bytes", "agent_nudge_s",
     "agent_stop_s", "agent_tool_stuck_s", "agent_file_tool_stuck_s", "watchdog_repeat_calls", "watchdog_same_file_reads",
-    "watchdog_reads_without_write", "watchdog_enabled", "compact_resume", "context_guard", "io_guard", "read_limits", "worktree_dir",
+    "watchdog_reads_without_write", "watchdog_enabled", "compact_resume", "context_guard", "io_guard", "self_repair", "read_limits", "worktree_dir",
     "runs_keep", "first_prompt_note", "project_prompt_note", "platform_notes", "adapter", "gsd",
   ]);
   assert.ok(KIT_OWNED_KEYS.includes("first_prompt_note"));

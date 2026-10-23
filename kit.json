@@ -442,6 +442,7 @@
     ".claude/hooks/context_guard.mjs",
     ".claude/hooks/io_guard.mjs",
     ".claude/hooks/lib/hook_common.mjs",
+    ".claude/hooks/self_repair_guard.mjs",
     ".claude/hooks/skill_usage.mjs",
     ".claude/hooks/syntax_check.mjs",
     ".claude/plugins/.claude-plugin/marketplace.json",

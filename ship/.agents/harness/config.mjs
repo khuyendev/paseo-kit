@@ -12,7 +12,7 @@ export const OVERLAY_REL = ".agents/harness.config.json";
 export const MANIFEST_REL = ".agents/harness-kit.json";
 export const MACHINE_KEYS = Object.freeze(["agent_providers", "agent_provider_disallowed_tools", "agent_provider_env", "main_provider_disallowed_tools"]);
 export const KIT_OWNED_KEYS = Object.freeze([...MACHINE_KEYS, "first_prompt_note"]);
-export const MERGED_KEYS = Object.freeze(["tiers", "tier_aliases", "platform_notes", "context_guard", "io_guard", "read_limits", "adapter", "gsd"]);
+export const MERGED_KEYS = Object.freeze(["tiers", "tier_aliases", "platform_notes", "context_guard", "io_guard", "self_repair", "read_limits", "adapter", "gsd"]);
 
 const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);

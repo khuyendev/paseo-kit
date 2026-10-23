@@ -16,6 +16,10 @@
       {
         "matcher": "Edit|MultiEdit|Write|mcp__.*__(edit|write)_multiple_files",
         "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/syntax_check.mjs\"", "timeout": 90 }]
+      },
+      {
+        "matcher": "Edit|MultiEdit|Write|NotebookEdit|mcp__.*__(edit|write)_multiple_files",
+        "hooks": [{ "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/self_repair_guard.mjs\"", "timeout": 10 }]
       }
     ],
     "PostToolUse": [
