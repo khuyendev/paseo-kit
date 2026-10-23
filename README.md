@@ -98,7 +98,8 @@ Non-blocking commands end with a `next:` line naming the command to wait with.
   watchdog (shipped: a nudge at 45 min and a stop at 90 min of model time, warnings for loops, rereads and long
   reading without a write, interruption of a hung tool call). Every ended run also appends one line to `_workspace/harness-metrics.jsonl` (kept when runs are pruned);
   `evolve-stats` prints it per agent version and per workflow for `harness-evolve`; `review-stats` measures the code
-  review from each phase's review records and the fates recorded with `review-stats outcome`. `ph run-stats`,
+  review from each phase's review records and the fates recorded with `review-stats outcome`, and with `--stage
+  skeleton|checker|plan|code` each review stage's fates, cost per confirmed finding and escapes. `ph run-stats`,
   `ph result --json` and `evolve-stats` price tokens with the shipped list-price table `.agents/model-prices.json`
   (the models of `paseo/providers.json`, each with its source page and check date). Running a workflow needs the
   owner's consent (ph skill).

@@ -176,3 +176,44 @@ export function writeRecord(root, phaseDir, { waveId, record }) {
   writeTextAtomic(path.join(dir, `${nn}-REVIEW.md`), renderReview(nn, records));
   return { ok: true, record: `${toSlash(phaseDir)}/review/${name}`, review: `${toSlash(phaseDir)}/${nn}-REVIEW.md` };
 }
+
+// Kit feedback 64: the pre-code reviews (skeleton lanes, plan checker, plan review) and the plan-defect events of execute,
+// one record per stage and run (`prereview/<stage>-<runId>.json`; `part` adds `-<part>` for the parts of a stage that run at
+// once, such as one plan's review stream or the dependency checks), read by `ph review-stats --stage`. A resumed run keeps the
+// first run's id, so it rewrites its own record. Measurement only: nothing in a flow reads these files.
+export const PREREVIEW_STAGES = Object.freeze(["skeleton", "checker", "plan", "execute"]);
+export const PREREVIEW_FATES = Object.freeze(["applied", "carried", "rejected", "duplicate", "conflict", "open", "unjudged"]);
+export const PLAN_DEFECTS = Object.freeze(["wrong-api", "owns-reach", "missing-dependency", "other"]);
+const EVENT_KINDS = ["halt", "gate-failure", "fix-round"];
+
+export function validatePrereview(rec) {
+  const errors = [];
+  const need = (cond, msg) => { if (!cond) errors.push(msg); };
+  need(PREREVIEW_STAGES.includes(rec?.stage), `stage: expected one of ${PREREVIEW_STAGES.join("|")}`);
+  need(/^[A-Za-z0-9._-]+$/.test(String(rec?.runId ?? "")), "runId: expected a run id");
+  need(rec?.part === undefined || /^[A-Za-z0-9.-]+$/.test(String(rec.part)), "part: expected a plan id or a name");
+  if (rec?.stage === "execute") {
+    need(Array.isArray(rec.events), "events: expected array");
+    for (const [i, e] of (Array.isArray(rec.events) ? rec.events : []).entries()) {
+      need(EVENT_KINDS.includes(e?.kind), `events[${i}].kind: expected one of ${EVENT_KINDS.join("|")}`);
+      need(["plan", "other"].includes(e?.cause), `events[${i}].cause: expected plan|other`);
+      need(Array.isArray(e?.defects) && e.defects.every((d) => PLAN_DEFECTS.includes(d?.kind)), `events[${i}].defects: expected [{kind: ${PLAN_DEFECTS.join("|")}}]`);
+    }
+    return errors;
+  }
+  need(Array.isArray(rec?.findings), "findings: expected array");
+  for (const [i, f] of (Array.isArray(rec?.findings) ? rec.findings : []).entries()) {
+    need(typeof f?.id === "string" && f.id, `findings[${i}].id: expected string`);
+    need(PREREVIEW_FATES.includes(f?.fate), `findings[${i}].fate: expected one of ${PREREVIEW_FATES.join("|")}`);
+    need(typeof f?.blocking === "boolean" && typeof f?.confirmed === "boolean", `findings[${i}]: expected boolean blocking and confirmed`);
+  }
+  return errors;
+}
+
+export function writePrereview(root, phaseDir, record) {
+  const errors = validatePrereview(record);
+  if (errors.length) return { ok: false, errors, code: 1 };
+  const name = `${record.stage}-${record.runId}${record.part === undefined ? "" : `-${record.part}`}.json`;
+  writeJsonAtomic(resolveInside(path.join(resolveInside(root, phaseDir), "prereview"), name), { v: 1, ...record });
+  return { ok: true, record: `${toSlash(phaseDir)}/prereview/${name}` };
+}

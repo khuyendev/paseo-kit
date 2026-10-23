@@ -156,6 +156,10 @@ until dry, budget-aware loop, custom type + schema + effort, tier choice).
   another defect does not inherit it. When PLAN:FINDING names different findings in several records, the fate goes to
   the newest record's finding and the output says so. Outcome lines without that fingerprint (written before) are
   reported as not applied.
+  `--stage skeleton|checker|plan|code [--runs-dir D]` reports one review stage instead: findings by fate (from the
+  phases' `prereview/*.json` records for the pre-code stages), confirmed findings, review and fix cost from the run
+  journals with the cost per confirmed finding, and escapes (confirmed code findings tagged plan-catchable and the plan-
+  defect halts, red gates and fix calls of execute; for code, non-blocking findings later recorded fixed).
 
 Authoring rules:
 - Guard `null` per stage (an `agent()` call returns `null` with a journaled reason when it fails) and

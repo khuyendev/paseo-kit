@@ -2,16 +2,19 @@
 // (`.planning/phases/<NN>-<slug>/review/<waveId>-<plan>.json`), plus the later fate of findings recorded with
 // `ph review-stats outcome`. A change to the review rules or lenses is measured with it before it is called better.
 // The records, not `_workspace/review-metrics.jsonl`, are the source: a resumed run appends that line again.
+// `--stage skeleton|checker|plan|code` reports one review stage with its cost and escapes (kit feedback 64, review-stages.mjs).
 import fs from "node:fs";
 import path from "node:path";
 import { UsageError } from "../lib/cli.mjs";
 import { sha256 } from "../lib/hash.mjs";
 import { readJsonIf, readText } from "../lib/io.mjs";
+import { runsDirOf } from "./journal.mjs";
+import { STAGES, readPrereviews, stageCosts, stageLines } from "./review-stages.mjs";
 
 export const OUTCOMES_REL = "_workspace/review-outcomes.jsonl";
 export const FATES = Object.freeze(["fixed", "not-hold", "duplicate", "wont-fix"]);
-export const REVIEW_STATS_OPTIONS = Object.freeze({ phase: "string", note: "string" });
-export const REVIEW_STATS_USAGE = `ph review-stats [--phase NN] | ph review-stats outcome PLAN:FINDING (${FATES.join("|")}) [--note T]`;
+export const REVIEW_STATS_OPTIONS = Object.freeze({ phase: "string", note: "string", stage: "string", "runs-dir": "string" });
+export const REVIEW_STATS_USAGE = `ph review-stats [--phase NN] [--stage ${STAGES.join("|")} [--runs-dir D]] | ph review-stats outcome PLAN:FINDING (${FATES.join("|")}) [--note T]`;
 
 const PHASES_REL = ".planning/phases";
 const SEVERITIES = ["critical", "high", "medium", "low", "info"];
@@ -118,6 +121,7 @@ export function reviewLines(reviews, findings) {
 function recordOutcome(ctx, [, key, fate]) {
   if (!REF.test(key ?? "") || !FATES.includes(fate)) throw new UsageError(`usage: ${REVIEW_STATS_USAGE}`);
   if (ctx.opts.phase !== undefined) throw new UsageError("--phase goes with the report, not with outcome");
+  if (ctx.opts.stage !== undefined || ctx.opts["runs-dir"] !== undefined) throw new UsageError("--stage and --runs-dir go with the report, not with outcome");
   const { reviews } = readReviews(ctx.root);
   const hits = reviews.flatMap((r) => findingsOf([r], new Map()).filter((f) => f.ref === key).map((f) => ({ fp: f.fp, file: r.file, at: fs.statSync(r.full).mtimeMs })));
   if (!hits.length) throw new UsageError(`no review finding ${key} in ${PHASES_REL}/*/review (PLAN:FINDING as in deferred.md, e.g. 03-02:F-01)`);
@@ -135,10 +139,23 @@ export async function reviewStatsCommand(ctx) {
   if (ctx.args[0] === "outcome") return recordOutcome(ctx, ctx.args);
   if (ctx.args.length) throw new UsageError(`usage: ${REVIEW_STATS_USAGE}`);
   if (ctx.opts.note !== undefined) throw new UsageError("--note goes with outcome");
+  const stage = ctx.opts.stage;
+  if (stage !== undefined && !STAGES.includes(stage)) throw new UsageError(`--stage is one of ${STAGES.join("|")}, not ${stage}`);
+  if (stage === undefined && ctx.opts["runs-dir"] !== undefined) throw new UsageError("--runs-dir goes with --stage");
   const { reviews, bad } = readReviews(ctx.root, ctx.opts.phase);
   const outcomes = readOutcomes(ctx.root);
   const findings = findingsOf(reviews, outcomes.fates);
+  const pre = readPrereviews(ctx.root, ctx.opts.phase);
+  if (stage !== undefined) {
+    const { costs, runs } = stageCosts(runsDirOf(ctx.root, ctx.opts["runs-dir"]), ctx.opts.phase);
+    for (const line of stageLines(stage, { records: pre.records, codeFindings: findings, codeReport: reviews.length ? reviewLines(reviews, findings) : [], costs })) ctx.out(line);
+    const skippedS = [bad && `${bad} unreadable review records`, pre.bad && `${pre.bad} unreadable pre-code records`].filter(Boolean);
+    ctx.out(`review-stats --stage ${stage}: ${pre.records.length} pre-code records from ${PHASES_REL}/*/prereview, ${reviews.length} review records, ${runs} runs${ctx.opts.phase !== undefined ? ` (phase ${ctx.opts.phase})` : ""}${skippedS.length ? `; skipped ${skippedS.join(", ")}` : ""}`);
+    return 0;
+  }
   if (reviews.length) for (const line of reviewLines(reviews, findings)) ctx.out(line);
+  const byStage = ["skeleton", "checker", "plan"].map((s) => [s, pre.records.filter((r) => r.rec.stage === s).length]).filter(([, n]) => n);
+  if (byStage.length) ctx.out(`pre-code review records: ${byStage.map(([s, n]) => `${s} ${n}`).join(", ")} (ph review-stats --stage ${STAGES.join("|")})`);
   const known = new Set(findingsOf(readReviews(ctx.root).reviews, new Map()).map((f) => fateKey(f.ref, f.fp)));
   const orphans = [...outcomes.fates.keys()].filter((k) => !known.has(k)).length;
   const skipped = [bad && `${bad} unreadable records`, outcomes.bad && `${outcomes.bad} unreadable outcome lines`, outcomes.unbound && `${outcomes.unbound} outcomes with no finding fingerprint (not applied)`, orphans && `${orphans} outcomes of findings no record holds`].filter(Boolean);

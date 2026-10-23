@@ -143,6 +143,12 @@ async function findAndJudge(cycle, digest, judges, digestKey = "checked", tag = 
   const found = await parallel(pairs.map(({ p, l }) => () => ask([`Review ${planPath(p)} read-only through one lens.`, `Lens ${l.name}: ${l.text}`, "Return JSON {issues: [{plan, severity (high|medium|low), actionable, description, evidence}]}.", ...lockedDecisions, policy, digestLine(digestKey, digest)].join("\n\n"), { label: `find-${p}-${l.name}`, agentType: agentFor("plan_finder"), readOnly: true, schema: FIND_SCHEMA, judges, ...ro("plan_finder") }, `plan finder ${p} (${l.name})`)));
   // The finder reviewed one plan; its issues belong to that plan's verifier whatever plan id the finder wrote.
   const issues = found.flatMap((r, i) => (r?.result?.issues ?? []).map((x, k) => ({ ...x, plan: pairs[i].p, id: `C${cycle}-${i + 1}-${k + 1}` })));
+  reviewRan = true;
+  // Kit feedback 64: the lens stays out of the issue itself, which goes into the verifier, judge and editor prompts as it is.
+  found.forEach((r, i) => (r?.result?.issues ?? []).forEach((x, k) => {
+    const id = `C${cycle}-${i + 1}-${k + 1}`;
+    ledger.set(id, { id, cycle, plan: pairs[i].p, class: pairs[i].l.name, lens: pairs[i].l.name, severity: String(x.severity ?? "").toLowerCase(), blocking: isBlocking(x), confirmed: false, fate: "unjudged", description: short(x.description) });
+  }));
   const badFind = found.findIndex((r) => !r || r.fail);
   if (badFind !== -1) return { stop: stopWith(found[badFind]?.fail ?? { status: "failed", reason: `plan finder ${pairs[badFind].p} (${pairs[badFind].l.name}) failed to run` }, issues) };
   phase("Judge");
@@ -162,6 +168,7 @@ async function findAndJudge(cycle, digest, judges, digestKey = "checked", tag = 
   if (issues.some((x) => allVerdicts.filter((v) => v.id === x.id && typeof v.valid === "boolean").length !== 1)) return { stop: { status: "failed", reason: "plan verifier did not answer every issue exactly once", issues } };
   // Only an explicit invalid verdict drops an issue.
   const valid = issues.filter((x) => allVerdicts.find((v) => v.id === x.id)?.valid !== false);
+  settle(issues.filter((x) => !valid.includes(x)), "rejected");
   let kept = [];
   if (valid.length) {
     const j = await ask(["Judge these verified plan-review issues across all plans: keep the real ones and merge cross-plan duplicates (duplicate_of names the kept id).", `Issues (JSON): ${JSON.stringify(valid)}`, "Return JSON {decisions: [{id, keep, duplicate_of}]}.", ...lockedDecisions, policy, digestLine(digestKey, digest)].join("\n\n"), { label: `judge-${tag}${cycle}`, agentType: agentFor("plan_judge"), readOnly: true, schema: JUDGE_SCHEMA, judges, ...ro("plan_judge") }, "plan judge");
@@ -172,7 +179,15 @@ async function findAndJudge(cycle, digest, judges, digestKey = "checked", tag = 
     if (valid.some((x) => decisions.filter((d) => d.id === x.id && typeof d.keep === "boolean").length !== 1)) return { stop: { status: "failed", reason: "plan judge did not answer every issue exactly once", issues: valid } };
     if (decisions.some((d) => d.duplicate_of && !decisions.some((other) => other.id === d.duplicate_of && other.keep && !other.duplicate_of))) return { stop: { status: "failed", reason: "plan judge merged an issue without a kept representative", issues: valid } };
     kept = valid.filter((x) => { const d = decisions.find((y) => y.id === x.id); return d.keep && !d.duplicate_of; });
+    for (const x of valid) {
+      const d = decisions.find((y) => y.id === x.id);
+      if (!d.keep) settle([x], "rejected");
+      else if (d.duplicate_of) settle([x], "duplicate");
+    }
   }
+  settle(kept.filter((x) => !isBlocking(x)), "carried");
+  settle(kept.filter(isBlocking), "open");
+  for (const x of kept.filter(isBlocking)) if (ledger.has(x.id)) ledger.get(x.id).confirmed = true;
   return { kept };
 }
 
@@ -201,12 +216,18 @@ async function streamReview() {
     const only = `Edit only ${planPath(p)}: the other plans of the phase are reviewed at the same time; never edit them.`;
     const ed = await ask([`Revise ${planPath(p)} so the issues below are resolved.`, only, `Issues (JSON): ${JSON.stringify(open)}`, "Return JSON {marker: REVISION COMPLETE | REVISION_CONFLICT, conflict?}. Never ask the owner; never commit.", "Before you reply, run verify plan-structure on the plan and fix what it reports.", ...lockedDecisions, policy, digestLine(key, digest)].join("\n\n"), { label: `editor-${p}-${cycle - 1}`, agentType: agentFor("plan_editor", "gsd-planner"), schema: EDITOR_SCHEMA, judges, ...ro("plan_editor") }, `plan editor ${p}`);
     if (ed.fail) return { ...ed.fail, plan: p, issues: open, counts };
-    if (conflicted(ed)) return stop("needs-owner", `plan editor of ${p} returned REVISION_CONFLICT`, { conflict: ed.result.conflict ?? null });
+    if (conflicted(ed)) {
+      settle(open, "conflict");
+      return stop("needs-owner", `plan editor of ${p} returned REVISION_CONFLICT`, { conflict: ed.result.conflict ?? null });
+    }
     let [check] = await checkPlans();
     if (!check.ok) {
       const fix = await ask([`Fix ${planPath(p)} in place. verify plan-structure reported exactly these errors:`, ...check.errors.map((e) => `- ${typeof e === "string" ? e : JSON.stringify(e)}`), only, "Return JSON {marker: REVISION COMPLETE | REVISION_CONFLICT, conflict?}. Never ask the owner; never commit.", ...lockedDecisions, policy, digestLine(key, digest)].join("\n\n"), { label: `editor-${p}-${cycle - 1}-fix`, agentType: agentFor("plan_editor", "gsd-planner"), schema: EDITOR_SCHEMA, judges, ...ro("plan_editor") }, `plan editor ${p} repair`);
       if (fix.fail) return { ...fix.fail, plan: p, issues: open, counts };
-      if (conflicted(fix)) return stop("needs-owner", `plan editor of ${p} returned REVISION_CONFLICT`, { conflict: fix.result.conflict ?? null });
+      if (conflicted(fix)) {
+        settle(open, "conflict");
+        return stop("needs-owner", `plan editor of ${p} returned REVISION_CONFLICT`, { conflict: fix.result.conflict ?? null });
+      }
       [check] = await checkPlans();
     }
     if (!check.ok) return stop("failed", `plan ${p} fails verify plan-structure after the edit`, { errors: check.errors });
@@ -218,6 +239,8 @@ async function streamReview() {
     if (res.fail) return { ...res.fail, plan: p, issues: open, counts };
     const done = new Map((res.result.resolved ?? []).map((r) => [r.id, r.evidence ?? ""]));
     resolved.push(...open.filter((x) => done.has(x.id)).map((x) => ({ ...x, evidence: done.get(x.id) })));
+    // Kit feedback 64: in a stream an issue is applied once the resolution check confirms the edit resolved it.
+    settle(open.filter((x) => done.has(x.id)), "applied");
     open = open.filter((x) => !done.has(x.id));
     counts.push({ cycle, high: open.length, mediumOrLow: notes.length });
     log(`plan review ${p} cycle ${cycle}: ${before - open.length} of ${before} high issues resolved`);
@@ -233,6 +256,16 @@ let structure = [];
 const counts = [];
 // A plan whose last pass kept no issue is not re-found until its file changes; an edit by the editor re-opens it.
 const clean = new Set();
+// Kit feedback 64: every finder issue with its lens and fate, recorded when the review ends (converged, needs-owner or failed)
+// for `ph review-stats --stage plan` (gsd.review_metrics); a stream's record is the part named by its plan. Measurement only:
+// nothing reads it back. Fates: rejected (verifier invalid, judge drop), duplicate, carried (kept medium/low notes), applied
+// (kept high: the editor completed, or in a stream the resolution check confirmed it), conflict, open (kept high at a stop),
+// unjudged (no verifier or judge answered). Confirmed: a kept high issue.
+const ledger = new Map();
+const short = (s) => String(s ?? "").replace(/\s+/g, " ").slice(0, 300);
+const settle = (list, fate) => { for (const x of list) if (ledger.has(x.id)) ledger.get(x.id).fate = fate; };
+let reviewRan = false;
+try {
 if (stream) return await streamReview();
 // The notes of an earlier converged review never outlive this run.
 await flow(["remove", notesPath]);
@@ -262,6 +295,7 @@ for (let cycle = 1; ; cycle++) {
   const before = new Map(await Promise.all(plans.map(async (p) => [p, await fileSha(planPath(p))])));
   const ed = await ask([`Revise these plans in one pass so the issues below are resolved: ${plans.map(planPath).join(", ")}.`, `Issues (JSON): ${JSON.stringify(blocking)}`, "Return JSON {marker: REVISION COMPLETE | REVISION_CONFLICT, conflict?}. Never ask the owner; never commit.", "Before you reply, run verify plan-structure on each plan you revise and fix what it reports.", ...lockedDecisions, policy, digestLine("checked", digest)].join("\n\n"), { label: `editor-${cycle}`, agentType: agentFor("plan_editor", "gsd-planner"), schema: EDITOR_SCHEMA, judges, ...ro("plan_editor") }, "plan editor");
   if (ed.fail) return ed.fail;
+  settle(blocking, conflicted(ed) ? "conflict" : "applied");
   if (conflicted(ed)) return { status: "needs-owner", reason: "plan editor returned REVISION_CONFLICT", conflict: ed.result.conflict ?? null, issues: kept, counts };
   // G041: plans that fail verify plan-structure after the edit get one editor repair, as gsd-plan's structureFix gives a planner.
   let checks = await checkPlans();
@@ -269,7 +303,10 @@ for (let cycle = 1; ; cycle++) {
     const failing = checks.filter((c) => !c.ok);
     const fix = await ask([`Fix these plans in place: ${failing.map((c) => planPath(c.plan)).join(", ")}. verify plan-structure reported exactly these errors:`, ...failing.flatMap((c) => c.errors.map((e) => `- ${c.plan}: ${typeof e === "string" ? e : JSON.stringify(e)}`)), "Return JSON {marker: REVISION COMPLETE | REVISION_CONFLICT, conflict?}. Never ask the owner; never commit.", ...lockedDecisions, policy, digestLine("checked", digest)].join("\n\n"), { label: `editor-${cycle}-fix`, agentType: agentFor("plan_editor", "gsd-planner"), schema: EDITOR_SCHEMA, judges, ...ro("plan_editor") }, "plan editor repair");
     if (fix.fail) return fix.fail;
-    if (conflicted(fix)) return { status: "needs-owner", reason: "plan editor returned REVISION_CONFLICT", conflict: fix.result.conflict ?? null, issues: kept, counts };
+    if (conflicted(fix)) {
+      settle(blocking, "conflict");
+      return { status: "needs-owner", reason: "plan editor returned REVISION_CONFLICT", conflict: fix.result.conflict ?? null, issues: kept, counts };
+    }
     checks = await checkPlans();
   }
   const edited = [];
@@ -285,4 +322,11 @@ for (let cycle = 1; ; cycle++) {
   const h = await gsd(["handoff", N]);
   if (h.code !== 0) return { status: "failed", reason: "handoff refused after the plan-review edit", errors: h.json?.errors ?? [] };
   planRevision = h.json?.planRevision ?? null;
+}
+} finally {
+  if (reviewRan && cfg.gsd.review_metrics) {
+    const w = await flow(["prereview-record", phaseDir], { stage: "plan", runId, ...(stream ? { part: plans[0] } : {}), findings: [...ledger.values()] });
+    if (w.code !== 0) log(`warning: plan review record not written: ${(w.json?.errors ?? [w.json?.error ?? `exit ${w.code}`]).join("; ")}`);
+    else log(`review metrics: ${w.json.record}`);
+  }
 }

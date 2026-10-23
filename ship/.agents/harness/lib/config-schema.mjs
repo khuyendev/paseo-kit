@@ -161,6 +161,8 @@ export const SCHEMA = obj({
     review_depth: str({ oneOf: ["quick", "standard", "deep"] }),
     // Kit feedback 66: phase = one verifier for the whole phase; per-criterion = one verifier per ROADMAP success criterion.
     verify_mode: str({ oneOf: ["phase", "per-criterion"] }),
+    // Kit feedback 64: pre-code review records, the plan-catchable tag and plan-defect events (measurement only).
+    review_metrics: bool(),
   }),
 });
 

@@ -41,7 +41,7 @@ export const commands = [
   },
   {
     name: "review-stats",
-    summary: "how the gsd-execute code review performed (gate, verifier, resolution, later fates) from the phases' review records; outcome records a finding's fate",
+    summary: "how the gsd-execute code review performed (gate, verifier, resolution, later fates) from the phases' review records; --stage reports one review stage (skeleton, checker, plan, code) with cost per confirmed finding and escapes; outcome records a finding's fate",
     usage: REVIEW_STATS_USAGE,
     options: REVIEW_STATS_OPTIONS,
     config: "none",

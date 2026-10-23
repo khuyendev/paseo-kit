@@ -103,10 +103,10 @@ export function inputsOf(root, scopes) {
   return { head: head(root), scopes, files: Object.fromEntries(Object.entries(files).sort()), config: sha256(JSON.stringify({ commands: cfg.adapter.commands, verify_vocabulary: cfg.adapter.verify_vocabulary })) };
 }
 
-// Files a run writes about itself (gate evidence, review records, transfer and commit records, progress, halts): they
+// Files a run writes about itself (gate evidence, review and pre-code review records, transfer and commit records, progress, halts): they
 // are not inputs of a judgment, so they never change an agent call's digest; a resumed run then replays the calls
 // whose code is unchanged (G080, G081).
-const RUN_RECORD = /^\.planning\/(phases|quick)\/[^/]+\/(evidence|review|transfers|transfers-pending)\/|^\.planning\/(phases|quick)\/[^/]+\/([^/]+-REVIEW\.md|deferred\.md|execute-progress\.json|execute-baseline\.json|commits\.json|[^/]+-HALT\.json|halt-answers\.json)$/;
+const RUN_RECORD = /^\.planning\/(phases|quick)\/[^/]+\/(evidence|review|prereview|transfers|transfers-pending)\/|^\.planning\/(phases|quick)\/[^/]+\/([^/]+-REVIEW\.md|deferred\.md|execute-progress\.json|execute-baseline\.json|commits\.json|[^/]+-HALT\.json|halt-answers\.json)$/;
 export const runRecord = (rel) => RUN_RECORD.test(toSlash(rel));
 
 // The adapter and gsd settings a judgment reads: the owns forms and the lens, stack-skill, agent and role tables. Gate

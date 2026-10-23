@@ -313,6 +313,7 @@ const GOLDEN = {
     code_review: { max_concurrent: 1, reviewers: [] },
     review_depth: "standard",
     verify_mode: "phase",
+    review_metrics: true,
   },
 };
 

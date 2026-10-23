@@ -49,6 +49,7 @@ const COMMANDS = {
   "spot-check": (root, [summary]) => execute.spotCheck(root, summary),
   "review-scope": (root, [phaseDir], input) => review.reviewScope(root, phaseDir, JSON.parse(input)),
   "review-record": (root, [phaseDir], input) => review.writeRecord(root, phaseDir, JSON.parse(input)),
+  "prereview-record": (root, [phaseDir], input) => review.writePrereview(root, phaseDir, JSON.parse(input)),
   "changed-lines": (root, [phaseDir], input) => review.changedLines(root, phaseDir, JSON.parse(input)),
   "quick-dir": (root, [slugSource]) => project.quickDir(root, slugSource),
   "quick-verification": (root, [dir, action]) => project.quickVerification(root, dir, action),
@@ -59,7 +60,7 @@ export const COMMAND_NAMES = Object.keys(COMMANDS);
 
 // Verbs whose handler reads JSON or text from stdin; every other verb never touches stdin, so a person running
 // `gsd-flow.mjs remove <path>` from a shell whose stdin is an open pipe is not left waiting (G088).
-const STDIN = new Set(["write", "append", "json-push", "summary-heal", "resume-gate", "transfer", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "evidence-check", "review-scope", "review-record", "changed-lines", "forensics-path"]);
+const STDIN = new Set(["write", "append", "json-push", "summary-heal", "resume-gate", "transfer", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "evidence-check", "review-scope", "review-record", "prereview-record", "changed-lines", "forensics-path"]);
 export const readsStdin = (cmd) => STDIN.has(cmd);
 
 export async function main(argv, { root = configRoot(), input = "", out = (l) => process.stdout.write(`${l}\n`) } = {}) {

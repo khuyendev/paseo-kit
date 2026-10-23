@@ -116,6 +116,54 @@ const ev = (e) => { events.push(e); log(`event ${e}`); };
 const result = (status, extra = {}) => ({ status, phaseDir, mode: execMode, isolation: g.isolation, waves: waveResults, sharedChanges, ...(Object.keys(pendingRequests).length ? { requests: pendingRequests } : {}), ...(skipped.length ? { skipped } : {}), events, ...extra });
 const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reason, ...extra });
 const digestOf = async (input) => (await flow(["digest"], input)).json?.hash ?? "none";
+
+// Kit feedback 64 (gsd.review_metrics, measurement only): executors and fixers may name the plan defects they met, the finding
+// verifier tags each confirmed finding plan-catchable, and every executor halt, red gate and fixer call (per wave, or per plan
+// and commit batch in the graph schedule) is recorded with its cause in prereview/execute-<runId>.json for `ph review-stats
+// --stage`. No decision of this script reads any of it.
+const metricsOn = g.review_metrics;
+const PLAN_DEFECT_KINDS = ["wrong-api", "owns-reach", "missing-dependency", "other"];
+const PLAN_DEFECTS_SCHEMA = { type: "array", items: { type: "object", properties: { kind: { type: "string", enum: PLAN_DEFECT_KINDS }, evidence: { type: "string" } }, required: ["kind"] } };
+const withDefects = (schema) => (metricsOn ? { ...schema, properties: { ...schema.properties, plan_defects: PLAN_DEFECTS_SCHEMA } } : schema);
+const execSchema = withDefects(EXEC_SCHEMA);
+const fixerSchema = withDefects(FIXER_SCHEMA);
+const verdictItems = VERDICT_SCHEMA.properties.verdicts.items;
+const verdictSchema = metricsOn ? { ...VERDICT_SCHEMA, properties: { verdicts: { ...VERDICT_SCHEMA.properties.verdicts, items: { ...verdictItems, properties: { ...verdictItems.properties, plan_catchable: { type: "string", enum: ["yes", "no"] }, catch_reason: { type: "string" } } } } } } : VERDICT_SCHEMA;
+const DEFECT_NOTE = "Measurement only (it changes nothing in how your reply is judged): when the plan itself was wrong (it named an API, file or symbol that does not exist or behaves otherwise, its owns did not reach a file the work needed, or it missed a dependency), list each such plan defect in plan_defects [{kind: wrong-api|owns-reach|missing-dependency|other, evidence}]; an empty list otherwise.";
+const CATCH_NOTE = "Measurement only (it changes nothing in how your verdict is used): for each finding you answer confirmed, also give plan_catchable yes when a review of the plan, before any code was written, could have caught it (the plan named a wrong API, file or behaviour, or missed a requirement, an owned path, a dependency or the edge case the defect hits), no when only the code shows it, with catch_reason in one sentence.";
+const defectEvents = [];
+let defectWrites = Promise.resolve();
+// The plan defects a reply names, plus one owns-reach defect per request for a file outside the agent's owns.
+const defectsOf = (res) => [
+  ...(Array.isArray(res?.plan_defects) ? res.plan_defects : []).filter((d) => PLAN_DEFECT_KINDS.includes(d?.kind)).map((d) => ({ kind: d.kind, evidence: String(d.evidence ?? "").slice(0, 300) })),
+  ...(Array.isArray(res?.requests) ? res.requests : []).filter((rq) => typeof rq?.path === "string" && rq.path.trim()).map((rq) => ({ kind: "owns-reach", evidence: `request for ${rq.path.trim().replace(/\\/g, "/")}` })),
+];
+// A resumed run keeps the first run's id and skips what it already committed, so it starts from that run's record: the events
+// of skipped work stay, and a replayed event replaces its earlier copy. An event is known by its kind, wave, round, plan, fixer,
+// label and reason, plus `occ`, its count among this run's events of that identity (a commit batch can run its fix rounds twice).
+const eventBase = (e) => JSON.stringify([e.kind, e.wave ?? null, e.round ?? null, e.plan ?? null, e.label ?? null, e.fixer ?? null, e.reason ?? null]);
+const eventOcc = new Map();
+if (metricsOn) {
+  const prior = await flow(["read", `${phaseDir}/prereview/execute-${runId}.json`]);
+  try { if (prior.json?.exists) defectEvents.push(...(JSON.parse(prior.json.text).events ?? [])); } catch { log("warning: the plan-defect record of this run is unreadable; it is written again"); }
+}
+// Writes are chained, so the last write holds every event even when parallel plans halt at once. A measurement never changes
+// the run: any error here is a logged warning.
+async function defectEvent(kind, extra, defects) {
+  if (!metricsOn) return;
+  const event = { kind, ...extra, cause: defects.length ? "plan" : "other", defects };
+  const base = eventBase(event);
+  event.occ = (eventOcc.get(base) ?? 0) + 1;
+  eventOcc.set(base, event.occ);
+  const at = defectEvents.findIndex((x) => eventBase(x) === base && (x.occ ?? 1) === event.occ);
+  if (at >= 0) defectEvents[at] = event;
+  else defectEvents.push(event);
+  defectWrites = defectWrites.then(async () => {
+    const w = await flow(["prereview-record", phaseDir], { stage: "execute", runId, events: defectEvents });
+    if (w.code !== 0) log(`warning: plan-defect record not written: ${(w.json?.errors ?? [w.json?.error ?? `exit ${w.code}`]).join("; ")}`);
+  }).catch((e) => log(`warning: plan-defect record not written: ${e?.message ?? e}`));
+  await defectWrites;
+}
 // kit-feedback 66: gsd.execute_schedule graph starts each plan when the plans it waits for are committed (per-wave only).
 const schedule = g.execute_schedule ?? "waves";
 if (schedule === "graph" && execMode !== "per-wave") return result("refused", { reason: `gsd.execute_schedule graph needs gsd.execution_mode per-wave (it is ${execMode})` });
@@ -353,11 +401,12 @@ const execRuntime = (t) => [
   "- Never commit, stage or stash; never write STATE, ROADMAP or REQUIREMENTS.",
   "- The orchestrator's gate runs the build and the tests after the wave: do not run them yourself.",
   "Return JSON {taskResults: [{task, status: implemented|partial|blocked|skipped, evidence}], deviations: [{rule, kind, note}], requests: [{path, change, reason}]}.",
+  metricsOn ? DEFECT_NOTE : null,
   "</kit_executor_runtime>",
 ].filter(Boolean).join("\n");
 // Every call of one executor session carries the same fixed options, worktree isolation included (CR-GSF-04).
 function execOpts(t, label) {
-  const o = { label, session: `executor:${t.plan}`, agentType: agentFor("executor", "gsd-executor"), role: "executor", schema: EXEC_SCHEMA };
+  const o = { label, session: `executor:${t.plan}`, agentType: agentFor("executor", "gsd-executor"), role: "executor", schema: execSchema };
   if (t.model) o.model = t.model;
   if (t.effort) o.effort = t.effort;
   if (worktreeMode) {
@@ -373,8 +422,10 @@ const classify = (reason) => {
   }
   return { class: "unknown" };
 };
-async function halt(id, why) {
+// `defects`: the plan defects behind the halt (kit feedback 64), recorded as a halt event.
+async function halt(id, why, defects = []) {
   await flow(["write", haltPath(id)], JSON.stringify({ plan: id, reason: why, runId }, null, 2));
+  await defectEvent("halt", { plan: id, reason: String(why).slice(0, 300) }, defects);
   return { plan: id, halted: true, reason: why, ...(pendingRequests[id]?.length ? { requests: pendingRequests[id] } : {}) };
 }
 async function headNow(cwd) { return (await shell(["git", "rev-parse", "HEAD"], cwd ? { cwd } : {})).stdout.trim(); }
@@ -439,14 +490,14 @@ async function dispatch(t, waveId) {
   await routeRequests(t, res);
   clearResolved(t.plan, res);
   const decision = ownerDecision(res);
-  if (decision) return { ...(await halt(t.plan, `owner decision needed: ${decision.note ?? decision.evidence ?? decision.status}`)), decision };
+  if (decision) return { ...(await halt(t.plan, `owner decision needed: ${decision.note ?? decision.evidence ?? decision.status}`, defectsOf(res))), decision };
   // G058: one result per plan task; an empty list or a skipped task is no finished plan.
   const want = planInfo(t.plan).task_count;
   const got = (res.taskResults ?? []).length;
-  if (!got || (Number.isInteger(want) && got < want)) return { ...(await halt(t.plan, `executor reported ${got} task result(s)${Number.isInteger(want) ? ` for ${want} task(s)` : ""}`)), failed: true };
+  if (!got || (Number.isInteger(want) && got < want)) return { ...(await halt(t.plan, `executor reported ${got} task result(s)${Number.isInteger(want) ? ` for ${want} task(s)` : ""}`, defectsOf(res))), failed: true };
   const skippedTask = res.taskResults.find((x) => x.status === "skipped");
-  if (skippedTask) return { ...(await halt(t.plan, `owner decision needed: task ${skippedTask.task} was skipped${skippedTask.evidence ? ` (${skippedTask.evidence})` : ""}`)), decision: skippedTask };
-  if (!hasSummary) return { ...(await halt(t.plan, `no SUMMARY at ${t.summary}`)), failed: true };
+  if (skippedTask) return { ...(await halt(t.plan, `owner decision needed: task ${skippedTask.task} was skipped${skippedTask.evidence ? ` (${skippedTask.evidence})` : ""}`, defectsOf(res))), decision: skippedTask };
+  if (!hasSummary) return { ...(await halt(t.plan, `no SUMMARY at ${t.summary}`, defectsOf(res))), failed: true };
   return { plan: t.plan, ok: true, wt };
 }
 const integrate = (outcomes, tasks) => writeTree(() => integrateNow(outcomes, tasks));
@@ -457,7 +508,7 @@ async function integrateNow(outcomes, tasks) {
     if (worktreeMode && o.wt) {
       // CR-GSF-08: the deletion declaration comes from the validated handoff task (the index does not carry it).
       const tr = await flow(["transfer", phaseDir], { plan: t.plan, worktree: o.wt, owns: t.owns ?? [], summary: t.summary, files_deleted: t.files_deleted ?? [] });
-      if (tr.code !== 0) { Object.assign(o, await halt(t.plan, `transfer refused: ${(tr.json?.refused ?? []).map((r) => `${r.path} (${r.reason})`).join(", ") || tr.json?.error}`), { ok: false }); continue; }
+      if (tr.code !== 0) { Object.assign(o, await halt(t.plan, `transfer refused: ${(tr.json?.refused ?? []).map((r) => `${r.path} (${r.reason})`).join(", ") || tr.json?.error}`, (tr.json?.refused ?? []).filter((r) => r.reason === "outside owns").map((r) => ({ kind: "owns-reach", evidence: `transfer refused: ${r.path} outside owns` }))), { ok: false }); continue; }
       ev(`transfer ${t.plan}`);
       for (const d of tr.json?.dropped ?? []) log(`transfer ${t.plan}: ${d.path} not copied to the main tree (${d.reason})`);
     }
@@ -516,12 +567,12 @@ const fixerBlock = () => (g.fixer_verifies_itself
   ? `After your changes run the build (${JSON.stringify(cmds.build)}) and the tests (${JSON.stringify(testArgv)}) yourself, at most ${g.fixer.max_build_attempts} times and within ${g.fixer.minutes} minutes; stop early when two consecutive attempts do not reduce the failure count. If you edit after your last run, run the build and the tests once more on that edit before you answer, even past those limits. Judge yourself only on the failures and findings given to you: a failure in a file you do not own is not yours and does not make your status unresolved. Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence, requests, lastEdit}, where lastEdit is verified (a build and test run followed your last edit), unverified (none did) or none (you made no edit).`
   : "Do not run the build or the tests: the orchestrator's gate verifies your changes. Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence, requests, lastEdit}, where lastEdit is unverified (you edited) or none (you made no edit).");
 // G070: an edit outside the owns is never a workaround; the fixer returns it as a request instead.
-const fixerText = (owns, findings, failures) => [`<kit_fixer_runtime>\nYou own: ${JSON.stringify(owns)}. Fix the confirmed review findings and gate failures below, nothing else; a finding with instances is fixed at every instance. Never commit. A change needed in a file you do not own: do not make it (not even a rename or an import tweak to dodge a clash); return it in requests [{path, change, reason}].\n${fixerBlock()}\n</kit_fixer_runtime>`, findings.length ? `Confirmed findings (JSON): ${JSON.stringify(findings.map(findingBrief))}` : "", failures.length ? `Gate failures:\n${failureText(failures)}` : ""].filter(Boolean).join("\n\n");
+const fixerText = (owns, findings, failures) => [`<kit_fixer_runtime>\nYou own: ${JSON.stringify(owns)}. Fix the confirmed review findings and gate failures below, nothing else; a finding with instances is fixed at every instance. Never commit. A change needed in a file you do not own: do not make it (not even a rename or an import tweak to dodge a clash); return it in requests [{path, change, reason}].\n${fixerBlock()}${metricsOn ? `\n${DEFECT_NOTE}` : ""}\n</kit_fixer_runtime>`, findings.length ? `Confirmed findings (JSON): ${JSON.stringify(findings.map(findingBrief))}` : "", failures.length ? `Gate failures:\n${failureText(failures)}` : ""].filter(Boolean).join("\n\n");
 // The fixer repairs confirmed defects and failed checks in existing code, where more effort finds the edge cases its
 // tests miss (owner decision 2026-10-22, after "Spending your effort"): it runs at FIXER_EFFORT on its own tier's
 // model unless the project's gsd.roles.fixer sets an effort.
 const FIXER_EFFORT = "high";
-const fixerOpts = (label, extra = {}) => ({ label, agentType: agentFor("fixer", "gsd-code-fixer"), role: "fixer", ...(cfg.gsd.roles?.fixer?.effort ? {} : { effort: FIXER_EFFORT }), schema: FIXER_SCHEMA, ...extra });
+const fixerOpts = (label, extra = {}) => ({ label, agentType: agentFor("fixer", "gsd-code-fixer"), role: "fixer", ...(cfg.gsd.roles?.fixer?.effort ? {} : { effort: FIXER_EFFORT }), schema: fixerSchema, ...extra });
 // Main-tree edits outside every plan's owns stop the run before the gate and the review are paid for, not at Commit
 // (G070, kit-feedback 35).
 const strayStop = (tasks, stage) => aloneOnTree(() => strayStopNow(tasks, stage));
@@ -591,8 +642,22 @@ async function fixRounds(waveId, tasks, first, label, tail, { gate = () => runGa
         return { id: null, kind: "integration", ...(await writeTree(() => call(prompt, fixerOpts(`integration-fix-${round}`)))) };
       });
     }
-    if (!fixes.length && !sharedChanges.some((s) => !s.applied)) return red(fileless.length ? `${fileless.length} gate failure(s) name no file of any plan, so no fixer can own them` : "no fixer owns the failing files");
+    // Kit feedback 64: the red gate this round answers, for the plans of the wave (graph: the plan or the commit batch).
+    const redGate = { wave: waveId, round, label, plans: tasks.map((t) => t.plan), failures: cur.failureCount ?? null };
+    if (!fixes.length && !sharedChanges.some((s) => !s.applied)) {
+      await defectEvent("gate-failure", redGate, []);
+      return red(fileless.length ? `${fileless.length} gate failure(s) name no file of any plan, so no fixer can own them` : "no fixer owns the failing files");
+    }
     const results = await parallel(fixes);
+    // Each fix call of the round, then the red gate it answers, with the plan defects the fixers named.
+    const roundDefects = [];
+    for (const r of results) {
+      if (!r || r.skipped) continue;
+      const named = r.result ? defectsOf(r.result) : [];
+      roundDefects.push(...named);
+      await defectEvent("fix-round", { wave: waveId, round, label, plan: r.id ?? null, fixer: r.kind }, named);
+    }
+    await defectEvent("gate-failure", redGate, roundDefects);
     const soft = [];
     const decisions = [];
     for (const r of results) {
@@ -669,30 +734,38 @@ const findingFiles = (list) => [...new Set(list.flatMap((f) => [f.file, ...(f.in
 async function verifyFindings(gated, plan) {
   const verdicts = {};
   const evidence = {};
+  // Kit feedback 64: the plan-catchable tag of the verifier whose verdict counts (measurement only).
+  const catchable = {};
+  const keepCatch = (v) => { if (metricsOn && ["yes", "no"].includes(v.plan_catchable)) catchable[v.id] = { tag: v.plan_catchable, reason: String(v.catch_reason ?? "").slice(0, 300) }; };
+  const asked = metricsOn ? ["Return JSON {verdicts: [{id, verdict, evidence, plan_catchable, catch_reason}]}.", CATCH_NOTE] : ["Return JSON {verdicts: [{id, verdict, evidence}]}."];
   const dg = digestLine(`findings:${plan}`, await digestOf({ files: findingFiles(gated) }));
   for (let attempt = 0; attempt < 2; attempt++) {
     const missing = gated.filter((f) => !verdicts[f.id]);
     if (!missing.length) break;
-    const r = await call([`Verify these review findings of plan ${plan} independently, read-only: trace each trigger through the code and answer confirmed, refuted or uncertain with evidence.`, `Findings (JSON): ${JSON.stringify(missing.map(findingBrief))}`, "Return JSON {verdicts: [{id, verdict, evidence}]}.", dg].join("\n\n"), { label: `verify-findings-${plan}`, agentType: agentFor("finding_verifier", "finding-verifier"), role: "finding_verifier", readOnly: true, schema: VERDICT_SCHEMA });
+    const r = await call([`Verify these review findings of plan ${plan} independently, read-only: trace each trigger through the code and answer confirmed, refuted or uncertain with evidence.`, `Findings (JSON): ${JSON.stringify(missing.map(findingBrief))}`, ...asked, dg].join("\n\n"), { label: `verify-findings-${plan}`, agentType: agentFor("finding_verifier", "finding-verifier"), role: "finding_verifier", readOnly: true, schema: verdictSchema });
     // GSDF-01: a quota, credit or auth failure is never retried.
     if (r.result === null && fatal(r.reason)) return { stop: owner("Review", `finding verifier of ${plan} failed: ${r.reason}`, { failure: classify(r.reason), findings: gated.map(findingBrief) }) };
-    for (const v of r.result?.verdicts ?? []) if (missing.some((f) => f.id === v.id)) { verdicts[v.id] = v.verdict; evidence[v.id] = v.evidence ?? ""; }
+    for (const v of r.result?.verdicts ?? []) if (missing.some((f) => f.id === v.id)) { verdicts[v.id] = v.verdict; evidence[v.id] = v.evidence ?? ""; keepCatch(v); }
   }
   // A second, independent verifier decides what the first left uncertain, before the owner is asked; it does not see
   // the first verdict. Still uncertain stays unverified.
   const unsure = gated.filter((f) => verdicts[f.id] === "uncertain");
   if (unsure.length) {
     metrics.secondVerifier += unsure.length;
-    const r = await call([`Verify these review findings of plan ${plan} independently, read-only: trace each trigger through the code and answer confirmed, refuted or uncertain with evidence.`, `Findings (JSON): ${JSON.stringify(unsure.map(findingBrief))}`, "Return JSON {verdicts: [{id, verdict, evidence}]}.", dg].join("\n\n"), { label: `verify-findings-${plan}-second`, agentType: agentFor("finding_verifier", "finding-verifier"), role: "finding_verifier", readOnly: true, schema: VERDICT_SCHEMA });
+    const r = await call([`Verify these review findings of plan ${plan} independently, read-only: trace each trigger through the code and answer confirmed, refuted or uncertain with evidence.`, `Findings (JSON): ${JSON.stringify(unsure.map(findingBrief))}`, ...asked, dg].join("\n\n"), { label: `verify-findings-${plan}-second`, agentType: agentFor("finding_verifier", "finding-verifier"), role: "finding_verifier", readOnly: true, schema: verdictSchema });
     if (r.result === null && fatal(r.reason)) return { stop: owner("Review", `second finding verifier of ${plan} failed: ${r.reason}`, { failure: classify(r.reason), findings: gated.map(findingBrief) }) };
     for (const v of r.result?.verdicts ?? []) if (unsure.some((f) => f.id === v.id)) {
-      if (v.verdict !== "uncertain") verdicts[v.id] = v.verdict;
+      if (v.verdict !== "uncertain") { verdicts[v.id] = v.verdict; keepCatch(v); }
       evidence[v.id] = [evidence[v.id], v.evidence].filter(Boolean).join(" | second verifier: ");
     }
   }
   for (const f of gated) {
     f.verdict = verdicts[f.id] ?? "unverified";
     f.verdictEvidence = evidence[f.id] ?? (verdicts[f.id] ? "" : "no verifier answered");
+    if (metricsOn && f.verdict === "confirmed") {
+      f.planCatchable = catchable[f.id]?.tag ?? null;
+      f.catchReason = catchable[f.id]?.reason ?? "";
+    }
   }
   return {};
 }
@@ -846,6 +919,7 @@ async function fixer(label, findings, failures, owns) {
   const prompt = [fixerText(fixOwns, findings, failures), digestLine(`fix:${label}`, await digestOf({ owns: fixOwns, files: findingFiles(findings) }))].join("\n\n");
   const r = await writeTree(() => call(prompt, fixerOpts(label, { timeoutS: (g.fixer.minutes + 5) * 60 })));
   ev(`fixer ${label}`);
+  await defectEvent("fix-round", { label, plan: null, fixer: findings.length ? "review" : "gate" }, r.result ? defectsOf(r.result) : []);
   // kit-feedback 55: an edit that no build or test run followed is named in the stop, so the owner runs the failing tests before any hand fix.
   const lastEdit = r.result ? r.result.lastEdit ?? "unverified" : null;
   if (!r.result || r.result.status !== "fixed") {
@@ -1422,12 +1496,19 @@ let final = await batchGate();
 // gets only the failures of the executed plans; a failure naming no file has no fixer.
 if (!final.green) {
   const placed = (final.unplaced ?? []).filter((f) => (f.files ?? []).length);
+  // Kit feedback 64: in batch mode the cause of the red gate is what the integration fixer names; the batch fixer's own
+  // defects are recorded with its fix call.
+  const batchRed = { wave: batchId, round: 1, label: "the batch", plans: doneTasks.map((t) => t.plan), failures: final.failureCount ?? null };
+  if (!placed.length) await defectEvent("gate-failure", batchRed, []);
   if (placed.length) {
     const files = [...new Set(placed.flatMap((f) => f.files))];
     for (const f of files) integrationFiles.add(f);
     progress.integration = [...integrationFiles];
     if (!(await saveProgress())) return result("failed", { reason: `${PROGRESS} could not be written before the integration fix` });
     const r = await call([`Integration fix: these gate failures belong to no plan. You own exactly these files: ${JSON.stringify(files)}.`, failureText(placed), "Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence}.", digestLine("fix:integration", await digestOf({ files }))].join("\n\n"), fixerOpts("integration-fix-batch"));
+    const named = r.result ? defectsOf(r.result) : [];
+    await defectEvent("fix-round", { wave: batchId, round: 1, label: "the batch", plan: null, fixer: "integration" }, named);
+    await defectEvent("gate-failure", batchRed, named);
     if (!r.result || r.result.status !== "fixed") return owner("Gate", `the integration fixer of the batch ${r.result ? "answered unresolved" : `returned nothing${r.reason ? ` (${r.reason})` : ""}`}`, { failures: placed, evidence: final.evidence, ...(fatal(r.reason) ? { failure: classify(r.reason) } : {}) });
     final = await batchGate();
   }

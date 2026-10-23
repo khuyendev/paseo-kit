@@ -253,6 +253,41 @@ async function plannerCall(session, label, body, digestKey, digest, extra = {}) 
 }
 const ownerStop = (stage, r) => owner(stage, `planner returned ${ownerMarker(r)}`, { marker: ownerMarker(r), question: r?.question ?? r?.summary ?? null, summary: r?.summary ?? null, plans: r?.plans ?? null, conflict: r?.conflict ?? null, options: ["answer and rerun with the same args", "adjust CONTEXT and rerun", "abandon"] });
 const failedCall = (what, reason) => result("failed", { reason: `${what}${reason ? `: ${reason}` : " returned nothing"}` });
+// Kit feedback 64: each pre-code review stage that ran leaves a record of its findings and their fates for `ph review-stats
+// --stage` (gsd.review_metrics); `part` names a part of a stage that runs beside others (the dependency checks). Measurement
+// only: no flow reads it back, and a failed write is a warning, never a stop.
+async function prereview(stage, findings, part) {
+  if (!g.review_metrics) return;
+  const w = await flow(["prereview-record", phaseDir], { stage, runId, mode, ...(part ? { part } : {}), findings });
+  if (w.code !== 0) log(`warning: ${stage} review record not written: ${(w.json?.errors ?? [w.json?.error ?? `exit ${w.code}`]).join("; ")}`);
+  else log(`review metrics: ${w.json.record}`);
+}
+// Kit feedback 64: the findings of checker judgments (the checker loop, the streams join, the dependency checks), one entry
+// per distinct issue: same plan, dimension and invariant, as the loop's own sameIssue. A blocker entry closes when a check
+// confirms it resolved (applied) or its revision conflicts; the same blocker raised again after that is a new entry. Nothing
+// is added to the issues themselves, so no prompt changes.
+function checkerLedger(prefix) {
+  const entries = [];
+  const same = (x, i) => (x.plan ?? null) === (i.plan ?? null) && x.dimension === i.dimension && x.required_property === i.required_property;
+  const entryOf = (i, severity) => {
+    let e = entries.find((x) => x.severity === severity && same(x, i) && (severity !== "blocker" || x.fate === null));
+    // dimension and required_property as the checker wrote them (possibly unset), so the match compares like with like.
+    if (!e) entries.push((e = { id: `${prefix}${entries.length + 1}`, plan: i.plan ?? null, dimension: i.dimension, required_property: i.required_property, severity, description: i.description ?? "", fate: null }));
+    return e;
+  };
+  // Every issue of one checker reply: info, warning, else blocker (unknown = blocker), as checkerFindings sorts them.
+  const add = (list) => { for (const i of list ?? []) entryOf(i, ["info", "warning"].includes(String(i.severity).toLowerCase()) ? String(i.severity).toLowerCase() : "blocker"); };
+  const settle = (pick, fate) => { for (const e of entries) if (e.fate === null && e.severity === "blocker" && pick(e)) e.fate = fate; };
+  const findings = () => entries.map((e) => {
+    const blocking = e.severity === "blocker";
+    const fate = e.fate ?? (blocking ? "open" : "carried");
+    return { id: e.id, plan: e.plan, class: e.dimension || (prefix === "D" ? "dependency" : "checker"), dimension: e.dimension ?? "", required_property: cut300(e.required_property), severity: e.severity, blocking, confirmed: blocking && fate === "applied", fate, description: cut300(e.description) };
+  });
+  return { ran: false, entries, same, entryOf, add, settle, findings };
+}
+const isConflict = (r) => markerOf(r).includes("REVISION_CONFLICT");
+// O67's dependency checks of the streams flow, recorded as their own part of the checker stage.
+const depLedger = checkerLedger("D");
 
 const sharedChanges = [];
 // F40 (kit-feedback 40): the plans a planner wrote in this run; forceProceed does not accept them in the run that wrote them.
@@ -359,11 +394,14 @@ const hasEdges = (o) => Boolean(o?.needsWiring || (o?.crossPlan ?? []).length);
 const openIssues = () => [...issues.values()].filter((i) => i.state === "open");
 const openBlockers = () => openIssues().filter((i) => i.severity === "blocker");
 let laneSeq = 0;
+// The issues a lane reviewer raised, not the ones the flow added (architect outline changes, new cross-plan edges).
+const laneIssueIds = new Set();
 function addIssue(laneId, raw) {
   const sev = sevClass(String(raw.severity ?? "").toLowerCase());
-  if (sev === "info") { advisories.push({ lane: laneId, plan: raw.plan ?? null, description: raw.description }); return; }
+  if (sev === "info") { advisories.push({ lane: laneId, plan: raw.plan ?? null, description: raw.description }); return null; }
   const id = `${laneId}-${++laneSeq}`;
   issues.set(id, { id, lane: laneId, plan: raw.plan ?? null, dimension: raw.dimension ?? "", required_property: raw.required_property ?? "", severity: sev, target: raw.target ?? "outline", description: raw.description ?? "", evidence: raw.evidence ?? "", fix_hint: raw.fix_hint ?? "", state: "open", resolution: "" });
+  return id;
 }
 async function snapshotList() {
   const paths = [OUTLINE, MANIFEST, P("CONTEXT.md"), ".planning/REQUIREMENTS.md", ".planning/ROADMAP.md"];
@@ -405,7 +443,7 @@ async function skeletonGate() {
     // The lane table shows the model and effort this lane's reviewer resolved to, not the other lanes' (GSDF-18).
     lanes[i].resolved = { model: r?.model ?? null, effort: r?.effort ?? null };
     if (!r || r.result === null) laneFailures.set(lanes[i].id, r?.reason ?? null);
-    else for (const raw of r.result.issues ?? []) addIssue(lanes[i].id, raw);
+    else for (const raw of r.result.issues ?? []) { const id = addIssue(lanes[i].id, raw); if (id) laneIssueIds.add(id); }
   }
   for (const c of outlineChangeIssues) addIssue(integrationLane, c);
   if (laneFailures.size) {
@@ -465,6 +503,19 @@ async function skeletonGate() {
   return { status: "passed" };
 }
 const cut300 = (s) => String(s ?? "").replace(/\s+/g, " ").replace(/\|/g, "/").slice(0, 300);
+// Kit feedback 64: a skeleton issue is applied once its lane's resolution check confirmed the revision; an open blocker of a
+// REVISION_CONFLICT stop is a conflict; a warning of a passed gate and every info note are carried. Confirmed: applied blockers.
+function skeletonFindings(gate) {
+  const lensOf = (laneId) => lanes.find((l) => l.id === laneId)?.lens ?? null;
+  const conflict = isConflict(gate.stop);
+  const raised = [...issues.values()].map((i) => {
+    const blocking = i.severity === "blocker";
+    const fate = i.state === "resolved" ? "applied" : blocking ? (conflict ? "conflict" : "open") : gate.status === "passed" ? "carried" : "open";
+    return { id: i.id, plan: i.plan, class: i.dimension || lensOf(i.lane), lane: i.lane, lens: lensOf(i.lane), source: laneIssueIds.has(i.id) ? "lane" : "flow", severity: i.severity, blocking, confirmed: blocking && fate === "applied", fate, description: cut300(i.description) };
+  });
+  const notes = advisories.filter((x) => lanes.some((l) => l.id === x.lane)).map((x, k) => ({ id: `${x.lane}-info-${k + 1}`, plan: x.plan ?? null, class: lensOf(x.lane), lane: x.lane, lens: lensOf(x.lane), source: "lane", severity: "info", blocking: false, confirmed: false, fate: "carried", description: cut300(x.description) }));
+  return [...raised, ...notes];
+}
 function renderReview(gate) {
   const rows = (list, cols) => list.map((i) => `| ${cols.map((c) => cut300(i[c])).join(" | ")} |`);
   const open = openIssues();
@@ -506,6 +557,7 @@ if ((await gsd(["revisions", "check", phaseDir, "freeze", "--settings", settings
   skeletonFresh = true;
   const gate = await skeletonGate();
   await gsd(["write", phaseDir, "OUTLINE-REVIEW"], renderReview(gate));
+  await prereview("skeleton", skeletonFindings(gate));
   if (gate.status !== "passed") return gate.stop;
   await gsd(["revisions", "record", phaseDir, "freeze", "--settings", settingsDigest.freeze]);
   await gsd(["revisions", "record", phaseDir, "skeleton"]);
@@ -631,6 +683,13 @@ function sameInterface(x, y) { return JSON.stringify(x) === JSON.stringify(y); }
 // dependents at once (each plan edited only by its own stream); a dependent whose own interface changed passes it on. The
 // depends_on graph has no cycle, so the rounds end. Returns the first stop, or null.
 async function propagate(changed) {
+  try {
+    return await propagateRounds(changed);
+  } finally {
+    if (depLedger.ran) await prereview("checker", depLedger.findings(), "dependents");
+  }
+}
+async function propagateRounds(changed) {
   while (changed.size) {
     const index = (await gsd(["phase-plan-index", N])).json?.plans ?? [];
     const providersOf = new Map();
@@ -666,10 +725,14 @@ async function dependentStream(id, providers) {
       digestLine(`plan:${id}`, (await gsd(["revisions", "hash", phaseDir, `plan:${id}`])).json?.hash ?? "none"),
     ].join("\n\n");
     const opts = { label: `depcheck-${id}-${round}`, agentType: agentFor("checker", "gsd-plan-checker"), readOnly: true, schema: ISSUES_SCHEMA, judges: await plansJudges([id, ...providers.map((p) => p.plan)]), ...roleOpts("checker") };
+    depLedger.ran = true;
     let c = await call(prompt, opts);
     if (c.result === null && !fatal(c.reason)) c = await call(prompt, opts);
     if (c.result === null) return { stop: failedCall(`dependency check ${id}`, c.reason) };
     const open = (c.result.issues ?? []).filter((i) => String(i.severity).toLowerCase() === "blocker").map((i) => ({ ...i, plan: id }));
+    // Kit feedback 64: a blocker of an earlier round that this check no longer raises was resolved by the revision.
+    depLedger.settle((e) => e.plan === id && !open.some((o) => depLedger.same(e, o)), "applied");
+    depLedger.add((c.result.issues ?? []).map((i) => ({ ...i, plan: id })));
     const entry = { plan: id, providers: providers.map((p) => p.plan), rounds: round, revised: round > 1 };
     if (!open.length) {
       dependents.push(entry);
@@ -682,6 +745,7 @@ async function dependentStream(id, providers) {
     }
     prev = open.length;
     const r = await plannerCall(`planner:${id}`, `deprevise-${id}-${round}`, [planningContext("revision"), revisionContext([planPath(id)], open)].join("\n\n"), "freeze", freezeHash, { judges: await plansJudges([id]) });
+    if (isConflict(r.result)) depLedger.settle((e) => e.plan === id, "conflict");
     if (ownerMarker(r.result)) return { stop: ownerStop("Dependents", r.result) };
     if (r.result === null) return { stop: failedCall(`dependent revision ${id}`, r.reason) };
     const s = await recordEach([id], false);
@@ -819,7 +883,16 @@ function checkerFindings(c) {
   }
   return out;
 }
+// Kit feedback 64: the checker's findings are recorded when the loop ends (pass, stop or failure), if a checker ran.
 async function checkerLoop(scopeIds, gapScoped) {
+  const ledger = checkerLedger("K");
+  try {
+    return await checkerRounds(scopeIds, gapScoped, ledger);
+  } finally {
+    if (ledger.ran) await prereview("checker", ledger.findings());
+  }
+}
+async function checkerRounds(scopeIds, gapScoped, ledger) {
   if (!gapScoped && !a.replan && (await gsd(["revisions", "check", phaseDir, "checked", "--settings", settingsDigest.checked])).code === 0) {
     log("checker skipped: plans unchanged since the last passing check");
     return { skipped: true };
@@ -841,10 +914,14 @@ async function checkerLoop(scopeIds, gapScoped) {
     const probeFile = `${phaseDir}/checker-probes.json`;
     await flow(["write", probeFile], JSON.stringify({ iteration: iter, probes: probeIssues }, null, 2));
     const earlier = pending.filter((i) => !stuck.has(keyOf(i))).map((i, n) => ({ ...i, id: `open-${n + 1}` }));
+    ledger.ran = true;
     const c = await checkerCall(iter, live, scopeIds, gapScoped, probeFile, earlier);
     if (c.result === null) return { stop: failedCall("plan checker", c.reason) };
     const confirmed = new Set((c.result.resolved ?? []).map((r) => r.id));
     const kept = earlier.filter((i) => !confirmed.has(i.id));
+    // An open blocker has one open ledger entry with its plan, dimension and invariant, so the lookup needs no id on the issue.
+    for (const i of earlier) if (confirmed.has(i.id)) ledger.entryOf(i, "blocker").fate = "applied";
+    ledger.add(c.result.issues);
     const checkerIssues = checkerFindings(c);
     // A still-open blocker the checker repeats is the same issue: the repeat replaces the carried copy, so it is counted once.
     const fresh = checkerIssues.filter((i) => i.severity === "blocker");
@@ -891,12 +968,14 @@ async function checkerLoop(scopeIds, gapScoped) {
     // conflict stops the loop after it, so the owner's answer reruns a phase whose other revisions are recorded.
     const owned = revised.find((r) => ownerMarker(r?.result));
     const conflict = owned ? ownerStop("Checker", owned.result) : null;
+    perPlan.forEach(([id], i) => { if (isConflict(revised[i]?.result)) ledger.settle((e) => keyOf(e) === id, "conflict"); });
     // A revision that returned nothing is not a finished revision: stop with its reason; the plan is never recorded as revised.
     const missed = revised.findIndex((r) => !r || r.result === null);
     if (!conflict && missed !== -1) return { stop: failedCall(`planner revision ${perPlan[missed][0]} (checker iteration ${iter})`, revised[missed]?.reason ?? null) };
     if (!conflict && stop) return { stop };
     if (phaseLevel.length) {
       const r = await plannerCall(gapScoped ? "planner:gaps" : "planner:outline", `revise-phase-${iter}`, [planningContext("revision"), revisionContext(scopeIds.map(planPath), phaseLevel)].join("\n\n"), "freeze", freezeHash, { judges: await plansJudges(scopeIds) });
+      if (isConflict(r.result)) ledger.settle((e) => keyOf(e) === null, "conflict");
       if (ownerMarker(r.result)) return { stop: conflict ?? ownerStop("Checker", r.result) };
       if (r.result === null) return { stop: conflict ?? failedCall(`phase-level planner revision (checker iteration ${iter})`, r.reason) };
       // The phase-level revision can change any plan, so every plan is checked and recorded again.
@@ -934,7 +1013,16 @@ async function settleStuck(stuck, scopeIds) {
 // resolution check of only its checker blockers), all plans at once and none waiting for another, under the loop's per-plan
 // cap and stall rule (kit-feedback 9). Phase-level blockers get the phase-level revision after the plan streams, so no plan
 // has two editors at once; a final probe pass over the whole set closes the join.
+// Kit feedback 64: the join's checker findings are recorded when the join ends, as the loop's are.
 async function checkerJoin(scopeIds) {
+  const ledger = checkerLedger("K");
+  try {
+    return await checkerJoinRounds(scopeIds, ledger);
+  } finally {
+    if (ledger.ran) await prereview("checker", ledger.findings());
+  }
+}
+async function checkerJoinRounds(scopeIds, ledger) {
   if (!a.replan && (await gsd(["revisions", "check", phaseDir, "checked", "--settings", settingsDigest.checked])).code === 0) {
     log("checker skipped: plans unchanged since the last passing check");
     return { skipped: true };
@@ -942,8 +1030,10 @@ async function checkerJoin(scopeIds) {
   const probeFile = `${phaseDir}/checker-probes.json`;
   const probes = await countProbes(scopeIds, false);
   await flow(["write", probeFile], JSON.stringify({ iteration: 1, probes }, null, 2));
+  ledger.ran = true;
   const c = await checkerCall(1, scopeIds, scopeIds, false, probeFile, []);
   if (c.result === null) return { stop: failedCall("plan checker", c.reason) };
+  ledger.add(c.result.issues);
   const checkerIssues = checkerFindings(c);
   const keyOf = (i) => (i.plan && scopeIds.includes(i.plan) ? i.plan : null);
   const blockerOf = (list, key) => list.filter((i) => i.severity === "blocker" && keyOf(i) === key);
@@ -971,6 +1061,7 @@ async function checkerJoin(scopeIds) {
       const scope = key ? [key] : scopeIds;
       for (const id of scope) if (!shapeBefore.has(id)) shapeBefore.set(id, await planInterface(id));
       const r = await plannerCall(key ? `planner:${key}` : "planner:outline", `revise-${name}-${round}`, [planningContext("revision"), revisionContext(scope.map(planPath), open)].join("\n\n"), "freeze", freezeHash, { judges: await plansJudges(scope) });
+      if (isConflict(r.result)) ledger.settle((e) => keyOf(e) === key, "conflict");
       if (ownerMarker(r.result)) return { conflict: ownerStop("Checker", r.result) };
       if (r.result === null) return { stop: failedCall(`planner revision ${name} (checker join round ${round})`, r.reason) };
       const s = await recordEach(scope, false);
@@ -991,6 +1082,7 @@ async function checkerJoin(scopeIds) {
         if (v.result === null && !fatal(v.reason)) v = await call(prompt, opts);
         if (v.result === null) return { stop: failedCall(`plan checker resolution ${name}`, v.reason) };
         const resolved = new Set((v.result.resolved ?? []).map((x) => x.id));
+        for (const i of asked) if (resolved.has(i.id)) ledger.entryOf(i, "blocker").fate = "applied";
         still = asked.filter((i) => !resolved.has(i.id));
       }
       open = [...still, ...blockerOf(await countProbes(scopeIds, false), key)];
