@@ -81,10 +81,10 @@ test("FLOW-40 a missing run dir or a dir without run.json ends after 60 s", asyn
 
 const J = [
   { n: 1, status: "start" },
-  { n: 1, label: "plan:a", agentId: "a1", status: "ok", duration_s: 10, tokens: 5, usage: { input: 100, cachedInput: 50, output: 5, costUsd: 0.01 } },
-  { n: 2, label: "review:b", agentId: "a2", status: "null", duration_s: 30, tokens: 7, usage: { input: 200, cachedInput: 0, output: 7, costUsd: 0.02 } },
-  { n: 3, label: "plan:c", agentId: "a3", status: "ok", duration_s: 20, tokens: 1, usage: { input: 1, cachedInput: 1, output: 1, costUsd: 0.005 } },
-  { n: 4, label: "plan:a", agentId: "a0", status: "cached", duration_s: 0, tokens: 0 },
+  { n: 1, label: "plan:a", role: "planner", model: "circle/m", agentId: "a1", status: "ok", duration_s: 10, tokens: 5, usage: { input: 100, cachedInput: 50, output: 5, costUsd: 0.01 } },
+  { n: 2, label: "review:b", role: "checker", model: "circle/mid", agentId: "a2", status: "null", duration_s: 30, tokens: 7, usage: { input: 200, cachedInput: 0, output: 7, costUsd: 0.02 } },
+  { n: 3, label: "plan:c", role: "planner", model: "circle/m", agentId: "a3", status: "ok", duration_s: 20, tokens: 1, usage: { input: 1, cachedInput: 1, output: 1, costUsd: 0.005 } },
+  { n: 4, label: "plan:a", role: "planner", model: "circle/m", agentId: "a0", status: "cached", duration_s: 0, tokens: 0 },
 ];
 
 test("FLOW-41 run-stats numbers equal the journal sums; a missing run is one failed line, exit 2", async () => {
@@ -93,7 +93,7 @@ test("FLOW-41 run-stats numbers equal the journal sums; a missing run is one fai
   const r = await s.ph(["run-stats", "wf_s", "wf_missing"]);
   assert.equal(r.code, 2);
   assert.deepEqual(r.out.slice(0, 2), [
-    "wf_s [plan, review] status done",
+    "wf_s [planner circle/m, checker circle/mid] status done",
     "wall 100 s; agents 4: median 20 s, slowest 30 s; tokens in 301 cached 51 out 13; cost $0.035",
   ]);
   assert.match(r.out[2], /^failed wf_missing: no .*run\.json$/);

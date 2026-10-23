@@ -20,9 +20,16 @@ function median(values) {
 
 const round1 = (x) => Math.round(x * 10) / 10;
 
+// The role and model a journal row ran with: its role, else its agent type, else the role part of its label (rows
+// journaled before roles were). The model is "-" when none was recorded (identity-error calls).
+const roleModel = (e) => {
+  const role = e.role || e.agentType || String(e.label ?? "").split(":")[0];
+  return role ? `${role} ${e.model ?? "-"}` : null;
+};
+
 export function runSummary(id, info, journal, nowMs) {
   const live = journal.filter((e) => e.status === "ok" || e.status === "null");
-  const roles = [...new Set(live.concat(journal.filter((e) => e.status === "cached")).map((e) => String(e.label ?? "").split(":")[0]).filter(Boolean))];
+  const roles = [...new Set(live.concat(journal.filter((e) => e.status === "cached")).map(roleModel).filter(Boolean))];
   const agents = new Set([...live.map((e) => e.agentId).filter(Boolean), ...(info.adopted ?? []).map((a) => a.agentId)]);
   const secs = live.map((e) => e.duration_s).filter((s) => typeof s === "number");
   const sum = (field) => live.reduce((t, e) => t + (e.usage?.[field] ?? (field === "output" ? e.tokens ?? 0 : 0)), 0);

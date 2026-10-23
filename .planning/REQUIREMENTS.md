@@ -1135,7 +1135,7 @@ Every behavior M1, M2 and M3 absorb in the SYNTHESIS module table, once each. IN
 - Scope: v1
 
 #### FLOW-41 ph run-stats
-- Requirement: `ph run-stats RUNID... [--transcripts] [--runs-dir D]` (default `_workspace/_runs`) prints per run from `run.json` + `journal.jsonl` (agents adopted from an earlier run count for this run, FLOW-48): `<id> [<roles>] status <s>`; `wall <s> s; agents <n>: median <s> s, slowest <s> s; tokens in <i> cached <c> out <o>; cost $<x|?>`; with `--transcripts` also tool-call counts per kind (FLOW-32 table) from Claude Code transcripts under `<CLAUDE_CONFIG_DIR|~/.claude>/projects/<cwd slug>` matched only by the exact `Run <runId> #<n>` tag; a missing run or journal -> `failed <id>: <reason>` and exit 2 (no stack trace).
+- Requirement: `ph run-stats RUNID... [--transcripts] [--runs-dir D]` (default `_workspace/_runs`) prints per run from `run.json` + `journal.jsonl` (agents adopted from an earlier run count for this run, FLOW-48): `<id> [<role> <model>, ...] status <s>` (one entry per distinct role and model, model `-` when none was recorded); `wall <s> s; agents <n>: median <s> s, slowest <s> s; tokens in <i> cached <c> out <o>; cost $<x|?>`; with `--transcripts` also tool-call counts per kind (FLOW-32 table) from Claude Code transcripts under `<CLAUDE_CONFIG_DIR|~/.claude>/projects/<cwd slug>` matched only by the exact `Run <runId> #<n>` tag; a missing run or journal -> `failed <id>: <reason>` and exit 2 (no stack trace).
 - Acceptance: fixture run: numbers equal the journal sums; a tagged transcript counted, an untagged transcript of the same time window not; missing run -> exit 2 with one `failed` line.
 - Source: WFL-42, RUN-59, D-25, D-31.
 - Scope: v1
