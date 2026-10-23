@@ -164,13 +164,17 @@ export const readRevisions = (phase) => readJsonIf(revisionsFile(phase), null) ?
 // without a settings part never matches that check (kit feedback 73).
 const settingsFamily = (key) => (key === "freeze" || key === "checked" ? key : key.startsWith("plan:") ? "plan" : null);
 
-// The digest a record without --settings reuses: the key's previous record, else the newest record of its family (every plan key
-// carries the planner's digest). The digest is the workflow's, and a hand edit changes no setting, so the old one stays exact.
-function inheritedSettings(data, key) {
+// The digest a record without --settings reuses: the key's previous record, else the digest the last gsd-plan run of the phase
+// checked this family with (plan-progress.json, written only by its plan-run verb; kit feedback 73, 87), else the newest record of
+// its family (every plan key carries the planner's digest). The digest is the workflow's, and a hand edit changes no setting, so the
+// old one stays exact.
+function inheritedSettings(data, key, phase) {
   const family = settingsFamily(key);
   if (family === null) return null;
   const own = data.keys[key]?.parts?.settings;
   if (own) return { digest: own, source: "previous record" };
+  const run = readJsonIf(path.join(phase.dir, "plan-progress.json"), null)?.settings?.[family];
+  if (typeof run === "string" && run) return { digest: run, source: "the last gsd-plan run (plan-progress.json)" };
   const sibling = Object.entries(data.keys)
     .filter(([k, v]) => k !== key && settingsFamily(k) === family && v.parts?.settings)
     .sort((a, b) => String(b[1].at).localeCompare(String(a[1].at)))[0];
@@ -179,7 +183,7 @@ function inheritedSettings(data, key) {
 
 export function recordRevision(g, phase, key, settings = null) {
   const explicit = settings !== null;
-  const inherited = explicit ? null : inheritedSettings(readRevisions(phase), key);
+  const inherited = explicit ? null : inheritedSettings(readRevisions(phase), key, phase);
   if (inherited) settings = inherited.digest;
   const warnings = [];
   if (!explicit && !inherited && settingsFamily(key) !== null) warnings.push(`${key} recorded without a settings part: the workflow checks it with --settings, so its next run counts the record changed and plans it again; pass --settings <digest> (the settings part of another ${settingsFamily(key) === "plan" ? "plan:<id>" : key} record in revisions.json) or let the flow record it`);
