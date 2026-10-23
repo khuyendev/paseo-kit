@@ -751,6 +751,16 @@
       "sha256": "e4200c15e0dfe10ff9848fbe32c599ddde16a800079183469ddb6987e39c3a8d"
     },
     {
+      "file": "harness/references/skill-testing-guide.md",
+      "from": 260,
+      "to": 260,
+      "lines": 1,
+      "categories": [
+        "c"
+      ],
+      "sha256": "71e78ba236e66b53efd7fd8aef11b97145e311bef02063b2a73f7de23a9efbbf"
+    },
+    {
       "file": "harness/references/team-examples.md",
       "from": 3,
       "to": 3,
@@ -853,14 +863,14 @@
     {
       "file": "harness/references/paseo-runtime.md",
       "from": 1,
-      "to": 433,
+      "to": 432,
       "lines": 425,
       "categories": [
         "c",
         "d",
         "f"
       ],
-      "sha256": "4867554f8d98ed2f9f297be9f461e0684a6d199703b70a457c4e695ee9352e41"
+      "sha256": "dc02de8af1b0e2fdd65209ed6252a3f900d682509bd20dc8e3c3898ced280876"
     }
   ]
 }

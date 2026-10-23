@@ -44,7 +44,7 @@ or config error (nothing done), 2 done with failed items or problems.
 | `ph fanout --file F --collect DIR [--keep]` | one-shot agents within the free slots; waits, writes `DIR/<name>.md` (final reply) and `DIR/<name>.json` (the `result --json` object), archives each agent unless `--keep`. Run it in the foreground; do not poll its output. |
 | `ph send (--prompt T \| --prompt-file F) [--now] NAME...` | delivers a message between turns (`--now` interrupts), prints `sent <name>` and the wait line. |
 | `ph watch NAME...` | under Monitor: `idle <name> <id8> out_tokens= context_tokens= duration_s=` per agent, then `watch done: k idle, m failed`. |
-| `ph result [--json] NAME...` | final replies; `--json` adds status, model, usage, tokens (only for agents this process created), `costUsd` from `.agents/model-prices.json`, `reportedCostUsd`, durations and the skills the agent called. |
+| `ph result [--json] NAME...` | final replies; `--json` adds status, model, usage, tokens (only for agents this process created), `costUsd` from `.agents/model-prices.json`, `reportedCostUsd`, durations and the skills the agent called in its newest 1000 timeline entries (`skills` is `null` when the timeline could not be read; `skillsWarning` says which). |
 | `ph team` | your live subagents: `<id8> <status> <context%> <provider/model> <name>`. |
 | `ph context [--self] [--rotate-pct N] [NAME...]` | context-window use, highest first; `ROTATE` at or above N (default `context_guard.start_pct`) marks the agent and changes nothing. To rotate it, start a fresh agent with a handoff, then `ph archive` the old one. |
 | `ph stop NAME...` | cancels the running turn; agent and context stay. |

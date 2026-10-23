@@ -80,7 +80,7 @@ test("PHCL-13 result: text, several headers, --json keys; tokens only when track
   assertLine(many, "## r2");
   const j = await s.ph(["result", "--json", "r1"]);
   const obj = JSON.parse(j.out[0]);
-  assert.deepEqual(Object.keys(obj), ["id", "name", "status", "model", "final", "usage", "tokens", "costUsd", "reportedCostUsd", "durationS", "lastTurnS", "skills"]);
+  assert.deepEqual(Object.keys(obj), ["id", "name", "status", "model", "final", "usage", "tokens", "costUsd", "reportedCostUsd", "durationS", "lastTurnS", "skills", "skillsWarning"]);
   assert.equal(obj.tokens, null);
   assert.equal(obj.costUsd, null);
   assert.equal(obj.reportedCostUsd, 0.5);

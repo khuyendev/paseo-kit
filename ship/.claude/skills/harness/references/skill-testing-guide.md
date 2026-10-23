@@ -257,7 +257,7 @@ Create 20 evaluation requests. Include 10 `should-trigger` requests where the sk
 4. Select the best-performing `description` based on the **test set** results. Selecting based on training results causes overfitting.
 5. Repeat this process up to five times.
 
-> Automate checks with a script that runs each evaluation request in a fresh Paseo agent, then read `ph result --json` and inspect its `skills` field (the skills the agent invoked). This replaces headless `claude -p`. It uses many tokens, so run it as a final step after the skill is stable.
+> Automate checks with a script that runs each evaluation request in a fresh Paseo agent, then read `ph result --json` and inspect its `skills` field (the skills the agent invoked). Treat a `null` `skills` or a `skillsWarning` as an unknown result and rerun that case, since a partial list can miss a skill call. This replaces headless `claude -p`. It uses many tokens, so run it as a final step after the skill is stable.
 
 <a id="9-test-workspace-structure"></a>
 

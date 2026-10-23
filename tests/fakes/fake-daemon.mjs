@@ -238,7 +238,9 @@ export function createFakeDaemon({
     async fetchAgentTimeline(agentId, options = {}) {
       record("fetchAgentTimeline", [agentId, options]);
       const entries = timelines.get(agentId) ?? [];
-      return { entries: structuredClone(entries.slice(-(options.limit ?? entries.length))) };
+      // limit 0 means every row; a tail page is the newest rows and hasOlder says whether any were left out.
+      const limit = options.limit || entries.length;
+      return { entries: structuredClone(entries.slice(-limit)), hasOlder: entries.length > limit };
     },
     on(typeOrHandler, maybeHandler) {
       const h = typeof typeOrHandler === "function" ? { type: null, fn: typeOrHandler } : { type: typeOrHandler, fn: maybeHandler };

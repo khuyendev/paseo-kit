@@ -1,5 +1,8 @@
 // The `ph result --json` object of one agent (PHCL-13), also written by `fanout --collect` before archiving.
+import { errText } from "../lib/cli.mjs";
 import { costUsd, loadPrices } from "./pricing.mjs";
+
+const SKILL_WINDOW = 1000;
 
 const seconds = (from, to) => {
   const a = Date.parse(from ?? "");
@@ -14,9 +17,17 @@ function skillName(item) {
   return input.skill ?? input.command ?? input.name ?? item.detail?.label ?? item.detail?.text ?? "?";
 }
 
+// Skills come from the newest entries of the timeline only. A failed read gives skills null (unknown), not an empty list.
 export async function skillsUsed(session, agentId) {
-  const names = (await session.timeline(agentId, { limit: 1000 })).map((e) => e.item).filter(isSkillCall).map(skillName);
-  return [...new Set(names)];
+  let page;
+  try {
+    page = await session.timeline(agentId, { limit: SKILL_WINDOW });
+  } catch (e) {
+    return { skills: null, skillsWarning: `could not read the timeline, skills unknown: ${errText(e)}` };
+  }
+  const names = page.entries.map((e) => e.item).filter(isSkillCall).map(skillName);
+  const warning = page.hasOlder ? `only the last ${SKILL_WINDOW} timeline entries were read; skill calls older than that are not listed` : null;
+  return { skills: [...new Set(names)], skillsWarning: warning };
 }
 
 export async function resultJson(session, agent, prices = loadPrices(session.root)) {
@@ -37,6 +48,6 @@ export async function resultJson(session, agent, prices = loadPrices(session.roo
     reportedCostUsd: tracked?.reportedCostUsd ?? usage?.totalCostUsd ?? null,
     durationS: seconds(agent.createdAt, agent.updatedAt),
     lastTurnS: seconds(agent.lastUserMessageAt, agent.updatedAt),
-    skills: await skillsUsed(session, agent.id),
+    ...(await skillsUsed(session, agent.id)),
   };
 }

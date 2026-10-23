@@ -264,9 +264,10 @@ export class Session {
     return { agent, created: false, warning: null };
   }
 
+  // A failed read throws, so the caller cannot mistake it for an empty timeline. hasOlder says entries were cut off.
   async timeline(agentId, { limit = 1000 } = {}) {
-    const res = await this.client.fetchAgentTimeline(agentId, { direction: "tail", limit }).catch(() => null);
-    return res?.entries ?? [];
+    const res = await this.client.fetchAgentTimeline(agentId, { direction: "tail", limit });
+    return { entries: res?.entries ?? [], hasOlder: res?.hasOlder ?? false };
   }
 
   async observe(agentIds) {

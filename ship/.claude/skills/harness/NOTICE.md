@@ -112,6 +112,7 @@ Region inventory (source line ranges of the carried file; each region is replace
 - `references/skill-writing-guide.md` lines 237-237 -> 1 line(s): (b)
 - `references/skill-testing-guide.md` lines 3-3 -> 1 line(s): (c)
 - `references/skill-testing-guide.md` lines 76-76 -> 1 line(s): (c)
+- `references/skill-testing-guide.md` lines 260-260 -> 1 line(s): (c)
 - `references/team-examples.md` lines 3-3 -> 1 line(s): (c)
 - `references/team-examples.md` lines 35-36 -> 2 line(s): (c)
 - `references/team-examples.md` lines 38-39 -> 2 line(s): (c)
@@ -122,7 +123,7 @@ Region inventory (source line ranges of the carried file; each region is replace
 - `references/team-examples.md` lines 132-133 -> 2 line(s): (c)
 - `references/team-examples.md` lines 135-135 -> 1 line(s): (c)
 - `references/team-examples.md` lines 146-147 -> 2 line(s): (a)
-- `references/paseo-runtime.md` lines 1-433 -> 425 line(s): (c) (d) (f)
+- `references/paseo-runtime.md` lines 1-432 -> 425 line(s): (c) (d) (f)
 
 `references/paseo-runtime.md` is rewritten as a whole for the new `ph` (category c, with d and f); it keeps the section
 numbering the method text refers to. Kit-authored update (2026-10-23, bug-hunt fix G145, FIX1-BRIEF): section 6-6 and
