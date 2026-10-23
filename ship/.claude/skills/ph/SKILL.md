@@ -123,7 +123,9 @@ one Paseo agent created and archived by the runner. The method's recipes are in
 until dry, budget-aware loop, custom type + schema + effort, tier choice).
 
 - `ph workflow --script F | --name N [--args JSON | --args-file F] [--budget 500k] [--runs-dir D] [--detach]`;
-  resume a run with `ph workflow --script F --args-file A --resume <runId>` or `ph workflow --resume <runId>`.
+  resume a run with `ph workflow --script F --args-file A --resume <runId>` or `ph workflow --resume <runId>`. A resume
+  first archives the agents the killed run left running (journaled, never finished), so each call starts again with
+  one live agent.
   `--detach` returns at once; follow it with `ph watch-run <runId>` under Monitor.
 - Run directory `_workspace/_runs/<runId>/`: `script.js`, `args.json`, `run.json`, `journal.jsonl`, `log.txt`,
   `result.json`. `ph run-stats <runId>` sums time, tokens and cost; `ph runs [--prune]` lists and prunes runs;

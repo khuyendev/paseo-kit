@@ -37,6 +37,17 @@ export function loadJournalCache(journalPath) {
   return cache;
 }
 
+// Agent ids of calls that were created and never finished in a killed run (G123): a resume stops them first.
+export function loadInFlight(journalPath) {
+  const open = new Map();
+  for (const e of readJournal(journalPath)) {
+    // Finish records have no kind; the n of a call is shared by its start, created and finish records.
+    if (e.kind === "agent" && e.status === "created") open.set(e.n, e.agentId);
+    else if (e.status === "ok" || e.status === "null") open.delete(e.n);
+  }
+  return [...open.values()];
+}
+
 export function createJournal(journalPath) {
   if (journalPath) {
     fs.mkdirSync(path.dirname(journalPath), { recursive: true });

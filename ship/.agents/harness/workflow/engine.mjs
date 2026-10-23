@@ -60,7 +60,7 @@ const shellText = (cmd) => (Array.isArray(cmd) ? cmd.map(String).join(" ") : Str
  * host.identify is synchronous (occurrence numbers are assigned at call time) and returns
  * {roleHash, model, effort, provider} or {error}; it throws configuration errors.
  * host.admit(spec without n) resolves {release()} or {reason} (a named null, FLOW-14); the runner gets it as
- * spec.admission.
+ * spec.admission. spec.journalAgent(agentId) journals an agent as soon as it exists, so a resume can stop it (G123).
  */
 export async function runWorkflow(o) {
   const { limits, host, out } = o;
@@ -177,8 +177,10 @@ export async function runWorkflow(o) {
         b = base();
         state.started++;
         journal({ n: b.n, kind: "agent", key, occ, label, phase, status: "start", ...(b.session !== undefined ? { session: b.session } : {}) });
+        // Written before the call finishes: an agent the run is killed in the middle of stays known to the resume (G123).
+        const journalAgent = (agentId) => journal({ n: b.n, kind: "agent", key, occ, label, phase, status: "created", agentId });
         try {
-          r = await host.runner({ ...spec(b.n), admission });
+          r = await host.runner({ ...spec(b.n), admission, journalAgent });
         } catch (e) {
           r = { status: "null", reason: `runner error: ${errText(e)}`, tokens: 0 };
         }

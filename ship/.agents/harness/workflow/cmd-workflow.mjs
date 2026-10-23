@@ -7,7 +7,7 @@ import { PH_FILE, UsageError, errText } from "../lib/cli.mjs";
 import { readText, writeJsonAtomic, readJsonIf } from "../lib/io.mjs";
 import { samePath } from "../lib/paths.mjs";
 import { runWorkflow } from "./engine.mjs";
-import { RUN_FILES, loadJournalCache, newRunId, parseBudget, readJournal, runsDirOf, runsDirSuffix } from "./journal.mjs";
+import { RUN_FILES, loadInFlight, loadJournalCache, newRunId, parseBudget, readJournal, runsDirOf, runsDirSuffix } from "./journal.mjs";
 import { METRICS_REL, appendRecords, runRecord } from "./metrics.mjs";
 import { createPaseoHost } from "./runner.mjs";
 import { runtime as kitRuntime } from "./runtime-bridge.mjs";
@@ -190,6 +190,9 @@ async function runForeground(ctx, p) {
     // One budget pool: the orchestrator's own output during the run counts too (FLOW-09).
     await session.usage.track([caller]);
     const callerBase = session.usage.get(caller)?.output ?? 0;
+    // Calls the killed run created and never finished may still be running: stopped before any replacement starts (G123).
+    const orphans = p.prevDir ? loadInFlight(path.join(p.prevDir, RUN_FILES.journal)) : [];
+    for (const agentId of orphans) await host.stop(agentId);
     const r = await runWorkflow({
       source: p.script.source, scriptPath: p.script.scriptPath, args: p.args, runId: p.runId, attemptRunId: p.attemptRunId, root: ctx.root, env: ctx.env,
       limits: { maxConcurrent: ctx.cfg.max_subagents, maxAgents: ctx.cfg.max_agents_per_workflow, budgetTotal: p.budgetTotal, shellTimeoutS: ctx.cfg.wait_timeout_s },

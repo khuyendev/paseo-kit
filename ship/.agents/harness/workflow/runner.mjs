@@ -105,7 +105,7 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
   }
 
   async function runner(spec) {
-    const { n, opts, identity, label, workflowName, prompt, admission } = spec;
+    const { n, opts, identity, label, workflowName, prompt, admission, journalAgent } = spec;
     const t0 = clock.now();
     const def = identity.def;
     const sel = identity.sel;
@@ -183,6 +183,7 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
     async function create(text, outputSchema) {
       const agent = await session.createAgent({ sel, prompt: text, title: `${workflowName}:${label}`, name: label, swarm: workflowName, run: runId, cwd, outputSchema, readOnly });
       agentId = agent.id;
+      journalAgent?.(agentId);
       admission?.created?.(agentId);
       wd = watchdog.arm(agentId, label);
       out(`agent start #${n} ${label} ${id8(agentId)} ${identity.model}${primed ? " prime:two-turn" : ""}`);
@@ -231,6 +232,7 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
           wd?.disarm();
           agentId = r.agent.id;
           base = null;
+          journalAgent?.(agentId);
           admission?.created?.(agentId);
           wd = watchdog.arm(agentId, label);
           out(`log warning: ${r.warning}`);
@@ -316,6 +318,15 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
     }
   }
 
+  // A call the killed run left in flight (loadInFlight): archived before its replacement starts, so only one is live.
+  // A failed lookup or archive throws and fails the resume, which then starts nothing (G123).
+  async function stop(agentId) {
+    const known = await session.fetchAgent(agentId);
+    if (!known || known.archivedAt) return;
+    await session.archive(agentId);
+    out(`log stopped agent ${id8(agentId)} left running by a killed run; its call starts again`);
+  }
+
   // Run end (done, failed or stopped): every session agent is archived unless kept (FLOW-12).
   async function finish() {
     for (const s of sessions.values()) {
@@ -326,5 +337,5 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
     watchdog.close();
   }
 
-  return { identify, admit, adopt, runner, finish, watchdog };
+  return { identify, admit, adopt, runner, stop, finish, watchdog };
 }
