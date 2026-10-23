@@ -138,6 +138,8 @@ for (let cycle = 1; cycle <= MAX_CYCLES; cycle++) {
     if (st.code !== 0) return { status: "failed", reason: `plan ${p} fails verify plan-structure after the edit`, errors: st.json?.errors ?? [] };
     structure.push({ plan: p, warnings: st.json?.warnings ?? [] });
   }
+  // The edited plans pass the structure check: record them, so the next gsd-plan run keeps them instead of planning them again.
+  for (const p of plans) await gsd(["revisions", "record", phaseDir, `plan:${p}`]);
   const h = await gsd(["handoff", N]);
   if (h.code !== 0) return { status: "failed", reason: "handoff refused after the plan-review edit", errors: h.json?.errors ?? [] };
   planRevision = h.json?.planRevision ?? null;
