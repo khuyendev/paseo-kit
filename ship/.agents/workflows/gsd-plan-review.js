@@ -208,13 +208,16 @@ for (let cycle = 1; ; cycle++) {
     if (conflicted(fix)) return { status: "needs-owner", reason: "plan editor returned REVISION_CONFLICT", conflict: fix.result.conflict ?? null, issues: kept, counts };
     checks = await checkPlans();
   }
+  const edited = [];
+  for (const p of plans) if ((await fileSha(planPath(p))) !== before.get(p)) edited.push(p);
+  for (const p of edited) clean.delete(p);
+  // Each edited plan that passes the structure check is recorded, as the checker's revision loop records its revisions (G015),
+  // so the next gsd-plan run keeps it instead of planning it again (kit-feedback 47); a plan that fails does not drop its siblings.
+  for (const c of checks) if (c.ok && edited.includes(c.plan)) await gsd(["revisions", "record", phaseDir, `plan:${c.plan}`, ...(planSettings ? ["--settings", planSettings] : [])]);
   const broken = checks.find((c) => !c.ok);
   if (broken) return { status: "failed", reason: `plan ${broken.plan} fails verify plan-structure after the edit`, errors: broken.errors };
-  for (const p of plans) if ((await fileSha(planPath(p))) !== before.get(p)) clean.delete(p);
   // The warnings of this check are the plans' warnings now; gsd-plan replaces the earlier ones with them (G019).
   structure = checks.map((c) => ({ plan: c.plan, warnings: c.warnings }));
-  // The edited plans pass the structure check: record them, so the next gsd-plan run keeps them instead of planning them again.
-  for (const p of plans) await gsd(["revisions", "record", phaseDir, `plan:${p}`, ...(planSettings ? ["--settings", planSettings] : [])]);
   const h = await gsd(["handoff", N]);
   if (h.code !== 0) return { status: "failed", reason: "handoff refused after the plan-review edit", errors: h.json?.errors ?? [] };
   planRevision = h.json?.planRevision ?? null;
