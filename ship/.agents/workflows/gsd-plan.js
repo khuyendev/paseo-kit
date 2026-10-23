@@ -589,9 +589,12 @@ async function checkerLoop(scopeIds, gapScoped) {
     const probeIssues = await countProbes(scopeIds, gapScoped);
     const probeFile = `${phaseDir}/checker-probes.json`;
     await flow(["write", probeFile], JSON.stringify({ iteration: iter, probes: probeIssues }, null, 2));
+    // The Files/plan thresholds grow with the phase's files, so the checker judges them against this phase's plans.
+    const filesPerPlan = (await gsd(["check", "owns", N])).json?.files_per_plan;
     const prompt = [
       `Check the plans of phase ${N} read-only: ${scopeIds.map(planPath).join(", ")}.`,
       planningContext(gapScoped ? "gap_closure" : "standard"),
+      filesPerPlan ? `Files per plan: warning at ${filesPerPlan.warning}+, blocker at ${filesPerPlan.blocker}+ (use these for the Files/plan thresholds).` : "",
       `Deterministic probe results are in ${probeFile}: they are already counted; do not re-derive them, do not repeat them as issues.`,
       warnings.length ? `Carried warnings:\n${warnings.map((w) => `- ${w}`).join("\n")}` : "",
       "Return JSON {issues: [{plan (null for phase-level), dimension, severity (blocker|warning|info), description, fix_hint}]}.",

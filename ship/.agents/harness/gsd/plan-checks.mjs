@@ -268,6 +268,14 @@ function identityProblem(codeRoot, p) {
   return null;
 }
 
+// Files/plan lines of the checker (gsd-plan-checker.md: warning 10, blocker 15). A phase whose plans list more files
+// than plans_per_phase can hold under those lines gets lines one above the average plan, so the cap stays satisfiable.
+const FILES_PER_PLAN = { warning: 10, blocker: 15 };
+export function filesPerPlanLines(g, plans) {
+  const average = Math.ceil(plans.reduce((n, p) => n + p.filesModified.length, 0) / g.cfg.gsd.plan_limits.plans_per_phase);
+  return { warning: Math.max(FILES_PER_PLAN.warning, average + 1), blocker: Math.max(FILES_PER_PLAN.blocker, average + 1) };
+}
+
 // Same-wave overlap of owns or files_modified (also used by waves and outline check).
 export function waveOverlaps(plans, ownedOf) {
   const problems = [];
@@ -295,5 +303,5 @@ export async function checkOwns(g, phase, ids) {
   const plans = readPlans(phase, ids);
   const { problems, owned } = await ownershipProblems(g, plans);
   problems.push(...waveOverlaps(plans, (p) => owned.get(p.id) ?? []));
-  return done({ passed: problems.length === 0, problems, plans: plans.map((p) => ({ id: p.id, wave: p.wave, owns: p.owns, files_modified: p.filesModified })) }, problems.length ? 1 : 0);
+  return done({ passed: problems.length === 0, problems, plans: plans.map((p) => ({ id: p.id, wave: p.wave, owns: p.owns, files_modified: p.filesModified })), files_per_plan: filesPerPlanLines(g, readPlans(phase)) }, problems.length ? 1 : 0);
 }
