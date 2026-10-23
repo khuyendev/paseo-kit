@@ -4,7 +4,7 @@ import { textDigest } from "../lib/hash.mjs";
 import { isInside } from "../lib/paths.mjs";
 import { done, fail, idList, none, unavailable } from "./common.mjs";
 import { frontmatterGet, frontmatterValidate, historyDigest, initPayload, initProject, listArtifacts, researchPrompt, summaryExtract, supersede, verifyArtifacts, verifyKeyLinks, writeArtifact } from "./artifacts.mjs";
-import { debugBudget, debugCheckpoint, debugClose, debugCreate, debugList, debugStatus } from "./debug.mjs";
+import { debugBudget, debugCheckpoint, debugClose, debugCreate, debugExtend, debugList, debugStatus } from "./debug.mjs";
 import { commitVerb, evaluationScope, selectRevertCommits } from "./gitverbs.mjs";
 import { haltClear } from "./halts.mjs";
 import { handoff, outlineCheck, outlineParseVerb, wavesVerb } from "./outline.mjs";
@@ -222,6 +222,7 @@ export const verbHandlers = {
   "debug.list": { options: {}, run: (g) => debugList(g) },
   "debug.checkpoint": { options: {}, run: (g, a) => debugCheckpoint(g, a[0], json(g.stdin())) },
   "debug.budget": { options: {}, run: (g, a) => debugBudget(g, a[0], json(g.stdin())) },
+  "debug.extend": { options: {}, run: (g, a) => debugExtend(g, a[0], json(g.stdin())) },
   "debug.close": {
     // --evidence-stdin: stdin {evidence} (the verify rerun, ADPT-17) is appended to ## Evidence before closing.
     options: { outcome: "string", summary: "string", why: "string", guard: "string", "evidence-stdin": "bool" },

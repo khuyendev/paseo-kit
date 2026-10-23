@@ -18,7 +18,7 @@ New failure:
 
 Results:
 - `needs-owner` with `{id, type, question, options}`: a checkpoint; ask the owner. The answer goes into the next invocation as `"checkpointAnswer": {"id": ..., "response": ...}` (it reaches the debugger only between DATA_START and DATA_END). An invocation without the answer is refused with `awaiting-owner`.
-- `needs-owner` type `budget-exhausted`: the session used `gsd.debug.max_turns` turns or `gsd.debug.minutes` minutes. An owner answer never refills it; an extension needs turns, minutes and a reason recorded in the session frontmatter `budget_extension`.
+- `needs-owner` type `budget-exhausted`: the session used `gsd.debug.max_turns` turns or `gsd.debug.minutes` minutes. An owner answer never refills it. To extend, give turns, minutes and a reason: `node .agents/harness/ph.mjs gsd debug extend <slug>` with JSON on stdin `{"turns": 8, "minutes": 60, "reason": "..."}`. The turns and minutes add to the session frontmatter `budget_extension`, the reason is kept under `## Checkpoints`, and the verb is refused while a run holds the code root. Then `continue <slug>`. Hand-editing `budget_extension` is a fallback only, as a JSON flow map: `budget_extension: {"turns": 8, "minutes": 60, "reason": "..."}`.
 - `resolved`: the verify obligation of the failing signature passed on a fresh run that executed something (a run that executed nothing or could not run is never a pass); the session moved to `resolved/` and the knowledge base got an entry.
 - `diagnosed`: root cause found (find_root_cause_only); the session stays active.
 - `refused`: another debug session runs on this code root (sessions run one at a time; no executor or planner writes there meanwhile).

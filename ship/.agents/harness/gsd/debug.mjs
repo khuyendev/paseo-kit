@@ -3,8 +3,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { writeTextAtomic } from "../lib/io.mjs";
+import { readJsonIf, writeTextAtomic } from "../lib/io.mjs";
 import { sha256, textDigest } from "../lib/hash.mjs";
+import { pidAlive } from "../lib/proc.mjs";
 import { done, fail, lf, none, nowIso, readIf, unavailable } from "./common.mjs";
 import { planningDir } from "./planning.mjs";
 import { frontmatter } from "./yaml.mjs";
@@ -288,6 +289,28 @@ export function debugBudget(g, slug, input) {
   const budget_used = { turns: (Number(used.turns) || 0) + add("turns"), minutes: (Number(used.minutes) || 0) + add("minutes") };
   write(s.file, { ...s.fm, updated: nowIso(), budget_used }, s.body);
   return done({ slug, budget_used, budget_extension: s.fm.budget_extension ?? null });
+}
+
+// GSDF-67: the owner's extension adds turns and minutes to budget_extension; the reason is kept under ## Checkpoints.
+// Refused while a run holds the code root, so the extension never races the budget writes of a running debugger.
+export function debugExtend(g, slug, input) {
+  const s = sessionFile(g, slug);
+  const held = readJsonIf(path.join(g.codeRoot, "_workspace/locks/debug.lock"), null);
+  if (held && (!Number.isInteger(held.pid) || pidAlive(held.pid))) throw fail(`${held.kind ? `a ${held.kind} run` : "another run"} holds this code root (${held.runId ?? "unknown run"}); extend after it ends`);
+  const num = (k) => {
+    const n = input?.[k];
+    if (typeof n !== "number" || !Number.isFinite(n) || n < 0) throw fail(`debug extend ${k} must be a number >= 0`);
+    return n;
+  };
+  const reason = typeof input?.reason === "string" ? input.reason.trim() : "";
+  if (!reason) throw fail("debug extend needs a reason");
+  const turns = num("turns");
+  const minutes = num("minutes");
+  const prev = s.fm.budget_extension ?? {};
+  const budget_extension = { turns: (Number(prev.turns) || 0) + turns, minutes: (Number(prev.minutes) || 0) + minutes, reason };
+  const lines = [`- at: ${nowIso()}`, `  extended: turns +${turns}, minutes +${minutes}`, "  reason:", dataBlock(reason)];
+  write(s.file, { ...s.fm, updated: nowIso(), budget_extension }, appendTo(s.body, "Checkpoints", lines.join("\n")));
+  return done({ slug, budget_extension, appended: "Checkpoints" });
 }
 
 const field = (block, key) => new RegExp(`^${key}:\\s*(.*)$`, "m").exec(block)?.[1]?.trim() ?? "";
