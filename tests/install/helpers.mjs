@@ -12,7 +12,7 @@ import { KIT_DIR, makeTempDir, SHIP_DIR } from "../helpers/temp.mjs";
 export const FAKE_CLAUDE = fileURLToPath(new URL("./fake-claude.mjs", import.meta.url));
 export const BLOCK_KEY = "AGENTS.md#paseo-harness-kit";
 
-export const HOOKS = ["io_guard", "context_guard", "bash_long_command", "syntax_check", "skill_usage"];
+export const HOOKS = ["io_guard", "context_guard", "bash_long_command", "syntax_check", "skill_usage", "self_repair_guard"];
 
 // A small kit: the real templates, a hook script per template entry, a skill, the mod assets and one block.
 export function defaultKitFiles() {

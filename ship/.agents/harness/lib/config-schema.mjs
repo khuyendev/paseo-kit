@@ -75,6 +75,8 @@ export const SCHEMA = obj({
   compact_resume: str(),
   context_guard: obj({ window_tokens: int(1), start_pct: int(1, 100), step_pct: int(1, 100) }),
   io_guard: obj({ start_rounds: int(), step_rounds: int(1), edit_start_rounds: int(), edit_step_rounds: int(1) }),
+  // Kit feedback 87 (C2): the self-repair guard hook; allow = globs relative to the tree that workflow agents may still write.
+  self_repair: obj({ enabled: bool(), allow: strs({ repoPath: true }) }),
   read_limits: obj({ fileMaxChars: int(1), replyMaxChars: int(1, READ_PAGE_CHARS) }),
   worktree_dir: str({ nonEmpty: true, repoPath: true }),
   runs_keep: int(),

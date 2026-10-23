@@ -9,7 +9,9 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { changedPathsInResult, configLoader, contextOutput, DAY_MS, firstLine, harnessModule, hookRoot, isBatchWriter, isScript, publishExclusive, pruneOlderThan, readJsonFile, readTextFile, resultText, runHook, sha256 } from "./lib/hook_common.mjs";
+import { configLoader, contextOutput, DAY_MS, firstLine, harnessModule, hookRoot, isScript, publishExclusive, pruneOlderThan, readJsonFile, readTextFile, runHook, sha256, targetPaths } from "./lib/hook_common.mjs";
+
+export { targetPaths };
 
 const STARTED_AT = Date.now() - process.uptime() * 1000;
 export const LIMITS = Object.freeze({ budgetMs: 75_000, minStartMs: 10_000, slotWaitMs: 20_000, slotStaleMs: 180_000 });
@@ -18,15 +20,6 @@ const MAX_DIAGNOSTICS = 6;
 const NOT_CHECKED = " (not checked before this edit)";
 const DIAGNOSTIC_RE = /^(.+?):(\d+):(\d+): (.+)$/;
 const fold = (p) => (process.platform === "win32" ? p.toLowerCase() : p);
-
-export function targetPaths(input, event) {
-  const i = input.tool_input ?? {};
-  // Batch writers of the mod and of fsbatch name files in files[].path and fixes[].path; filesystem-style servers in path / paths.
-  const named = (list) => (Array.isArray(list) ? list.map((f) => (typeof f === "string" ? f : f?.path)) : []);
-  const raw = [i.file_path, i.path, ...named(i.files), ...named(i.fixes), ...named(i.paths)];
-  if (event === "PostToolUse" && isBatchWriter(input.tool_name)) raw.push(...changedPathsInResult(resultText(input.tool_response)));
-  return raw.filter((p) => typeof p === "string" && p);
-}
 
 // `toAbsolute` is the file tools' own path rule (FTOL-18: `~`, Git Bash `/c/...`, cwd), so Pre, Post and the writer
 // name the same file (CR-HOK-02).

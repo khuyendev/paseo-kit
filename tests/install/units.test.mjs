@@ -137,7 +137,7 @@ test("INST-06 status prints the help text verbatim per state", async () => {
 
 test("HOOK-02 the managed hook set comes from the template; a template script outside kit.json fails the self-check", async () => {
   const template = JSON.parse(fs.readFileSync(path.join(SHIP_DIR, "templates", "settings.hooks.json"), "utf8"));
-  assert.deepEqual([...templateScripts(template)].sort(), ["bash_long_command", "context_guard", "io_guard", "skill_usage", "syntax_check"]);
+  assert.deepEqual([...templateScripts(template)].sort(), ["bash_long_command", "context_guard", "io_guard", "self_repair_guard", "skill_usage", "syntax_check"]);
   const shippedHooks = listShipFiles(KIT_DIR).filter((rel) => /^\.claude\/hooks\/[^/]+\.mjs$/.test(rel)).map((rel) => path.basename(rel, ".mjs"));
   assert.deepEqual(shippedHooks.sort(), [...templateScripts(template)].sort());
   assert.equal(JSON.parse(fs.readFileSync(path.join(KIT_DIR, "kit.json"), "utf8")).units.includes(".claude/hooks/subagent_file_tools.mjs"), false);

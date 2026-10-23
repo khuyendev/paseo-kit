@@ -62,6 +62,10 @@ export class Session {
     assertPromptSize(prompt, this.cfg);
     const caller = this.requireCaller();
     const env = { ...pluginEnv(this.root, sel.provider, this.env), PASEO_HARNESS_LEADER: caller, PASEO_HARNESS_ROOT: this.root, PASEO_HARNESS_ROLE: "worker" };
+    // Kit feedback 87 (C2): an agent a workflow run starts, and any agent such an agent starts, carries the run id; the
+    // self-repair guard hook reads it.
+    const runMark = run ?? this.env.PASEO_HARNESS_RUN?.trim();
+    if (runMark) env.PASEO_HARNESS_RUN = runMark;
     const thinking = clampThinking(sel.thinking, await this.thinkingIds(sel.provider, sel.model));
     const features = sel.features && Object.keys(sel.features).length ? sel.features : null;
     const extra = { ...labels };

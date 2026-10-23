@@ -134,6 +134,13 @@ function workflowArgLines(ctx, line) {
   if (!problems.length) line("ok", "workflow arguments: every skeleton lane lens resolves");
 }
 
+// Kit feedback 87 (C2): the self-repair guard is on by default; turning it off or scoping it is an owner choice doctor names.
+function selfRepairLines(ctx, line) {
+  const { enabled, allow } = ctx.cfg.self_repair;
+  if (!enabled) line("note", `self_repair.enabled is false in ${OVERLAY_REL}: workflow agents may edit .agents/, .claude/, AGENTS.md and CLAUDE.md, and composition scripts may change during a live run`);
+  else if (allow.length) line("note", `self_repair.allow lets workflow agents write ${allow.join(", ")}`);
+}
+
 // Integrity is independent of the project overlay so doctor can report both faults (CONF-08).
 async function gsdUpstreamLines(ctx, line) {
   let r;
@@ -181,6 +188,7 @@ export async function runDoctor(ctx, { freemem = os.freemem, claudeVersionText =
   await guard("adapter", () => adapterLines(ctx, line));
   await guard("worktrees", () => worktreeLines(ctx, line));
   await guard("workflow arguments", () => workflowArgLines(ctx, line));
+  await guard("self-repair", () => selfRepairLines(ctx, line));
   await guard("gsd upstream", () => gsdUpstreamLines(ctx, line));
   await guard("agent types", () => {
     const types = listAgentTypes(ctx.root);
