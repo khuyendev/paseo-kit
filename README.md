@@ -35,8 +35,9 @@ node kit.mjs help
   the kit block, user-scope Claude config or version gates.
 - `--enable-plugin` activates the harness-files mod with `claude plugin install --scope project`; the kit never
   toggles an owner's plugin selection otherwise.
-- Exit codes: 0 done; 1 usage or file error (earlier copies can have occurred before a wiring failure; no success
-  manifest is written); 2 done with conflicts, kept parts or blocked hooks.
+- Exit codes: 0 done; 1 usage error or refusal before any write; 2 done with conflicts, kept parts or blocked hooks.
+  A failure after the first copy (write error, mod activation, malformed hook) can leave kit files copied and
+  `.claude/settings.json` edited, with no `.agents/harness-kit.json`; fix the cause and re-run the same install.
 - Ownership hashes preserve raw bytes and normalize only CRLF. Installation refuses linked destination paths
   (including junctions); `--force` never writes through them. Unchanged retired hooks lose their registrations,
   while locally edited retired hooks and their registrations stay for the owner.
