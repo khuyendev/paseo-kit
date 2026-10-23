@@ -253,6 +253,7 @@ export function generate(L) {
   for (const e of L.inventory.entries) {
     if (e.source === "kit-authored" || !e.transformations.length) continue;
     if (!safeRel(e.installed) || !safeRel(e.source)) throw fail(`inventory entry outside its root: ${e.installed} <- ${e.source}`);
+    if (out.has(e.installed)) throw fail(`duplicate installed path: ${e.installed} <- ${e.source} (a second entry would replace the first)`);
     const src = lf(read(e.source));
     if (e.kind === "agent") out.set(e.installed, agentText(pin, e, src));
     else if (e.transformations.includes("anchor-extraction")) {
