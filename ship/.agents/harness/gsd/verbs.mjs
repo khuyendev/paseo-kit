@@ -5,6 +5,7 @@ import { textDigest } from "../lib/hash.mjs";
 import { isInside } from "../lib/paths.mjs";
 import { done, fail, idList, none, unavailable } from "./common.mjs";
 import { frontmatterGet, frontmatterValidate, historyDigest, initPayload, initProject, listArtifacts, researchPrompt, summaryExtract, supersede, verifyArtifacts, verifyKeyLinks, writeArtifact } from "./artifacts.mjs";
+import { contractsChange, contractsShow, verifyContractsVerb } from "./contracts.mjs";
 import { debugBudget, debugCheckpoint, debugClose, debugCreate, debugExtend, debugList, debugStatus } from "./debug.mjs";
 import { commitVerb, evaluationScope, selectRevertCommits } from "./gitverbs.mjs";
 import { grantPath } from "./grants.mjs";
@@ -131,6 +132,20 @@ export const verbHandlers = {
       return done(results.length === 1 ? results[0] : { valid, plans: results }, valid ? 0 : 1);
     },
   },
+  // Kit feedback 67, 76: the cross-plan contracts of the manifest against the plans (and, for 'contracts change', the one writer).
+  "verify.contracts": {
+    usage: "ph gsd verify.contracts <phase> [--plans <ids>] [--complete]",
+    options: { plans: "string", complete: "bool" },
+    run: (g, a, o) => {
+      const phase = phaseOf(g, a);
+      return verifyContractsVerb(g, phase, { plans: subset(o, phase), complete: bool(o.complete, false) });
+    },
+  },
+  "contracts.show": { usage: "ph gsd contracts.show <phase> --plan <NN-MM>", options: { plan: "string" }, run: (g, a, o) => {
+    if (!o.plan) throw fail("contracts show needs --plan <NN-MM>");
+    return contractsShow(g, phaseOf(g, a), normPlanId(o.plan));
+  } },
+  "contracts.change": { usage: "ph gsd contracts.change <phase> (stdin JSON {plan, symbol, old, new, reason})", options: {}, run: (g, a) => contractsChange(g, phaseOf(g, a), json(g.stdin())) },
   "verify.artifacts": { usage: "ph gsd verify.artifacts <phase | path/NN-MM-PLAN.md> [--plans <ids>]", options: { plans: "string" }, run: (g, a, o) => verifyArtifacts(g, planScope(g, a, o).plans) },
   "verify.key-links": {
     usage: "ph gsd verify.key-links <phase | path/NN-MM-PLAN.md> [--plans <ids>]",

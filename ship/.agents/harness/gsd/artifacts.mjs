@@ -53,7 +53,8 @@ export function verifyArtifacts(g, plans) {
 const unsafePattern = (p) => p.length > 500 || /\(\?[=!<]|\\[1-9]|\\k</.test(p);
 
 export function verifyKeyLinks(g, plans, allPlans) {
-  const items = plans.flatMap((p) => asArray(p.fm.must_haves?.key_links).map((k) => ({ plan: p.id, wave: p.wave, ...k })));
+  // Kit feedback 76: a requires/provides entry is a cross-plan contract (ph gsd verify contracts), not a source link.
+  const items = plans.flatMap((p) => asArray(p.fm.must_haves?.key_links).filter((k) => !(k && typeof k === "object" && (k.requires || k.provides))).map((k) => ({ plan: p.id, wave: p.wave, ...k })));
   if (!items.length) throw none("no must_haves.key_links in scope");
   const results = items.map((k) => {
     const base = { plan: k.plan, from: k.from, to: k.to, via: k.via ?? null, pattern: k.pattern ?? null };

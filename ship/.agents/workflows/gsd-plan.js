@@ -62,7 +62,7 @@ call = async (prompt, { judges = {}, ...opts } = {}) => {
 };
 
 const OWNER_MARKERS = ["REVISION_CONFLICT", "PHASE SPLIT RECOMMENDED", "SOURCE AUDIT", "CHECKPOINT REACHED", "PLANNING INCONCLUSIVE"];
-const KNOWN_MARKERS = [...OWNER_MARKERS, "OUTLINE COMPLETE", "PLANNING COMPLETE", "REVISION COMPLETE", "WIRING COMPLETE"];
+const KNOWN_MARKERS = [...OWNER_MARKERS, "OUTLINE COMPLETE", "PLANNING COMPLETE", "REVISION COMPLETE", "WIRING COMPLETE", "CONTRACT_CHANGE"];
 // Skeleton kit lenses; correctness (code) and source-grounding (plan_review) are other stages' lenses (G029).
 const KIT_LENSES = ["fidelity", "integration"];
 const markerOf = (r) => String(typeof r === "string" ? r : r?.marker ?? "");
@@ -71,7 +71,7 @@ const knownMarker = (r) => KNOWN_MARKERS.some((m) => markerOf(r).includes(m));
 const isInt13 = (v) => Number.isInteger(v) && v >= 1 && v <= 3;
 const PLANNER_SCHEMA = {
   type: "object",
-  properties: { marker: { type: "string" }, summary: { type: "string" }, question: { type: "string" }, plans: { type: "array", items: { type: "string" }, description: "with an owner marker: the proposal, one string per proposed split group (PHASE SPLIT RECOMMENDED) or per audit option (SOURCE AUDIT)" }, conflict: { type: "object" }, changes: { type: "array" } },
+  properties: { marker: { type: "string" }, summary: { type: "string" }, question: { type: "string" }, plans: { type: "array", items: { type: "string" }, description: "with an owner marker: the proposal, one string per proposed split group (PHASE SPLIT RECOMMENDED) or per audit option (SOURCE AUDIT)" }, conflict: { type: "object" }, changes: { type: "array" }, contract_changes: { type: "array", items: { type: "object", properties: { plan: { type: "string" }, symbol: { type: "string" }, old: { type: "string" }, new: { type: "string" }, reason: { type: "string" } }, required: ["symbol", "old", "new", "reason"] }, description: "CONTRACT_CHANGE: a produced signature that has to change, one entry per symbol" } },
   required: ["marker"],
 };
 const ISSUE = { type: "object", properties: { plan: { type: ["string", "null"] }, dimension: { type: "string" }, severity: { type: "string" }, required_property: { type: "string" }, description: { type: "string" }, evidence: { type: "string" }, fix_hint: { type: "string" }, target: { type: "string" } }, required: ["severity", "required_property", "description"] };
@@ -142,7 +142,12 @@ let flowReport = null;
 let streamed = null;
 // O67: what the dependent streams did, returned with the streams flow's results.
 const dependents = [];
-const result = (status, extra = {}) => ({ status, phaseDir, mode, warnings, advisories, ...(flowReport ?? {}), ...extra });
+// Kit feedback 67, 76 (gsd.contract_check): what the cross-plan contract gate did, returned with every result once it ran.
+const contractsOn = g.contract_check !== false;
+const contractReport = { checks: 0, rounds: 0, issues: 0, changes: [] };
+let contractDirty = false;
+let manifestFresh = null; // the manifest after a CONTRACT_CHANGE: later planners are told the current signatures
+const result = (status, extra = {}) => ({ status, phaseDir, mode, warnings, advisories, ...(flowReport ?? {}), ...(contractReport.checks ? { contracts: contractReport } : {}), ...extra });
 const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reason, ...extra });
 // G017: the effective settings each gated judgment reads, hashed into its revision key (`--settings`). A changed lane,
 // role or limit reruns the judgments it decides; each key takes only the settings its own judgments read. The inputs
@@ -232,13 +237,27 @@ const planningContext = (planMode) => [
 // GSDF-17: no SPEC sections exist in the kit, so every plan-mode prompt carries the specless block.
 const SPECLESS = "<specless_edges>\nNo SPEC defines edge cases or prohibitions for this phase. List the edge cases you plan for in must_haves.truths and the must-not items in must_haves.prohibitions, or record `edges_skipped: <reason>` in the plan frontmatter. Never neither.\n</specless_edges>";
 const RETURN_NOTE = "Never ask the owner. Return JSON {marker, summary, question?, conflict?, plans?}: marker is one of OUTLINE COMPLETE, PLANNING COMPLETE, REVISION COMPLETE, or an owner marker (REVISION_CONFLICT, PHASE SPLIT RECOMMENDED, SOURCE AUDIT, CHECKPOINT REACHED, PLANNING INCONCLUSIVE) with the question or conflict. For PHASE SPLIT RECOMMENDED and SOURCE AUDIT, summary states the proposal and plans lists its options, one string each. Do not commit; do not write STATE, ROADMAP or REQUIREMENTS.";
-const revisionContext = (plans, issues) => [
+const revisionContext = (plans, issues, contract = "") => [
   "<revision_context>",
   `Existing plans: ${plans.join(", ") || "none"}`,
   `Checker issues (JSON): ${JSON.stringify(issues)}`,
   "Instructions: revise in place only what the issues require. Answer every issue with one `changes` entry {issue, change}; when an issue contradicts a locked decision or another issue, return REVISION_CONFLICT with the conflict instead of guessing.",
+  ...(contract ? [contract] : []),
   "</revision_context>",
 ].join("\n");
+// Kit feedback 67 F2: a reviser gets the manifest entry of each plan it edits and, per produced symbol, the plans that consume it.
+const CONTRACT_RULE = "The manifest owns every produced signature. Never change a produced signature in plan text, and keep every consumed signature quoted exactly as the manifest has it. When an issue can only be met by a different signature, leave the plan on the manifest signature and return marker CONTRACT_CHANGE with contract_changes: [{plan, symbol, old, new, reason}], one entry per symbol: the flow updates the manifest and has every consumer revised in this run. Return REVISION_CONFLICT when a consumer cannot follow.";
+async function contractBlock(ids) {
+  if (!contractsOn) return "";
+  const parts = [];
+  for (const id of ids) {
+    const s = (await gsd(["contracts", "show", N, "--plan", id])).json;
+    if (!s?.plan || !(s.produces?.some((p) => p.structured) || s.consumes?.some((c) => c.entry))) continue;
+    const consumers = Object.fromEntries(Object.entries(s.consumers ?? {}).filter(([, list]) => list.length));
+    parts.push(`${id} produces (manifest): ${JSON.stringify(s.produces.filter((p) => p.structured).map(({ symbol, kind, file, signature }) => ({ symbol, kind, file, signature })))}`, `${id} consumers per produced symbol: ${JSON.stringify(consumers)}`, `${id} consumes (producer manifest entries to quote): ${JSON.stringify(s.consumes.filter((c) => c.entry).map((c) => ({ plan: c.plan, ...c.entry })))}`);
+  }
+  return parts.length ? ["<contract_context>", ...parts, CONTRACT_RULE, "</contract_context>"].join("\n") : "";
+}
 async function inputsDigest() { return (await gsd(["revisions", "hash", phaseDir, "inputs"])).json?.hash ?? "none"; }
 // CR-GSF-19: skeleton reviews judge the outline, manifest and wiring, which the freeze key covers and inputs does not.
 async function skeletonDigest() { return (await gsd(["revisions", "hash", phaseDir, "freeze", "--settings", settingsDigest.freeze])).json?.hash ?? "none"; }
@@ -249,7 +268,66 @@ const planOwns = async (id) => (await gsd(["frontmatter", "get", planPath(id), "
 const plansJudges = async (ids) => ({ files: ids.map(planPath), owns: (await Promise.all(ids.map(planOwns))).flat() });
 async function plannerCall(session, label, body, digestKey, digest, extra = {}) {
   const prompt = [body, POLICY, RETURN_NOTE, digestLine(digestKey, digest)].join("\n\n");
-  return call(prompt, { label, session, agentType: agentFor("planner", "gsd-planner"), schema: PLANNER_SCHEMA, ...roleOpts(session === "planner:outline" ? "outline" : "planner"), ...extra });
+  const r = await call(prompt, { label, session, agentType: agentFor("planner", "gsd-planner"), schema: PLANNER_SCHEMA, ...roleOpts(session === "planner:outline" ? "outline" : "planner"), ...extra });
+  return contractsOn && r.result && /^(revise|deprevise|contract|fix)-/.test(label) ? applyContractChanges(r, session) : r;
+}
+// Kit feedback 67 F2: a reviser's CONTRACT_CHANGE entries become the manifest's new signatures (the one writer, ph gsd contracts
+// change); the consumers are revised by the next contract gate. A change the manifest refuses, or a CONTRACT_CHANGE marker with no
+// entry, comes back as a REVISION_CONFLICT, which every caller already stops on (needs-owner). A reply replayed on resume repeats
+// a change already applied, which the verb accepts.
+async function applyContractChanges(r, session) {
+  const list = Array.isArray(r.result.contract_changes) ? r.result.contract_changes : [];
+  const conflict = (why, change) => ({ ...r, result: { ...r.result, marker: "REVISION_CONFLICT", summary: why, conflict: { contract_change: change ?? null, rejected: why } } });
+  if (!list.length) return markerOf(r.result).includes("CONTRACT_CHANGE") ? conflict("marker CONTRACT_CHANGE without a contract_changes entry") : r;
+  const own = /^planner:(\d+(?:\.\d+)?-\d+)$/.exec(session)?.[1] ?? null;
+  for (const c of list) {
+    const w = await gsd(["contracts", "change", N], { plan: c.plan ?? own, symbol: c.symbol, old: c.old, new: c.new, reason: c.reason });
+    if (w.code !== 0) return conflict(`CONTRACT_CHANGE of ${c.symbol} rejected: ${w.json?.error ?? `exit ${w.code}`}`, c);
+    if (w.json?.changed) {
+      contractReport.changes.push({ plan: w.json.plan, symbol: c.symbol, old: w.json.old, new: w.json.signature, reason: c.reason, consumers: w.json.consumers ?? [] });
+      log(`contract change: ${w.json.plan} ${c.symbol}: ${w.json.old} -> ${w.json.signature}; consumers ${(w.json.consumers ?? []).join(", ") || "none"}`);
+      contractDirty = true;
+      manifestFresh = (await gsd(["outline", "parse", N])).json?.manifest ?? manifestFresh;
+    }
+  }
+  return r;
+}
+// Kit feedback 67 F3, 76: `ph gsd verify contracts` after the planners of a wave, after the checker and plan-review edits and at
+// handoff (--complete). A failure is an issue for each plan it names, revised by that plan's planner with its contract block;
+// the rounds are counted here, not in the checker's caps. Plans stay single-writer: the gate runs between stages and at the
+// streams' wave joins, when no review stream edits a plan. Still failing after maxCheckIterations rounds, or not falling,
+// stops needs-owner at stage Contracts. Returns null when the contracts hold, else the stop.
+async function contractGate(stage, { complete = false } = {}) {
+  if (!contractsOn) return null;
+  contractDirty = false;
+  let prev = Infinity;
+  for (let round = 1; ; round++) {
+    const c = await gsd(["verify", "contracts", N, ...(complete ? ["--complete"] : [])]);
+    contractReport.checks++;
+    if (!c.json || ![0, 1].includes(c.code)) return failedCall("contract check", c.json?.error ?? c.json?.reason ?? `exit ${c.code}`);
+    for (const w of c.json.warnings ?? []) if (!warnings.includes(w)) warnings.push(w);
+    const errors = c.json.errors ?? [];
+    if (c.code === 0 || !errors.length) return null;
+    contractReport.issues = Math.max(contractReport.issues, errors.length);
+    log(`contract gate (${stage}) round ${round}: ${errors.length} issues`);
+    const options = ["fix the named plans or the manifest by hand, then rerun", "give guidance and rerun", "abandon"];
+    if (errors.some((e) => e.kind === "plan-missing")) return owner("Contracts", `${errors.filter((e) => e.kind === "plan-missing").map((e) => e.plan).join(", ")} in the manifest but not planned`, { issues: errors, options });
+    if (round > maxCheckIterations || errors.length >= prev) return owner("Contracts", round > maxCheckIterations ? `${errors.length} contract issues left after ${round - 1} revisions` : `contract issues not falling: ${errors.length}, was ${prev}`, { issues: errors, options });
+    prev = errors.length;
+    contractReport.rounds++;
+    const byPlan = new Map();
+    for (const e of errors) for (const p of e.plans ?? [e.plan]) if (planIds.includes(p)) byPlan.set(p, [...(byPlan.get(p) ?? []), { plan: p, dimension: "contract", severity: "blocker", required_property: `${e.kind}${e.symbol ? ` ${e.symbol}` : ""}`, description: e.message, fix_hint: e.fix_hint, related_plans: (e.plans ?? []).filter((x) => x !== p) }]);
+    const named = [...byPlan.keys()];
+    const revised = await parallel(named.map((id) => async () => plannerCall(`planner:${id}`, `contract-${id}-${round}`, [planningContext("revision"), revisionContext([planPath(id)], byPlan.get(id), await contractBlock([id]))].join("\n\n"), "freeze", freezeHash, { judges: await plansJudges([id]) })));
+    const answered = named.filter((_, i) => revised[i] && revised[i].result !== null && !ownerMarker(revised[i].result));
+    const stop = await recordEach(answered, false);
+    const owned = revised.find((r) => ownerMarker(r?.result));
+    if (owned) return ownerStop("Contracts", owned.result);
+    const missed = revised.findIndex((r) => !r || r.result === null);
+    if (missed !== -1) return failedCall(`contract revision ${named[missed]} (round ${round})`, revised[missed]?.reason ?? null);
+    if (stop) return stop;
+    contractDirty = false;
+  }
 }
 const ownerStop = (stage, r) => owner(stage, `planner returned ${ownerMarker(r)}`, { marker: ownerMarker(r), question: r?.question ?? r?.summary ?? null, summary: r?.summary ?? null, plans: r?.plans ?? null, conflict: r?.conflict ?? null, options: ["answer and rerun with the same args", "adjust CONTEXT and rerun", "abandon"] });
 const failedCall = (what, reason) => result("failed", { reason: `${what}${reason ? `: ${reason}` : " returned nothing"}` });
@@ -329,8 +407,9 @@ if (parsed.json?.complete && inputsSame && !a.replan) {
     planningContext("outline"),
     SPECLESS,
     `Write the phase outline ${OUTLINE} (table: Plan ID, Objective, Wave, Depends, Requirements; last line exactly \`## OUTLINE COMPLETE\`) and its manifest ${MANIFEST} ({phase, plans:[{id, owns, requirements, produces, consumes, tracer, verify}]}). Do not write PLAN files yet.`,
+    contractsOn ? "In the manifest `produces` lists every symbol another plan calls or builds on as {symbol, kind, file, signature}: file is inside the plan's owns, signature is the exact interface text the consumers will quote (a method, constructor, widget or provider as it will be written). `consumes` lists {plan, symbol} naming a symbol that plan produces. A precondition a plan needs from another (an ancestor widget, a provider override, a registration) is declared later in the plans as must_haves.key_links `requires`/`provides` entries." : "",
     `Before you return, run \`node ${PH} gsd ${outlineCheckArgs.join(" ")}\`, repair every error it reports in ${OUTLINE} and ${MANIFEST}, and run it again until it exits 0.`,
-  ].join("\n\n");
+  ].filter(Boolean).join("\n\n");
   const { result: r, reason } = await plannerCall("planner:outline", "outline", body, "inputs", await inputsDigest(), { judges: await outlineJudges() });
   if (fatal(reason)) return failedCall("outline planner", reason);
   if (ownerMarker(r)) return ownerStop("Outline", r);
@@ -571,7 +650,7 @@ phase("Plans");
 const frozen = (await gsd(["outline", "parse", N])).json ?? {};
 const rows = frozen.rows ?? outline?.rows ?? [];
 const planIds = rows.map((r) => r.id);
-const manifestOf = (id) => (frozen.manifest?.plans ?? []).find((p) => p.id === id) ?? { id };
+const manifestOf = (id) => ((manifestFresh ?? frozen.manifest)?.plans ?? []).find((p) => p.id === id) ?? { id };
 freezeHash = (await gsd(["revisions", "hash", phaseDir, "freeze", "--settings", settingsDigest.freeze])).json?.hash ?? "none";
 const wavesOf = (list) => [...new Set(list.map((r) => Number(r.wave ?? 1)))].sort((x, y) => x - y).map((w) => list.filter((r) => Number(r.wave ?? 1) === w).map((r) => r.id));
 const superseded = await gsd(["supersede", phaseDir, "--keep", planIds.join(",")]);
@@ -598,6 +677,8 @@ if (!streamed) for (const ids of wavesOf(rows)) {
   const failed = outcomes.findIndex((o) => !o || o.stop);
   if (failed >= 0) return outcomes[failed]?.stop ?? failedCall(`planner ${todo[failed]}`, null);
   if (recorded) return recorded;
+  const contractStop = await contractGate("Plans");
+  if (contractStop) return contractStop;
 }
 // O65 (kit-feedback 65): the planner waves keep their order (GSDF-24), but each plan is structure-checked and recorded on its own
 // and its review stream (gsd-plan-review with `stream`) starts as soon as its planner returns, never waiting for the other
@@ -638,10 +719,18 @@ async function planStreams() {
     }));
     const failed = outcomes.findIndex((o) => !o || o.stop);
     if (failed >= 0) { stop = outcomes[failed]?.stop ?? failedCall(`planner ${todo[failed]}`, null); break; }
-    if (!planReview) continue;
+    if (!planReview) {
+      const cs = await contractGate("Plans");
+      if (cs) { stop = cs; break; }
+      continue;
+    }
     // The wave's join: a stream that did not converge stops the run below, before any later wave is planned.
     const frozen = await Promise.all(ids.filter((id) => reviews.has(id)).map((id) => reviews.get(id)));
     if (frozen.some((r) => r?.status !== "converged")) break;
+    // Kit feedback 67: no stream of this wave edits a plan now, so the contract gate may revise any plan on disk; what it changes
+    // is passed on to the dependents below like a stream's edit.
+    const cs = await contractGate("Plans");
+    if (cs) { stop = cs; break; }
     const changed = new Map();
     for (const id of ids) {
       const now = await planInterface(id);
@@ -744,13 +833,26 @@ async function dependentStream(id, providers) {
       return { stop: owner("Dependents", `${id} still uses the old interface of ${providers.map((p) => p.plan).join(", ")} after ${round - 1} revisions (${open.length} blockers)`, { plan: id, issues: open, options: ["give guidance and rerun", "revise the plan by hand, then rerun", "abandon"] }) };
     }
     prev = open.length;
-    const r = await plannerCall(`planner:${id}`, `deprevise-${id}-${round}`, [planningContext("revision"), revisionContext([planPath(id)], open)].join("\n\n"), "freeze", freezeHash, { judges: await plansJudges([id]) });
+    const r = await plannerCall(`planner:${id}`, `deprevise-${id}-${round}`, [planningContext("revision"), revisionContext([planPath(id)], open, await contractBlock([id]))].join("\n\n"), "freeze", freezeHash, { judges: await plansJudges([id]) });
     if (isConflict(r.result)) depLedger.settle((e) => e.plan === id, "conflict");
     if (ownerMarker(r.result)) return { stop: ownerStop("Dependents", r.result) };
     if (r.result === null) return { stop: failedCall(`dependent revision ${id}`, r.reason) };
     const s = await recordEach([id], false);
     if (s) return { stop: s };
   }
+}
+// Kit feedback 67 F1: the planner writes each produced signature as the manifest has it and quotes each consumed one in <interfaces>.
+// The key_links `requires`/`provides` entries state the preconditions (kit feedback 76).
+async function contractPlanText(id) {
+  if (!contractsOn) return "";
+  const s = (await gsd(["contracts", "show", N, "--plan", id])).json;
+  const mine = (s?.produces ?? []).filter((p) => p.structured).map(({ symbol, kind, file, signature }) => ({ symbol, kind, file, signature }));
+  const used = (s?.consumes ?? []).filter((c) => c.entry).map((c) => ({ plan: c.plan, ...c.entry }));
+  return [
+    mine.length ? `Contract: this plan produces (write each signature verbatim in the plan and in <interfaces>; never re-describe or change it): ${JSON.stringify(mine)}` : "",
+    used.length ? `Contract: this plan consumes (quote each signature verbatim in <interfaces>; call it only as written there): ${JSON.stringify(used)}` : "",
+    "If this plan needs an ancestor widget, a provider override or a registration that another plan provides, list it in must_haves.key_links as `- requires: {kind: ancestor_widget|provider_override|registration, name: <name>, by: <plan id>}`; a plan that mounts or registers one lists `- provides: {kind: ..., name: ..., at: <file>}`. The provider is in the same or an earlier wave.",
+  ].filter(Boolean).join("\n");
 }
 async function planOne(id) {
   plansPlanned.add(id);
@@ -764,6 +866,7 @@ async function planOne(id) {
     `owns (repeat exactly in the plan frontmatter): ${JSON.stringify(entry.owns ?? [])}`,
     wiringText ? `WIRING declarations for ${id} (verbatim from ${WIRING}):\n${wiringQuotes(id).map((l) => `> ${l}`).join("\n") || "> (none name this plan)"}` : "No WIRING contract for this phase.",
     carried.length ? `Open skeleton warnings for this plan:\n${carried.map((w) => `- ${w}`).join("\n")}` : "",
+    await contractPlanText(id),
   ].filter(Boolean).join("\n\n");
   const { result: r, reason } = await plannerCall(`planner:${id}`, `plan-${id}`, body, "freeze", freezeHash, { judges: await plansJudges([id]) });
   if (fatal(reason)) return { stop: failedCall(`planner ${id}`, reason) };
@@ -809,6 +912,10 @@ async function recordEach(ids, gapScoped) {
 phase("Checker");
 const checked = streamed ? await checkerJoin(planIds) : await checkerLoop(planIds, false);
 if (checked.stop) return checked.stop;
+{
+  const contractStop = await contractGate("Checker");
+  if (contractStop) return contractStop;
+}
 if (!checked.skipped) await gsd(["revisions", "record", phaseDir, "checked", "--settings", settingsDigest.checked]);
 docPaths.push(...planIds.map(planPath));
 
@@ -823,6 +930,8 @@ if (planReview && !streamed) {
   }
   for (const s of pr.structure ?? []) setStructureWarnings(s.plan, s.warnings);
   advisories.push(...(pr.issues ?? []).map((x) => ({ lane: "plan-review", plan: x.plan ?? null, severity: x.severity, description: x.description })));
+  const contractStop = await contractGate("Plan review");
+  if (contractStop) return contractStop;
 }
 
 // ---- coverage and handoff (GSDF-29, GSDF-36) ----
@@ -909,6 +1018,11 @@ async function checkerRounds(scopeIds, gapScoped, ledger) {
   // "still open?" and leave the count only when a checker lists their id in `resolved`, never because a checker went silent.
   let pending = [];
   for (let iter = 1; ; iter++) {
+    // Kit feedback 67 F2: a CONTRACT_CHANGE of the last round has its consumers revised before the checker reads them again.
+    if (contractDirty && !gapScoped) {
+      const contractStop = await contractGate("Checker");
+      if (contractStop) return { stop: contractStop };
+    }
     const live = scopeIds.filter((id) => !stuck.has(id));
     const probeIssues = await countProbes(scopeIds, gapScoped);
     const probeFile = `${phaseDir}/checker-probes.json`;
@@ -959,7 +1073,7 @@ async function checkerRounds(scopeIds, gapScoped, ledger) {
     }
     const perPlan = [...revise].filter(([key]) => key !== null);
     const phaseLevel = revise.get(null) ?? [];
-    const revised = await parallel(perPlan.map(([id, list]) => async () => plannerCall(gapScoped ? "planner:gaps" : `planner:${id}`, `revise-${id}-${iter}`, [planningContext("revision"), revisionContext([planPath(id)], list)].join("\n\n"), "freeze", freezeHash, { judges: await plansJudges([id]) })));
+    const revised = await parallel(perPlan.map(([id, list]) => async () => plannerCall(gapScoped ? "planner:gaps" : `planner:${id}`, `revise-${id}-${iter}`, [planningContext("revision"), revisionContext([planPath(id)], list, await contractBlock([id]))].join("\n\n"), "freeze", freezeHash, { judges: await plansJudges([id]) })));
     // G015: each revision that answered is fixed and recorded when it returns, so an owner or failed stop of a sibling does not drop it.
     // A revision that returned nothing or stopped for an owner is never recorded as revised (G008).
     const answered = perPlan.filter((_, i) => revised[i] && revised[i].result !== null && !ownerMarker(revised[i].result)).map(([id]) => id);
@@ -974,7 +1088,7 @@ async function checkerRounds(scopeIds, gapScoped, ledger) {
     if (!conflict && missed !== -1) return { stop: failedCall(`planner revision ${perPlan[missed][0]} (checker iteration ${iter})`, revised[missed]?.reason ?? null) };
     if (!conflict && stop) return { stop };
     if (phaseLevel.length) {
-      const r = await plannerCall(gapScoped ? "planner:gaps" : "planner:outline", `revise-phase-${iter}`, [planningContext("revision"), revisionContext(scopeIds.map(planPath), phaseLevel)].join("\n\n"), "freeze", freezeHash, { judges: await plansJudges(scopeIds) });
+      const r = await plannerCall(gapScoped ? "planner:gaps" : "planner:outline", `revise-phase-${iter}`, [planningContext("revision"), revisionContext(scopeIds.map(planPath), phaseLevel, await contractBlock(scopeIds))].join("\n\n"), "freeze", freezeHash, { judges: await plansJudges(scopeIds) });
       if (isConflict(r.result)) ledger.settle((e) => keyOf(e) === null, "conflict");
       if (ownerMarker(r.result)) return { stop: conflict ?? ownerStop("Checker", r.result) };
       if (r.result === null) return { stop: conflict ?? failedCall(`phase-level planner revision (checker iteration ${iter})`, r.reason) };
@@ -1060,7 +1174,7 @@ async function checkerJoinRounds(scopeIds, ledger) {
       prev = open.length;
       const scope = key ? [key] : scopeIds;
       for (const id of scope) if (!shapeBefore.has(id)) shapeBefore.set(id, await planInterface(id));
-      const r = await plannerCall(key ? `planner:${key}` : "planner:outline", `revise-${name}-${round}`, [planningContext("revision"), revisionContext(scope.map(planPath), open)].join("\n\n"), "freeze", freezeHash, { judges: await plansJudges(scope) });
+      const r = await plannerCall(key ? `planner:${key}` : "planner:outline", `revise-${name}-${round}`, [planningContext("revision"), revisionContext(scope.map(planPath), open, await contractBlock(scope))].join("\n\n"), "freeze", freezeHash, { judges: await plansJudges(scope) });
       if (isConflict(r.result)) ledger.settle((e) => keyOf(e) === key, "conflict");
       if (ownerMarker(r.result)) return { conflict: ownerStop("Checker", r.result) };
       if (r.result === null) return { stop: failedCall(`planner revision ${name} (checker join round ${round})`, r.reason) };
@@ -1128,6 +1242,11 @@ async function checkerJoinRounds(scopeIds, ledger) {
 }
 
 async function handoffStage(ids, docs, override, handoffArgs = [], gap = null) {
+  // Kit feedback 67 F3: the last contract check, with every manifest plan written. Gap plans have no manifest entry.
+  if (!gap) {
+    const contractStop = await contractGate("Handoff", { complete: true });
+    if (contractStop) return contractStop;
+  }
   const cov = await gsd(["check", "coverage", N]);
   if (cov.code !== 0) return owner("Handoff", "coverage gate failed", { coverage: cov.json, options: ["re-plan (recommended)", "move the requirement or decision to a later phase", "tag the decision informational"] });
   // G022: with adapter.dependency_probe, the dependencies the plans declare must resolve together before the handoff writes waves.

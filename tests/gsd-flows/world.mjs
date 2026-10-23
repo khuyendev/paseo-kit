@@ -83,6 +83,9 @@ export function makeWorld(opts = {}) {
     "check verify-command-paths": () => world.probes.vcp ?? { probes: [] },
     "check verify-failure-directions": () => world.probes.vfd ?? { findings: [] },
     "check owns": () => world.probes.owns ?? { problems: [] },
+    // Kit feedback 67: no manifest contracts in these worlds unless a test installs its own handlers.
+    "verify contracts": () => ({ passed: true, errors: [], warnings: [] }),
+    "contracts show": () => ({ code: 66, json: { status: "missing" } }),
     "check coverage": () => (world.coverage.passed ? { passed: true } : { code: 1, json: world.coverage }),
     handoff: (argv) => { ev(`handoff ${argv.slice(1).join(" ")}`.trim()); return world.handoff ?? { planRevision: "rev1", waves: [{ wave: 1, file: `${PHASE_DIR}/handoff/w1.args.json` }], sharedChanges: [] }; },
     "state planned-phase": (argv) => { ev(`state planned-phase ${argv.join(" ")}`); return { updated: ["status"] }; },

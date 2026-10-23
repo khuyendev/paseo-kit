@@ -163,6 +163,8 @@ export const SCHEMA = obj({
     verify_mode: str({ oneOf: ["phase", "per-criterion"] }),
     // Kit feedback 64: pre-code review records, the plan-catchable tag and plan-defect events (measurement only).
     review_metrics: bool(),
+    // Kit feedback 67, 76: structured manifest contracts, `ph gsd verify contracts` after planners, revisions and plan-review edits and at handoff, the contract block of revisers, the wave-gate check of produced symbols.
+    contract_check: bool(),
   }),
 });
 

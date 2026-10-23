@@ -314,6 +314,7 @@ const GOLDEN = {
     review_depth: "standard",
     verify_mode: "phase",
     review_metrics: true,
+    contract_check: true,
   },
 };
 
