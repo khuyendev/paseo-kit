@@ -27,8 +27,10 @@ node kit.mjs help
   `CLAUDE.md`, adds the kit block to `.gitignore` (`/_workspace/`, `/.claude/worktrees/`), reconciles the kit hook
   registrations in `.claude/settings.json`, seeds `.agents/harness.config.json` and `.agents/harness-history.md`
   once, and records every kit part with its digest in `.agents/harness-kit.json`.
-- `update` takes kit changes and keeps local edits (listed, exit 2) unless `--force`; `status` is read-only; `pull`
-  copies locally edited parts back into the kit.
+- `update` takes kit changes and keeps local edits (listed, exit 2) unless `--force`; after the copy it runs the gsd
+  workflows' argument checks on the merged overlay (a refused value is `problem`, exit 2) and names the overlay keys
+  the CHANGELOG mentions since the installed version (`warning`); `status` is read-only; `pull` copies locally edited
+  parts back into the kit.
 - Ownership: kit-owned parts are tracked by digest; the overlay, the history table and `.planning/` belong to the
   project and are never overwritten; install never edits Paseo settings. `--force` never overrides removed-local
   parts, seeds, project-owned files, foreign settings keys or hooks, `CLAUDE.md` lines, `.gitignore` lines outside

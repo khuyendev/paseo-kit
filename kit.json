@@ -345,6 +345,7 @@
     ".agents/harness/gsd/upstream.mjs",
     ".agents/harness/gsd/verb-table.mjs",
     ".agents/harness/gsd/verbs.mjs",
+    ".agents/harness/gsd/workflow-args.mjs",
     ".agents/harness/gsd/yaml.mjs",
     ".agents/harness/lib/cli.mjs",
     ".agents/harness/lib/config-schema.mjs",

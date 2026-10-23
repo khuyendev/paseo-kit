@@ -6,6 +6,7 @@ import { copyToKit, copyToProject, deleteFromProject, digests, linkedPart, linkP
 import { checkWiringTargets, wire } from "./wiring.mjs";
 import { checkHookSettings } from "./hooks.mjs";
 import { checkModGates } from "./mod.mjs";
+import { overlayLines } from "./overlay.mjs";
 import { fail } from "./failure.mjs";
 
 const LINK_CONFLICT = (key, prefix) => `conflict ${key}: ${linkProblem(prefix)}`;
@@ -99,8 +100,9 @@ export function update(ctx) {
     }
   }
   kept += finishInstallOrUpdate({ ...ctx, retiredHooks }, { records, installedAt: manifest.installedAt });
+  const refused = overlayLines(ctx, manifest.version);
   ctx.out(`update: ${changed} part(s) changed, ${kept} kept; kit ${ctx.kit.version}`);
-  return kept ? 2 : 0;
+  return kept || refused ? 2 : 0;
 }
 
 export function status(ctx) {
