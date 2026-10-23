@@ -26,6 +26,15 @@ function truncation(text, body) {
   return out;
 }
 
+// Decision ids the human settled in the phase CONTEXT.md (G007). Deferred, informational and discretion decisions are not
+// settled, and a quick plan outside a phase has no CONTEXT.md.
+function settledDecisionIds(phase) {
+  if (!phase) return [];
+  const text = readIf(phaseFile(phase, "CONTEXT.md"));
+  if (text === null) return [];
+  return parseDecisions(text).decisions.filter((d) => d.trackable).map((d) => d.id);
+}
+
 // Core structure checks of one plan, then the adapter's ownership and vocabulary checks.
 export async function planStructure(g, phase, plan) {
   const errors = [];
@@ -37,6 +46,7 @@ export async function planStructure(g, phase, plan) {
   const tasks = plan.tasks;
   if (!tasks.length) errors.push("No <task> elements found");
   else if (!tasks.some((t) => t.automated.length)) errors.push("No task has an <automated> verify obligation");
+  const settled = settledDecisionIds(phase);
   let decisionBefore = false;
   for (const t of tasks) {
     const label = `Task ${t.index}${t.name ? ` (${t.name})` : ""}`;
@@ -55,8 +65,8 @@ export async function planStructure(g, phase, plan) {
         if (t.autoSelect !== null && !ids.includes(t.autoSelect)) errors.push(`${label}: auto_select "${t.autoSelect}" names no option id`);
       }
     }
-    // A one-way task is gated only by the checkpoint:decision right before it (planner-reversibility.md).
-    if (t.reversibility === "one-way" && !decisionBefore) warnings.push(`${label}: one-way reversibility without a checkpoint:decision immediately before it`);
+    // A one-way task is gated by the checkpoint:decision right before it or by a CONTEXT decision it cites as settled.
+    if (t.reversibility === "one-way" && !decisionBefore && !settled.some((id) => mentions(t.inner, id))) warnings.push(`${label}: one-way reversibility without a checkpoint:decision immediately before it`);
     decisionBefore = t.type === "checkpoint:decision";
   }
   if (Number(plan.wave) > 1 && !plan.dependsOn.length) warnings.push(`wave ${plan.wave} with empty depends_on`);
