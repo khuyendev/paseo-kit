@@ -417,6 +417,7 @@ Test naming: each v1 requirement of a coder's prefixes has at least one test who
 - Plan, execute, debug and quick acquire the same root writer lock. Acquire/reap/release use an exclusive transition claim, live host PID and owner token (not run-id equality). Interrupted transition claims fail closed and may require manual recovery.
 - Map-codebase acquires its own `codebase-map` lease for the whole run (not the debug one, so plan and execute keep pipelining); a second map on the same root is refused. The stamp refuses when HEAD moved since the mappers were dispatched (a commit landed during the map).
 - Verify acquires a per-phase lock `verify-<NN>` from its attempt record through readback and routing, not the root writer lock; a second verify of the same phase returns `refused` while the first runs.
+- Research acquires a per-phase lock `research-<NN>` from its status check through readback, not the root writer lock; a second research of the same phase returns `refused` while the first runs. `revisions record` reads, merges and writes `revisions.json` under `revisions.json.lock` (the STATE.md lock rules), so concurrent records keep each other's keys.
 
 ## 12. Integration requests
 

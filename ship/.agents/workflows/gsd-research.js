@@ -57,11 +57,19 @@ const cfg = await loadCfg();
 const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
 
 phase("Preconditions");
-const status = await gsd(["research", "status", phaseDir]);
 if (a.view) {
+  const status = await gsd(["research", "status", phaseDir]);
   if (status.code === 66) return { status: "failed", reason: `no research report at ${report}`, path: report };
   return { status: "view", report: status.json, valid: status.code === 0, path: report };
 }
+// G046 (per phase): one research run of a phase at a time, from its status check through readback. The lock is per phase,
+// not the root writer lock: a research of one phase must not block plan or execute of the root. A second run would share
+// this run's report and attempt file.
+const lease = await flow(["lock", `research-${nn}`, runId, "gsd-research"]);
+if (lease.code !== 0) return { status: "refused", reason: `another research run holds phase ${nn} (${lease.json?.holder ?? "unknown run"}); research it after that run ends` };
+try {
+// read again under the lock: a run that held it before may have written the report meanwhile
+const status = await gsd(["research", "status", phaseDir]);
 const open = await discussOpen(phaseDir, nn);
 if (open) return needsOwner("Discuss", open);
 if (status.code === 0 && !a.refresh) return { status: "reused", path: report, headChanged: Boolean(status.json?.headChanged) };
@@ -128,3 +136,6 @@ if (st.code === 66) return { status: "failed", reason: `researcher wrote no repo
 // The researcher's reason and the report's problems (or blockers) are the only clue to what failed; keep both.
 const problems = st.json?.problems ?? st.json?.blockers ?? [];
 return { status: "failed", reason: `report ${report} is not this attempt's (status ${st.json?.status ?? st.code}; attempt key or input digest differs)${reason ? `; researcher: ${reason}` : ""}`, problems };
+} finally {
+  await flow(["unlock", `research-${nn}`, lease.json.token]);
+}

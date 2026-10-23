@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { writeJsonAtomic, readJsonIf } from "../lib/io.mjs";
 import { sha256, textDigest } from "../lib/hash.mjs";
-import { done, fail, none, nowIso, readIf, rel } from "./common.mjs";
+import { done, fail, none, nowIso, readIf, rel, withFileLock } from "./common.mjs";
 import { loadAgentDef } from "../runtime/agents.mjs";
 import { isInside } from "../lib/paths.mjs";
 import { headOf } from "./git.mjs";
@@ -115,14 +115,18 @@ export const readRevisions = (phase) => readJsonIf(revisionsFile(phase), null) ?
 
 export function recordRevision(g, phase, key) {
   const { hash, files, skipped } = keyHash(g, phase, key);
-  const data = readRevisions(phase);
+  const head = headOf(g.codeRoot);
   const list = sha256(files.join("\n")).slice(0, 16);
-  data.lists[list] = files;
-  data.keys[key] = { hash, list, at: nowIso(), head: headOf(g.codeRoot) };
-  const used = new Set(Object.values(data.keys).map((k) => k.list));
-  for (const id of Object.keys(data.lists)) if (!used.has(id)) delete data.lists[id];
-  writeJsonAtomic(revisionsFile(phase), data);
-  return { key, hash, files: files.length, skipped, head: data.keys[key].head };
+  // G046: the read, merge and write of revisions.json run under one lock, so a record never replaces another's keys.
+  withFileLock(`${revisionsFile(phase)}.lock`, () => {
+    const data = readRevisions(phase);
+    data.lists[list] = files;
+    data.keys[key] = { hash, list, at: nowIso(), head };
+    const used = new Set(Object.values(data.keys).map((k) => k.list));
+    for (const id of Object.keys(data.lists)) if (!used.has(id)) delete data.lists[id];
+    writeJsonAtomic(revisionsFile(phase), data);
+  });
+  return { key, hash, files: files.length, skipped, head };
 }
 
 export function checkRevision(g, phase, key) {
