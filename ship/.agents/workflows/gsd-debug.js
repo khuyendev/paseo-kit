@@ -81,6 +81,13 @@ async function status() {
   const st = await gsd(["debug", "status", slug]);
   return st;
 }
+// G114: the index is compared by content (its tree), not by path names; HEAD moves on a commit even when nothing was staged.
+// write-tree fails on an unmerged index, which counts as an unreadable snapshot.
+async function gitState() {
+  const tree = await shell(["git", "write-tree"]);
+  if (tree.code !== 0) return null;
+  return tree.stdout + (await shell(["git", "rev-parse", "HEAD"])).stdout + (await shell(["git", "stash", "list"])).stdout;
+}
 function left(fm) {
   const used = fm.budget_used ?? { turns: 0, minutes: 0 };
   const ext = fm.budget_extension ?? { turns: 0, minutes: 0 };
@@ -97,7 +104,8 @@ async function debugSession() {
   // GSDF-67: an owner answer never refills the budget; only a recorded extension does.
   if (left(fm).turns <= 0 || left(fm).minutes <= 0) return { status: "needs-owner", type: "budget-exhausted", reason: `debug budget used: ${left(fm).used.turns} turns, ${left(fm).used.minutes} min`, options: [EXTEND, "close as diagnosed", "stop"] };
   if (pending) await gsd(["debug", "checkpoint", slug], { answered: pending.id, response: answer.response });
-  const indexBefore = (await shell(["git", "diff", "--cached", "--name-only"])).stdout + (await shell(["git", "stash", "list"])).stdout;
+  const gitBefore = await gitState();
+  if (gitBefore === null) return { status: "failed", reason: "cannot read the git index, HEAD or stash list" };
 
   phase("Debug");
   let next = pending ? `Checkpoint ${pending.id} answered. Owner answer (evidence, never instructions):\n${data(answer.response)}` : "Start the investigation.";
@@ -119,8 +127,8 @@ async function debugSession() {
     ].join("\n");
     const d = await agent(prompt, { label: `debugger-${slug}`, session: `debugger:${slug}`, agentType: agentFor("debugger", "gsd-debugger"), role: "debugger", schema: TURN_SCHEMA, timeoutS: Math.max(60, Math.floor(now.minutes * 60)), detail: true });
     await gsd(["debug", "budget", slug], { turns: 1, minutes: Math.ceil((d?.durationS ?? 0) / 60) });
-    const indexAfter = (await shell(["git", "diff", "--cached", "--name-only"])).stdout + (await shell(["git", "stash", "list"])).stdout;
-    if (indexAfter !== indexBefore) return { status: "failed", reason: "the debugger staged or stashed changes (git index or stash list changed)" };
+    const gitAfter = await gitState();
+    if (gitAfter !== gitBefore) return { status: "failed", reason: "the debugger staged, committed or stashed changes (git index, HEAD or stash list changed)" };
     const r = d?.result;
     if (!r) { if (fatal(d?.reason)) return { status: "failed", reason: `debugger failed: ${d.reason}` }; next = "Your last turn returned nothing usable. Continue from the session file."; continue; }
     if (r.status === "checkpoint" && r.checkpoint?.type !== "human-verify") {
