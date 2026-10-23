@@ -2,7 +2,7 @@
 // complete (GSDC-15), uat-passed (GSDC-16), phase-plan-index (GSDC-36), requirement marks (GSDC-09).
 import fs from "node:fs";
 import path from "node:path";
-import { writeJsonAtomic, writeTextAtomic } from "../lib/io.mjs";
+import { renameWithRetry, writeJsonAtomic, writeTextAtomic } from "../lib/io.mjs";
 import { samePath } from "../lib/paths.mjs";
 import { textDigest } from "../lib/hash.mjs";
 import { done, fail, idList, isFile, lf, nowIso, readIf, rel, today } from "./common.mjs";
@@ -134,17 +134,41 @@ function annotate(g, ref) {
 
 // --- phase add / insert / remove / complete (GSDC-15) ---
 
+// G012: the directory is created before the ROADMAP entry is published, and removed again if that write fails, so a
+// failed or interrupted add never leaves an entry without a directory for a retry to number a second phase after.
+function publishPhase(g, { number, name }, writeRoadmap) {
+  const dir = path.join(phasesDir(g.codeRoot), `${padPhase(number)}-${slugify(name)}`);
+  const created = !fs.existsSync(dir);
+  fs.mkdirSync(dir, { recursive: true });
+  try {
+    writeRoadmap?.();
+  } catch (e) {
+    if (created) fs.rmdirSync(dir);
+    throw e;
+  }
+  return dir;
+}
+
+// G012: a ROADMAP entry with no directory under the same name is what an interrupted add left behind; the retry completes it.
+const strandedEntry = (g, roadmap, number, name) => {
+  const entry = roadmapPhase(roadmap, number);
+  return entry && !findPhase(g.codeRoot, number) && slugify(entry.phase_name) === slugify(name) ? entry : null;
+};
+
 export function phaseAdd(g, name, { goal } = {}) {
   if (!name) throw fail("phase add needs a name");
   return writeShared(g, () => {
     const roadmap = loadRoadmap(g.codeRoot, g.cfg);
     if (!roadmap.exists) throw fail("ROADMAP.md does not exist");
     const max = roadmap.phases.reduce((m, p) => Math.max(m, Number(p.number.split(".")[0])), 0);
+    const stranded = strandedEntry(g, roadmap, String(max), name);
+    if (stranded) {
+      const dir = publishPhase(g, { number: stranded.number, name });
+      return { phase: stranded.number, directory: rel(g.codeRoot, dir), resumed: true };
+    }
     const number = String(max + 1);
     const last = roadmap.phases[roadmap.phases.length - 1];
-    writeTextAtomic(sharedFile(g.codeRoot, "ROADMAP.md"), insertPhase(roadmap.text, roadmap, { number, name, goal, dependsOn: last?.number }));
-    const dir = path.join(phasesDir(g.codeRoot), `${padPhase(number)}-${slugify(name)}`);
-    fs.mkdirSync(dir, { recursive: true });
+    const dir = publishPhase(g, { number, name }, () => writeTextAtomic(sharedFile(g.codeRoot, "ROADMAP.md"), insertPhase(roadmap.text, roadmap, { number, name, goal, dependsOn: last?.number })));
     return { phase: number, directory: rel(g.codeRoot, dir) };
   });
 }
@@ -157,11 +181,14 @@ export function phaseInsert(g, after, name, { goal } = {}) {
     if (!anchor) throw fail(`phase ${after} has no ROADMAP entry`);
     const base = anchor.number.split(".")[0];
     const used = roadmap.phases.filter((p) => p.number.split(".")[0] === base && p.number.includes(".")).map((p) => Number(p.number.split(".")[1]));
+    const stranded = used.length ? strandedEntry(g, roadmap, `${base}.${Math.max(...used)}`, name) : null;
+    if (stranded) {
+      const dir = publishPhase(g, { number: stranded.number, name });
+      return { phase: stranded.number, directory: rel(g.codeRoot, dir), inserted_after: anchor.number, resumed: true };
+    }
     const number = `${base}.${(used.length ? Math.max(...used) : 0) + 1}`;
     const lastChild = [...roadmap.phases].filter((p) => p.number.split(".")[0] === base).pop();
-    writeTextAtomic(sharedFile(g.codeRoot, "ROADMAP.md"), insertPhase(roadmap.text, roadmap, { number, name, inserted: true, goal, dependsOn: anchor.number, after: lastChild }));
-    const dir = path.join(phasesDir(g.codeRoot), `${padPhase(number)}-${slugify(name)}`);
-    fs.mkdirSync(dir, { recursive: true });
+    const dir = publishPhase(g, { number, name }, () => writeTextAtomic(sharedFile(g.codeRoot, "ROADMAP.md"), insertPhase(roadmap.text, roadmap, { number, name, inserted: true, goal, dependsOn: anchor.number, after: lastChild })));
     return { phase: number, directory: rel(g.codeRoot, dir), inserted_after: anchor.number };
   });
 }
@@ -212,19 +239,36 @@ export function phaseRemove(g, ref) {
     }
     let text = removePhaseText(roadmap.text, roadmap, entry);
     text = renumberText(text, mapping);
-    writeTextAtomic(sharedFile(g.codeRoot, "ROADMAP.md"), text);
+    const roadmapFile = sharedFile(g.codeRoot, "ROADMAP.md");
     const reqFile = sharedFile(g.codeRoot, "REQUIREMENTS.md");
     const reqText = readIf(reqFile);
-    if (reqText !== null && mapping.size) writeTextAtomic(reqFile, renumberText(reqText, mapping));
-    if (phase) {
-      for (const n of fs.readdirSync(phase.dir)) fs.rmSync(path.join(phase.dir, n));
-      fs.rmdirSync(phase.dir);
-    }
+    // G012: the directory moves run before the shared files are published. Each completed step is undone, latest first, when
+    // a later one fails (Windows can refuse a rename while a reader holds the directory), so the roadmap never disagrees with
+    // the directories. The removed phase moves aside until the removal is complete.
+    const undo = [];
+    const move = (from, to) => {
+      renameWithRetry(from, to);
+      undo.unshift(() => renameWithRetry(to, from));
+    };
+    const aside = phase ? path.join(phasesDir(g.codeRoot), `.removed-${path.basename(phase.dir)}`) : null;
     const renamed = [];
-    for (const { from, to, ph, target } of moves) {
-      fs.renameSync(ph.dir, target);
-      for (const name of fs.readdirSync(target)) if (name.startsWith(`${ph.padded}-`)) fs.renameSync(path.join(target, name), path.join(target, `${padPhase(to)}-${name.slice(ph.padded.length + 1)}`));
-      renamed.push({ from, to });
+    try {
+      if (phase) move(phase.dir, aside);
+      for (const { from, to, ph, target } of moves) {
+        move(ph.dir, target);
+        for (const name of fs.readdirSync(target)) if (name.startsWith(`${ph.padded}-`)) move(path.join(target, name), path.join(target, `${padPhase(to)}-${name.slice(ph.padded.length + 1)}`));
+        renamed.push({ from, to });
+      }
+      writeTextAtomic(roadmapFile, text);
+      undo.unshift(() => writeTextAtomic(roadmapFile, roadmap.text));
+      if (reqText !== null && mapping.size) writeTextAtomic(reqFile, renumberText(reqText, mapping));
+    } catch (e) {
+      for (const u of undo) u();
+      throw e;
+    }
+    if (aside) {
+      for (const n of fs.readdirSync(aside)) fs.rmSync(path.join(aside, n));
+      fs.rmdirSync(aside);
     }
     return { removed: entry.number, renumbered: renamed };
   });

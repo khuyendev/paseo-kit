@@ -94,6 +94,10 @@ export function guardWriter(env) {
 export function writeShared(g, mutate) {
   guardWriter(g.env);
   return withStateLock(g.codeRoot, () => {
+    // G012: a STATE.md that will not parse is refused before the mutator changes any shared file.
+    const current = readIf(sharedFile(g.codeRoot, "STATE.md"));
+    const stateError = current === null ? null : parseState(current).error;
+    if (stateError) throw fail(`STATE.md frontmatter: ${stateError}`);
     const result = mutate();
     const derived = fs.existsSync(sharedFile(g.codeRoot, "STATE.md")) ? rewriteState(g, (s) => s) : null;
     return { ...result, ...(derived && result?.updated === undefined ? { updated: derived.updated } : {}) };

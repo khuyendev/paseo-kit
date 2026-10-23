@@ -46,7 +46,7 @@ const RETRY_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
 const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 // Windows refuses a rename while another process (indexer, antivirus, a reader) holds the target open; retry briefly.
-function renameWithRetry(from, to) {
+export function renameWithRetry(from, to) {
   for (let attempt = 0; ; attempt++) {
     try {
       fs.renameSync(from, to);
