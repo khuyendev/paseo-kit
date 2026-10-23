@@ -176,7 +176,7 @@ Thinking levels (`THINKING_LEVELS`): `off, low, medium, high, xhigh, max`.
 | `dependency_probe` | `null` or argv (non-empty string[]): the command that checks the dependency set the plans declare (`<path>: dependency <name> [<constraint>] [dev]` lines of `<shared_changes>`). It runs in the project root with the set's JSON file as its last argument; exit 0 passes, a non-zero exit stops gsd-plan at stage Dependencies (needs-owner, with the output), a probe that cannot run stops it too | `null` (no probe; nothing runs) |
 | `dependency_probe_timeout_s` | int >= 1 (seconds) | 300 |
 | `attribution` | `null` or path | `null` |
-| `worktree_setup` | `{copy: string[], link: string[]}` (both keys required; git-ignored paths copied or linked into each new harness worktree) | `{copy: [], link: []}` |
+| `worktree_setup` | `{copy: string[], link: string[]}` (both keys required; git-ignored paths copied or linked into each new harness worktree; with `gsd.isolation: worktree`, `ph doctor` and `ph harness lint` name the git-ignored paths the adapter uses that no entry sets up) | `{copy: [], link: []}` |
 
 Paths in the adapter are repo-relative script paths (validated at load: no drive, no leading `/`, no `..`; `ph lint` also fails a path whose link leads outside the project); the adapter hook protocol (ADPT-15) is implemented by code-gsd-core in `gsd/` and documented in its report.
 

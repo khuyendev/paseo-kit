@@ -4,12 +4,17 @@
 // `copy` gives the worktree its own copy; `link` is a directory junction (symlink on POSIX) to the checkout's folder.
 import fs from "node:fs";
 import path from "node:path";
-import { readJsonIf, writeJsonAtomic } from "../lib/io.mjs";
+import { readJsonIf, readText, writeJsonAtomic } from "../lib/io.mjs";
 import { isInside } from "../lib/paths.mjs";
 
 const RECORD = "harness-setup.json";
 
 const fold = (rel) => (process.platform === "win32" ? rel.toLowerCase() : rel);
+
+// Dependency folders a toolchain reads without naming them in an argv or an instruction file (a Flutter build reads .dart_tool).
+const TOOLCHAIN_DIRS = ["node_modules", ".venv", "vendor", ".dart_tool"];
+
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function pathProblem(rel) {
   if (typeof rel !== "string" || !rel) return "is not a repo-relative path";
@@ -54,6 +59,30 @@ export function setupProblems(root, setup, git) {
     if (r.code !== 0) problems.push(`${key}: git check-ignore failed: ${(r.stderr || "no exit code").split("\n")[0]}`);
   });
   return problems;
+}
+
+/**
+ * One text per git-ignored path of the checkout that the adapter uses and that no worktree_setup entry sets up; [] unless
+ * gsd.isolation is worktree. Used: a toolchain folder at the top, or named by the adapter's argv (commands, gates, verify,
+ * syntax checkers, dependency probe) or its instruction files. A directory is named with its slash (`upstream/`), a file by its path.
+ */
+export function setupGaps(root, cfg, git) {
+  if (cfg.gsd.isolation !== "worktree") return [];
+  const ignored = git(root, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"]);
+  if (ignored.code !== 0) return [];
+  const a = cfg.adapter;
+  const argvs = [a.commands.build, a.commands.test, a.dependency_probe, ...a.commands.gates.map((g) => g.argv), ...Object.values(a.commands.verify).map((v) => v.argv), ...Object.values(a.syntax_checkers).map((v) => v.argv)];
+  const instructions = a.instructions.filter((rel) => fs.existsSync(path.resolve(root, rel))).map((rel) => readText(path.resolve(root, rel)));
+  const text = [...argvs.flatMap((argv) => argv ?? []), ...instructions].join("\n");
+  const set = setupEntries(a.worktree_setup).map(({ rel }) => fold(rel));
+  return ignored.stdout.split("\0").filter(Boolean).flatMap((entry) => {
+    const dir = entry.endsWith("/");
+    const name = dir ? entry.slice(0, -1) : entry;
+    const used = (dir && TOOLCHAIN_DIRS.includes(name)) || new RegExp(`(?:^|[^\\w.-])${escapeRe(entry)}${dir ? "" : "(?![\\w-])"}`).test(text);
+    const covered = set.some((rel) => rel === fold(name) || rel.startsWith(`${fold(name)}/`) || fold(name).startsWith(`${rel}/`));
+    if (!used || covered) return [];
+    return [`adapter.worktree_setup: ${entry} is git-ignored and used by the adapter, but no entry sets it up in a new worktree (add it to copy or link)`];
+  });
 }
 
 function recordPath(dir, git) {
