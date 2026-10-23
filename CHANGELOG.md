@@ -6,6 +6,23 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Kit feedback 57-63 from the Flutter port, phase 2 verify, map and evolve (owner 2026-10-23). Verify (58, a bug since
+  the 2026-10-20 integration, narrowed but not closed by G076): per-wave execute ends with one more gate over every
+  plan of the run (`batch-<n>.json`), the only evidence it returns, because a wave's gate goes stale once a later wave
+  edits the same files; a red phase gate stops with the waves still tracked. Gate evidence hashes only
+  `adapter.commands` and `adapter.verify_vocabulary`, so a kit update or another adapter key no longer stales it; an
+  owned file edited after the gate still does. Smoke build at execute (57): the first wave that changes a file matching
+  `adapter.smoke_triggers` (default: dependency manifests and lock files of common stacks) builds
+  `adapter.commands.smoke_builds` once per phase before its gate. Map (59-61): map-check's message names a `## Checked,
+  Not Bugs` section for refuted claims; a review fix reply must name every doc with a finding and nothing outside its
+  focus (the project hotfix, made the kit's rule); review round 2 checks only the round-1 findings, an incremental map
+  reviews only its paths, new claims go to a findings list instead of blocking the stamp, the round-2 prompt carries
+  the docs' digest; the ph skill says a hotfixed workflow script resumes with `--resume <run> --name <workflow>`.
+  Update safety (62): `kit.mjs update` and `ph doctor` run the gsd workflow argument checks (skeleton lane lenses) on
+  the merged overlay. Item 63 (synthesis) is covered by 54-56 (already in), 58, 60 and 61. Measured check:
+  tests/fb3/ (each failing before its change; F58 also pins that an edit after the phase gate is stale), full offline
+  suite 1905 pass / 0 fail / 11 skipped; not run on a live phase.
+
 - Live model switch (kit feedback 45, owner 2026-10-23: "đổi được hẳn model khi nó đang chạy giữa session"). While a
   workflow runs, its live agents follow their tier: the runner checks `.agents/harness.config.json` every 5 s and,
   when a tier resolves to another model of the same provider, switches each live agent of it through the daemon's
