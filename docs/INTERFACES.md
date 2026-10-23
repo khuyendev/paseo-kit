@@ -276,7 +276,8 @@ const session = await connect({ env, root, cfg, clock });   // or ctx.paseo() in
 | `timeline(agentId, {limit = 1000} = {})` | tail entries `[{item}]` (tool calls: `item.type === "tool_call"`, `item.name`, `item.detail`). |
 | `observe(agentIds)` | subscribe the agents' timelines so stream events arrive (`createAgent` does it for its agents). |
 | `onAgentStream(handler)` | `handler(payload)` for every `agent_stream` payload `{agentId, seq?, event}`; returns an unsubscribe function. Events: `{type: "turn_completed", turnId?, usage}` and `{type: "timeline", item: {type: "tool_call", callId, name, status: running\|completed\|failed\|canceled, detail}}`. |
-| `providerModels(provider)` | catalogue `[{id, label?, thinkingOptions: [{id}]}]`, cached per provider per session; a failure gives `[]`. |
+| `providerCatalogue(provider)` | `{models, error}`: `models` is the catalogue `[{id, label?, thinkingOptions: [{id}]}]`; a failed lookup (rejected request, or the daemon's error reply with no models) gives `models: []` and `error` with the reason, `error` is `null` when the catalogue loaded. Cached per provider per session. |
+| `providerModels(provider)` | `providerCatalogue(provider).models`; a failure gives `[]`. |
 | `thinkingIds(provider, model)` | the model's thinking option ids (`[]` when unknown). |
 | `close()` | close the client (ph closes the session in `finally`). |
 
@@ -368,7 +369,7 @@ Tests use Node's runner (`node --test`), run offline, never touch `~/.paseo`, `~
 | `fake.finish(agentId, steps)` | continue a manual turn with `steps`. |
 | `fake.emit(agentId, event)` / `fake.emitToolCall(agentId, item)` | push a stream event to observed agents (and the timeline). |
 | `fake.failNext(method, error)` | the next call of `method` throws `error`. |
-| `fake.setModels(provider, models)` | catalogue `[{id, thinkingOptions: [{id}]}]`; `models: {provider: Error}` makes `listProviderModels` throw. |
+| `fake.setModels(provider, models)` | catalogue `[{id, thinkingOptions: [{id}]}]`; `models: {provider: Error}` makes `listProviderModels` throw; `models: {provider: {error}}` gives the daemon's failure reply `{provider, error, fetchedAt}` with no models. |
 
 ### `tests/helpers/`
 | module | exports |

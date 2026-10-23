@@ -45,10 +45,12 @@ async function daemonLines(ctx, line) {
       line("problem", `tier ${name}: ${errText(e)}`);
       continue;
     }
-    const entry = (await session.providerModels(sel.provider)).find((m) => m.id === sel.model);
+    const catalogue = await session.providerCatalogue(sel.provider);
+    const entry = catalogue.models.find((m) => m.id === sel.model);
     const thinking = entry ? clampThinking(tier.thinking, (entry.thinkingOptions ?? []).map((o) => o.id)) : undefined;
     const features = Object.entries(tier.features ?? {}).map(([k, v]) => `${k}=${v}`).join(",");
-    line(entry ? "ok" : "problem", `tier ${name} -> ${tier.provider} thinking ${thinking ?? "default"}${features ? ` features ${features}` : ""}${entry ? "" : " (model not offered by the provider)"}`);
+    const why = catalogue.error ? `catalogue unavailable: ${catalogue.error}` : "model not offered by the provider";
+    line(entry ? "ok" : "problem", `tier ${name} -> ${tier.provider} thinking ${thinking ?? "default"}${features ? ` features ${features}` : ""}${entry ? "" : ` (${why})`}`);
   }
 }
 

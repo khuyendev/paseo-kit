@@ -226,6 +226,8 @@ export function createFakeDaemon({
       record("listProviderModels", [provider]);
       const entry = catalogues[provider];
       if (entry instanceof Error) throw entry;
+      // The daemon's failure reply: no models, the reason in `error` (the provider entry is in error or not ready).
+      if (entry?.error) return { provider, error: entry.error, fetchedAt: iso() };
       return { models: structuredClone(entry ?? []) };
     },
     observeTimeline(agentIds) {

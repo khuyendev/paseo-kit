@@ -276,12 +276,19 @@ export class Session {
     return this.client.on("agent_stream", (message) => handler(message?.payload ?? message));
   }
 
-  async providerModels(provider) {
+  // {models, error}: a failed lookup (a rejected request, or the daemon's error reply with no models) is not an empty
+  // catalogue, so the reason stays with it for doctor. Cached per provider per session.
+  async providerCatalogue(provider) {
     if (!this.catalogues.has(provider)) {
-      const res = await this.client.listProviderModels(provider).catch(() => null);
-      this.catalogues.set(provider, res?.models ?? []);
+      const reply = await this.client.listProviderModels(provider).catch((e) => ({ error: errText(e) }));
+      const error = reply?.error || (Array.isArray(reply?.models) ? null : "the reply has no model list");
+      this.catalogues.set(provider, { models: error ? [] : reply.models, error });
     }
     return this.catalogues.get(provider);
+  }
+
+  async providerModels(provider) {
+    return (await this.providerCatalogue(provider)).models;
   }
 
   async thinkingIds(provider, model) {
