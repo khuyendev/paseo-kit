@@ -380,12 +380,15 @@ async function skeletonGate() {
     }
     const checks = await parallel(lanes.map((l) => async () => {
       const mine = openIssues().filter((i) => i.lane === l.id);
-      return mine.length ? { lane: l, r: await resolutionCheck(l, mine) } : null;
+      return mine.length ? { lane: l, open: mine, r: await resolutionCheck(l, mine) } : null;
     }));
     for (const c of checks) for (const res of c?.r?.result?.resolved ?? []) {
       const i = issues.get(res.id);
       if (i && i.lane === c.lane.id && i.state === "open") { i.state = "resolved"; i.resolution = res.evidence ?? ""; }
     }
+    // A resolution check that returned nothing judged none of its issues: a failed call, not a stalled skeleton.
+    const unjudged = checks.find((c) => c?.r.result === null);
+    if (unjudged) return { status: "failed", stop: result("failed", { reason: `skeleton resolution ${unjudged.lane.id} (${unjudged.lane.lens})${unjudged.r.reason ? `: ${unjudged.r.reason}` : " returned nothing"}; open issues ${unjudged.open.map((i) => i.id).join(", ")} not judged`, issues: unjudged.open }) };
     passCounts.push(openIssues().length);
     if (openBlockers().length >= startBlockers) return { status: "needs-owner", stop: owner("Skeleton review", `stalled: ${openBlockers().length} open blockers at pass ${pass} (was ${startBlockers})`, { issues: openBlockers(), options: ["give guidance and rerun", "adjust CONTEXT", "abandon"] }) };
   }
@@ -588,9 +591,13 @@ async function checkerLoop(scopeIds, gapScoped) {
     for (const i of blockers) (i.plan && scopeIds.includes(i.plan) ? perPlan.set(i.plan, [...(perPlan.get(i.plan) ?? []), i]) : phaseLevel.push(i));
     const revised = await parallel([...perPlan].map(([id, list]) => () => plannerCall(gapScoped ? "planner:gaps" : `planner:${id}`, `revise-${id}-${iter}`, [planningContext("revision"), revisionContext([planPath(id)], list)].join("\n\n"), "freeze", freezeHash)));
     for (const r of revised) if (ownerMarker(r?.result)) return { stop: ownerStop("Checker", r.result) };
+    // A revision that returned nothing is not a finished revision: stop with its reason; the plan is never recorded as revised.
+    const missed = revised.findIndex((r) => !r || r.result === null);
+    if (missed !== -1) return { stop: failedCall(`planner revision ${[...perPlan.keys()][missed]} (checker iteration ${iter})`, revised[missed]?.reason ?? null) };
     if (phaseLevel.length) {
       const r = await plannerCall(gapScoped ? "planner:gaps" : "planner:outline", `revise-phase-${iter}`, [planningContext("revision"), revisionContext(scopeIds.map(planPath), phaseLevel)].join("\n\n"), "freeze", freezeHash);
       if (ownerMarker(r.result)) return { stop: ownerStop("Checker", r.result) };
+      if (r.result === null) return { stop: failedCall(`phase-level planner revision (checker iteration ${iter})`, r.reason) };
     }
     const touched = phaseLevel.length ? scopeIds : [...perPlan.keys()];
     for (const id of touched) {
