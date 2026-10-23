@@ -71,8 +71,9 @@ Options are `--key value` only; a value may itself start with `--`. Prompts: exa
   `thinking`, `features.fast_mode: true|false`. Use tier names by default so an owner can change this mapping once.
   `--model pro` inherits `tiers.pro.features`; a direct `--model circle/<model>` does not. Fast does not change
   permission mode or model identity and requires provider/model support. Patch only requested tier fields,
-  preserve other settings, and do not duplicate tiers merely for Fast on/off. Changes affect new agents/new
-  workflow launches, not live agents or cached resume calls. The shipped tiers remain unconfigured.
+  preserve other settings, and do not duplicate tiers merely for Fast on/off. Changes affect new agents, including
+  the next `agent()` call of a running workflow (it reads the overlay again; the log names `tier <name>: <old> -> <new>`);
+  live agents keep their model, and cached resume calls may create no agent. The shipped tiers remain unconfigured.
 - `--role R` (fanout `role=`, workflow `agent({role})`) names a GSD role; model and effort then follow
   `gsd.roles.<R>` of the adapter. Precedence, for model and effort separately: `--model`/`--effort` > role entry >
   the agent type's `model:` > `default_tier`. The role is never guessed from the agent type. The role catalog in the kit's `docs/INTERFACES.md` section 4.2 (Role catalog) lists which workflow passes each role, its agent type and tier.

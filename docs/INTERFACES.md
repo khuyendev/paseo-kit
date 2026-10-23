@@ -213,7 +213,7 @@ Paths in the adapter are repo-relative script paths (validated at load: no drive
 
 #### Role catalog
 
-Each row is a role, the workflows that pass it, the agent type it starts (`adapter.agents.<role>` replaces it) and the tier it runs on when nothing else is set: the agent definition's `model:`, or `default_tier` when the call names no agent type. Precedence per call: the call's own model or effort (the gsd-plan args `roles` map, `skeletonLanes`, `gsd.code_review.reviewers`) > `gsd.roles.<role>` > the agent's `model:` > `default_tier`. A tier resolves to the model in `tiers.<tier>.provider` of the project overlay; the kit ships tiers unconfigured, so calls fail until they are mapped. `outline` has its own `gsd.roles` entry: `gsd.roles.planner` does not reach it.
+Each row is a role, the workflows that pass it, the agent type it starts (`adapter.agents.<role>` replaces it) and the tier it runs on when nothing else is set: the agent definition's `model:`, or `default_tier` when the call names no agent type. Precedence per call: the call's own model or effort (the gsd-plan args `roles` map, `skeletonLanes`, `gsd.code_review.reviewers`) > `gsd.roles.<role>` > the agent's `model:` > `default_tier`. A tier resolves to the model in `tiers.<tier>.provider` of the project overlay, read again at each workflow `agent()` call (a change logs `tier <name>: <old> -> <new>`); the kit ships tiers unconfigured, so calls fail until they are mapped. `outline` has its own `gsd.roles` entry: `gsd.roles.planner` does not reach it.
 
 | role | called by | agent type | tier | notes |
 | --- | --- | --- | --- | --- |

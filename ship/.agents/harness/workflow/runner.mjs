@@ -2,6 +2,7 @@
 // resume, and the live runner (prompt assembly, priming, schema retries, watchdog, archive) on a paseo-client Session.
 import fs from "node:fs";
 import path from "node:path";
+import { loadConfig } from "../config.mjs";
 import { errText } from "../lib/cli.mjs";
 import { id8, samePath } from "../lib/paths.mjs";
 import { createCapacity } from "./admission.mjs";
@@ -31,6 +32,9 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
   const sessions = new Map();
   const gates = new Map();
   const adopted = new Set();
+  const tierOf = new Map();
+  let latest = cfg;
+  let configLost = null;
   let transportDown = null;
 
   const definition = (type) => {
@@ -38,16 +42,34 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
     return definitions.get(type);
   };
 
+  // The models of a call come from the overlay as it is when the call starts, so an owner's edit reaches the next agent()
+  // call of a running workflow. An overlay that no longer loads keeps the last good config; the warning is logged once.
+  function currentConfig() {
+    try {
+      latest = loadConfig(root);
+      configLost = null;
+    } catch (e) {
+      if (errText(e) !== configLost) out(`log warning: config not reloaded, calls use the last good config: ${errText(e)}`);
+      configLost = errText(e);
+    }
+    return latest;
+  }
+
   function identify({ opts }) {
+    const current = currentConfig();
     // An invalid role is a configuration error of the script (PHCL-22); everything else is the call's null reason.
     try {
-      runtime.checkRole(cfg, opts.role);
+      runtime.checkRole(current, opts.role);
     } catch (e) {
       throw new Error(`agent(): ${errText(e)}`);
     }
     try {
       const def = opts.agentType ? definition(opts.agentType) : null;
-      const sel = runtime.selectModel(cfg, { explicit: { model: opts.model, effort: opts.effort }, role: opts.role, definition: def });
+      const explicit = { model: opts.model, effort: opts.effort };
+      const sel = runtime.selectModel(current, { explicit, role: opts.role, definition: def });
+      const tier = runtime.requestedModel(current, { explicit, role: opts.role, definition: def });
+      if (tierOf.has(tier) && tierOf.get(tier) !== sel.id) out(`tier ${tier}: ${tierOf.get(tier)} -> ${sel.id}`);
+      tierOf.set(tier, sel.id);
       // The read-only mode (the note and the daemon's disallowed tools) and the prompt notes are part of the call's
       // identity, so the resume cache reruns a call whose permissions or notes changed (FLOW-15).
       const readOnly = opts.readOnly === true || Boolean(def?.readOnly);

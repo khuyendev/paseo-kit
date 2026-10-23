@@ -55,12 +55,17 @@ export function checkRole(cfg, role) {
   if (!validRoles(cfg).includes(role)) throw new UsageError(`unknown role '${role}' (roles: ${validRoles(cfg).join(", ")})`);
 }
 
-// Model and effort resolve independently: per-run argument > gsd.roles entry > definition `model:` > default_tier.
+// The tier, alias or provider/model a call asks for: per-run argument > gsd.roles entry > definition `model:` > default_tier.
 // The role is always given explicitly (--role, fanout role=, agent({role})), never inferred from the agent type.
+export function requestedModel({ cfg, explicit = {}, role, definition = null }) {
+  const entry = role ? cfg.gsd.roles[role] ?? {} : {};
+  return explicit.model ?? entry.model ?? definition?.model ?? cfg.default_tier;
+}
+
+// Model and effort resolve independently: the model as requestedModel gives it, the effort per-run argument > gsd.roles entry.
 export function selectModel({ cfg, explicit = {}, role, definition = null }) {
   checkRole(cfg, role);
   const entry = role ? cfg.gsd.roles[role] ?? {} : {};
-  const model = explicit.model ?? entry.model ?? definition?.model ?? cfg.default_tier;
   const effort = explicit.effort ?? entry.effort ?? undefined;
-  return resolveModel(cfg, model, effort);
+  return resolveModel(cfg, requestedModel({ cfg, explicit, role, definition }), effort);
 }

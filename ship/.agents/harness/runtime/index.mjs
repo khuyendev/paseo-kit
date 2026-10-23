@@ -1,7 +1,7 @@
 // The runtime API other modules import (workflow runner, gsd): agent definitions, model selection, prompt assembly,
 // worktrees, list-price cost and the caller-root check. commands.mjs holds only the ph command definitions.
 export { loadAgentDef, isReadOnlyTools, listAgentTypes } from "./agents.mjs";
-export { checkRole, modelKey, resolveModel, selectModel, validRoles } from "./models.mjs";
+export { checkRole, modelKey, requestedModel, resolveModel, selectModel, validRoles } from "./models.mjs";
 export { costOfTurns, costUsd, loadPrices, priceKey } from "./pricing.mjs";
 export { composePrompt, firstPromptNote, promptNotesHash, roleParts, worktreeNote, workdirNote, NOTE_READ_ONLY } from "./prompts.mjs";
 export { resultJson } from "./result.mjs";
