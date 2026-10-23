@@ -1,7 +1,7 @@
 // The one place the workflow module reaches runtime/ (code-ph exports): agent definitions, model selection, prompt
 // assembly, worktrees, list-price cost and the caller-root check (runtime/index.mjs, never commands.mjs).
 import {
-  checkCallerRoot, checkRole, composePrompt, costUsd, createWorktree, discardWorktree, firstPromptNote, loadAgentDef, loadPrices,
+  checkCallerRoot, checkRole, composePrompt, costOfTurns, createWorktree, discardWorktree, firstPromptNote, loadAgentDef, loadPrices,
   NOTE_READ_ONLY, promptNotesHash, roleParts, selectModel, workdirNote, worktreeNote,
 } from "../runtime/index.mjs";
 import { assertPromptSize } from "../paseo-client/index.mjs";
@@ -33,9 +33,9 @@ export const runtime = Object.freeze({
   },
   createWorktree: (root, cfg, name, { seed, timeoutMs }) => createWorktree(root, cfg, name, { seed, timeoutMs }),
   removeWorktree: (wt) => discardWorktree(wt),
-  listPriceCost: (root, model, usage) => {
+  listPriceCost: (root, model, turns) => {
     if (!prices.has(root)) prices.set(root, loadPrices(root));
-    return costUsd(prices.get(root), model, usage);
+    return costOfTurns(prices.get(root), model, turns);
   },
   assertCallerInRoot: (session) => checkCallerRoot(session),
 });

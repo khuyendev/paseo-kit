@@ -2,6 +2,8 @@
 const SETTLE_MS = 2000;
 const SETTLE_POLL_MS = 100;
 
+const contextOf = (u) => u?.contextWindowUsedTokens ?? (u?.inputTokens ?? 0) + (u?.cachedInputTokens ?? 0);
+
 export class UsageTracker {
   constructor(client, clock) {
     this.client = client;
@@ -14,7 +16,7 @@ export class UsageTracker {
   async track(ids) {
     const fresh = ids.filter((id) => id && !this.totals.has(id));
     if (!fresh.length) return;
-    for (const id of fresh) this.totals.set(id, { turns: 0, input: 0, cachedInput: 0, output: 0, reportedCostUsd: null, late: 0 });
+    for (const id of fresh) this.totals.set(id, { turns: 0, input: 0, cachedInput: 0, output: 0, reportedCostUsd: null, late: 0, perTurn: [] });
     try {
       await this.client.observeTimeline(fresh).ready;
     } catch (e) {
@@ -42,10 +44,13 @@ export class UsageTracker {
   }
 
   add(t, usage) {
+    const turn = { input: usage.inputTokens ?? 0, cachedInput: usage.cachedInputTokens ?? 0, output: usage.outputTokens ?? 0, maxContext: contextOf(usage) };
     t.turns++;
-    t.input += usage.inputTokens ?? 0;
-    t.cachedInput += usage.cachedInputTokens ?? 0;
-    t.output += usage.outputTokens ?? 0;
+    t.input += turn.input;
+    t.cachedInput += turn.cachedInput;
+    t.output += turn.output;
+    // Long-context rates apply per request, so every turn keeps its own context for costing (PHCL-14).
+    t.perTurn.push(turn);
     if (typeof usage.totalCostUsd === "number") t.reportedCostUsd = usage.totalCostUsd;
   }
 
@@ -69,6 +74,10 @@ export class UsageTracker {
 
   turnsOf(agentId) {
     return this.totals.get(agentId)?.turns ?? 0;
+  }
+
+  perTurnOf(agentId) {
+    return this.totals.get(agentId)?.perTurn.slice() ?? [];
   }
 
   tracked(agentId) {

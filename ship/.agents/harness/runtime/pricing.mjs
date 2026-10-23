@@ -12,17 +12,37 @@ export const loadPrices = (root) => readJsonIf(path.join(root, PRICES_REL))?.mod
 // `circle-agent/model-x[1m]` -> `model-x`
 export const priceKey = (model) => String(model ?? "").replace(/^[^/]*\//, "").replace(/\[[^\]]*\]$/, "");
 
-/**
- * USD per the table, or null for an unknown model or one without input/output prices. input = uncached input,
- * cachedInput = cache reads; cache writes are not reported apart and are charged as input. Long-context rates apply
- * when the largest context used passed the model's threshold.
- */
-export function costUsd(prices, model, { input = 0, cachedInput = 0, output = 0, maxContext = 0 } = {}) {
+const pricedModel = (prices, model) => {
   const p = prices[priceKey(model)];
-  if (!p || typeof p.input !== "number" || typeof p.output !== "number") return null;
+  return p && typeof p.input === "number" && typeof p.output === "number" ? p : null;
+};
+
+// Unrounded USD of one request. Long-context rates apply when that request's own context passed the threshold.
+function requestUsd(p, { input = 0, cachedInput = 0, output = 0, maxContext = 0 } = {}) {
   const long = p.longContext && maxContext > p.longContext.thresholdTokens ? p.longContext : null;
   const inRate = long?.input ?? p.input;
   const outRate = long?.output ?? p.output;
   const cachedRate = (p.cachedInput ?? p.input) * (long ? inRate / p.input : 1);
-  return Math.round((input * inRate + cachedInput * cachedRate + output * outRate) / 100) / 1e4;
+  return (input * inRate + cachedInput * cachedRate + output * outRate) / 1e6;
+}
+
+const usd = (value) => Math.round(value * 1e4) / 1e4;
+
+/**
+ * USD of one request per the table, or null for an unknown model or one without input/output prices. input = uncached
+ * input, cachedInput = cache reads; cache writes are not reported apart and are charged as input. maxContext = the
+ * request's context used.
+ */
+export function costUsd(prices, model, usage) {
+  const p = pricedModel(prices, model);
+  return p ? usd(requestUsd(p, usage)) : null;
+}
+
+/**
+ * USD of a call from its turns, one `{ input, cachedInput, output, maxContext }` per request: each turn is priced with
+ * its own context, so one long turn does not reprice the short ones and a short last turn does not reprice the long ones.
+ */
+export function costOfTurns(prices, model, turns) {
+  const p = pricedModel(prices, model);
+  return p ? usd(turns.reduce((sum, turn) => sum + requestUsd(p, turn), 0)) : null;
 }

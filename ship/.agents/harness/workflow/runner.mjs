@@ -20,8 +20,6 @@ export function schemaRetryPrompt(errors, schema) {
   return `Your reply did not match the required JSON schema:\n${listed}\nReply again with only the corrected JSON object.${schemaInstruction(schema)}`;
 }
 
-const contextOf = (u) => u?.contextWindowUsedTokens ?? (u?.inputTokens ?? 0) + (u?.cachedInputTokens ?? 0);
-
 /**
  * session: paseo-client Session; runtime: the runtime-bridge exports; onAdopt({agentId, session, fromRun}) records an
  * adopted session agent in run.json before the next live call (FLOW-48).
@@ -128,17 +126,17 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
     let worktree = null;
     let newWorktree = false;
     let abandoned = false;
-    let maxContext = 0;
     let ok = false;
     if (key !== undefined || opts.keep === true) admission?.keep?.();
 
-    const usageNow = () => session.usage.get(agentId) ?? { input: 0, cachedInput: 0, output: 0, reportedCostUsd: null };
+    const usageNow = () => session.usage.get(agentId) ?? { turns: 0, input: 0, cachedInput: 0, output: 0, reportedCostUsd: null };
     const usageOf = () => {
       if (!agentId) return { tokens: 0, usage: null };
       const now = usageNow();
-      const b = base ?? { input: 0, cachedInput: 0, output: 0 };
-      const u = { input: now.input - b.input, cachedInput: now.cachedInput - b.cachedInput, output: now.output - b.output, maxContext };
-      const costUsd = runtime.listPriceCost(root, identity.model, u);
+      const b = base ?? { turns: 0, input: 0, cachedInput: 0, output: 0 };
+      const u = { input: now.input - b.input, cachedInput: now.cachedInput - b.cachedInput, output: now.output - b.output };
+      // Only the turns after the base snapshot belong to this call; each one is priced with its own context.
+      const costUsd = runtime.listPriceCost(root, identity.model, session.usage.perTurnOf(agentId).slice(b.turns));
       return { tokens: u.output, usage: { ...u, costUsd: costUsd ?? null, reportedCostUsd: now.reportedCostUsd ?? null } };
     };
     const durationS = () => Math.round((clock.now() - t0) / 1000);
@@ -178,7 +176,6 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
         try {
           const r = await session.waitTurn(agentId, waitOpts(before));
           if (expired()) throw late();
-          maxContext = Math.max(maxContext, contextOf(r.usage));
           text = r.text;
           err = null;
         } catch (e) {

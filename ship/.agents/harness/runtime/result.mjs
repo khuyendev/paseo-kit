@@ -1,6 +1,6 @@
 // The `ph result --json` object of one agent (PHCL-13), also written by `fanout --collect` before archiving.
 import { errText } from "../lib/cli.mjs";
-import { costUsd, loadPrices } from "./pricing.mjs";
+import { costOfTurns, loadPrices } from "./pricing.mjs";
 
 const SKILL_WINDOW = 1000;
 
@@ -44,7 +44,7 @@ export async function resultJson(session, agent, prices = loadPrices(session.roo
     final: await session.replyText(agent.id),
     usage,
     tokens,
-    costUsd: tokens ? costUsd(prices, agent.model, { ...tokens, maxContext: usage?.contextWindowUsedTokens ?? 0 }) : null,
+    costUsd: tokens ? costOfTurns(prices, agent.model, session.usage.perTurnOf(agent.id)) : null,
     reportedCostUsd: tracked?.reportedCostUsd ?? usage?.totalCostUsd ?? null,
     durationS: seconds(agent.createdAt, agent.updatedAt),
     lastTurnS: seconds(agent.lastUserMessageAt, agent.updatedAt),
