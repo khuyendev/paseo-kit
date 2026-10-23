@@ -67,8 +67,14 @@ const unknown = docs.filter((d) => !Object.values(FOCUS).flat().includes(d));
 if (unknown.length) return { status: "failed", reason: `unknown map docs ${unknown.join(", ")}` };
 const cfg = await loadCfg();
 const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
-
+// G119: a map holds its own root lease, not the debug one (plan and execute keep pipelining); two map runs never write
+// or stamp the same documents at once.
+const lease = await flow(["lock", "codebase-map", runId, "gsd-map-codebase"]);
+if (lease.code !== 0) return { status: "refused", reason: `${leaseText(lease.json)}; map after it ends` };
+try {
 phase("Map");
+// G119: the mappers read the tree at this HEAD; the stamp refuses when a commit (an execute wave) moved it during the map.
+const dispatchHead = (await flow(["head"])).json?.commit ?? null;
 const jobs = Object.entries(FOCUS).map(([focus, own]) => ({ focus, docs: own.filter((d) => docs.includes(d)) })).filter((j) => j.docs.length);
 // G117: a mapper that gives no confirmation naming its docs is retried once unless fatal (as gsd-plan-review); a job still
 // unconfirmed fails the run before the check and the stamp, so an old doc is never stamped as this run's map.
@@ -98,6 +104,8 @@ const scan = await flow(["secrets", ...docPaths]);
 if (scan.code !== 0) return { status: "needs-owner", stage: "Map", reason: "possible secrets in the codebase map; nothing committed", findings: scan.json?.findings ?? [], options: ["remove them and rerun the check", "confirm they are not secrets"] };
 
 phase("Stamp");
+const stampHead = (await flow(["head"])).json?.commit ?? null;
+if (stampHead !== dispatchHead) return { status: "failed", reason: `HEAD moved during the map (${dispatchHead} -> ${stampHead}); the mappers read another tree; rerun the map` };
 const stamp = await flow(["stamp", ...docs]);
 if (stamp.code !== 0) return { status: "failed", reason: `stamp failed: ${stamp.json?.error}` };
 if (cfg.gsd.commit_policy.docs) {
@@ -105,3 +113,6 @@ if (cfg.gsd.commit_policy.docs) {
   if (c.code !== 0) log(`warning: docs commit failed: ${c.json?.error ?? c.code}`);
 }
 return { status: "mapped", docs: docPaths, commit: stamp.json.commit, paths };
+} finally {
+  await flow(["unlock", "codebase-map", lease.json.token]);
+}

@@ -6,6 +6,7 @@ import { configRoot } from "../../harness/config.mjs";
 import { errText, isMain } from "../../harness/lib/cli.mjs";
 import * as files from "./flow-files.mjs";
 import * as map from "./flow-map.mjs";
+import { head } from "./flow-git.mjs";
 import * as project from "./flow-project.mjs";
 import * as execute from "./flow-execute.mjs";
 import * as review from "./flow-review.mjs";
@@ -21,6 +22,7 @@ const COMMANDS = {
   stamp: (root, args) => map.stamp(root, args.length ? args : undefined),
   drift: (root, [threshold]) => map.drift(root, Number(threshold)),
   "map-check": (root, args) => map.mapCheck(root, args.length ? args : undefined),
+  head: (root) => ({ commit: head(root) }),
   "draft-check": (root) => project.draftCheck(root),
   "summary-heal": (root, args, input) => project.summaryHeal(root, input, { stale: args.includes("--stale") }),
   "anti-patterns": (root, [phaseDir]) => execute.antiPatterns(root, phaseDir),

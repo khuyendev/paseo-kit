@@ -16,7 +16,8 @@ Method text: follow `.agents/gsd/generated/workflows/map-codebase.md` (the gener
 3. Result:
    - `mapped`: the 7 docs exist with at least 20 lines each, the stamp step wrote `last_mapped_commit`/`last_mapped_at` into each doc (a shell step, never the mapper), docs were committed when `gsd.commit_policy.docs` is on.
    - `needs-owner` stage Map with `findings`: a possible secret (key prefix, private key, JWT) is in a doc; nothing was committed. Show file, line and kind (never the value) and wait for the owner.
-   - `failed`: report the reason (`--paths` with `..`, a dots-only segment, a leading `/` or shell metacharacters is rejected before any agent; spaces inside a path are allowed; a mapper with no reply, or a reply that does not name exactly its docs, after one retry). A failed run stamps nothing and commits nothing; docs that a mapper already rewrote stay on disk uncommitted.
+   - `refused`: another map run holds this code root's `codebase-map` lease; run the map after it ends. Nothing was written.
+   - `failed`: report the reason (`--paths` with `..`, a dots-only segment, a leading `/` or shell metacharacters is rejected before any agent; spaces inside a path are allowed; a mapper with no reply, or a reply that does not name exactly its docs, after one retry; `HEAD moved during the map` when a commit landed while the mappers ran). A failed run stamps nothing and commits nothing; docs that a mapper already rewrote stay on disk uncommitted; rerun the map after a HEAD move.
 4. Next step: the `harness` skill reads the map and generates the project adapter; then `gsd-new-project` (or `gsd-plan` for an initialized project).
 
 The drift gate: at plan start `gsd-plan` compares the map's `last_mapped_commit` with the tree and warns (never blocks) when new directories plus changed files in mapped directories reach `gsd.drift_threshold`; an unstamped map reports `skipped`. Answer a drift warning with `{"paths": ...}` above.
