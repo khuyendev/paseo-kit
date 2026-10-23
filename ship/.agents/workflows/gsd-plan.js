@@ -77,6 +77,7 @@ const PLANNER_SCHEMA = {
 const ISSUE = { type: "object", properties: { plan: { type: ["string", "null"] }, dimension: { type: "string" }, severity: { type: "string" }, required_property: { type: "string" }, description: { type: "string" }, evidence: { type: "string" }, fix_hint: { type: "string" }, target: { type: "string" } }, required: ["severity", "required_property", "description"] };
 const ISSUES_SCHEMA = { type: "object", properties: { issues: { type: "array", items: ISSUE } }, required: ["issues"] };
 const RESOLUTION_SCHEMA = { type: "object", properties: { resolved: { type: "array", items: { type: "object", properties: { id: { type: "string" }, evidence: { type: "string" } }, required: ["id"] } } }, required: ["resolved"] };
+const CHECKER_SCHEMA = { type: "object", properties: { issues: { type: "array", items: ISSUE }, resolved: RESOLUTION_SCHEMA.properties.resolved }, required: ["issues"] };
 const ARCHITECT_SCHEMA = { type: "object", properties: { status: { type: "string", enum: ["complete", "conflict"] }, sharedChanges: { type: "array" }, outlineChanges: { type: "array" }, conflicts: { type: "array" } }, required: ["status"] };
 
 // ---- arguments (GSDF-15): every check runs before the first agent ----
@@ -632,11 +633,17 @@ async function checkerLoop(scopeIds, gapScoped) {
   const stuck = new Map(); // key -> { why, issues }
   const carriedBy = new Map(); // key -> warnings of that key's latest check, carried into the result when the loop ends
   const keyOf = (i) => (i.plan && scopeIds.includes(i.plan) ? i.plan : null);
+  // The same blocker as an earlier checker iteration raised it: same plan, dimension and invariant.
+  const sameIssue = (a, b) => (a.plan ?? null) === (b.plan ?? null) && a.dimension === b.dimension && a.required_property === b.required_property;
+  // Checker blockers that no checker has confirmed resolved (kit-feedback 44). They go back into the next checker prompt as
+  // "still open?" and leave the count only when a checker lists their id in `resolved`, never because a checker went silent.
+  let pending = [];
   for (let iter = 1; ; iter++) {
     const live = scopeIds.filter((id) => !stuck.has(id));
     const probeIssues = await countProbes(scopeIds, gapScoped);
     const probeFile = `${phaseDir}/checker-probes.json`;
     await flow(["write", probeFile], JSON.stringify({ iteration: iter, probes: probeIssues }, null, 2));
+    const earlier = pending.filter((i) => !stuck.has(keyOf(i))).map((i, n) => ({ ...i, id: `open-${n + 1}` }));
     // The Files/plan thresholds grow with the phase's files, so the checker judges them against this phase's plans.
     const filesPerPlan = (await gsd(["check", "owns", N])).json?.files_per_plan;
     const prompt = [
@@ -646,26 +653,32 @@ async function checkerLoop(scopeIds, gapScoped) {
       filesPerPlan && tracerExtraFiles ? `Tracer files per plan (a plan with a type="tracer" task): warning at ${filesPerPlan.warning + tracerExtraFiles}+, blocker at ${filesPerPlan.blocker + tracerExtraFiles}+.` : "",
       `Deterministic probe results are in ${probeFile}: they are already counted; do not re-derive them, do not repeat them as issues.`,
       warnings.length ? `Carried warnings:\n${warnings.map((w) => `- ${w}`).join("\n")}` : "",
-      "Return JSON {issues: [{plan (null for phase-level), dimension, severity (blocker|warning|info), required_property (the invariant that must hold), description (the evidence it does not), fix_hint}]}.",
+      earlier.length ? `Blockers from earlier checker iterations, still open? Judge each against the plans as they are now. Repeat it in issues (same plan, dimension and required_property) while it holds; list its id in resolved, with evidence, once it is fixed. An id you do not list stays open.\n${JSON.stringify(earlier.map(({ id, plan, dimension, required_property, description, fix_hint }) => ({ id, plan, dimension, required_property, description, fix_hint })))}` : "",
+      "Return JSON {issues: [{plan (null for phase-level), dimension, severity (blocker|warning|info), required_property (the invariant that must hold), description (the evidence it does not), fix_hint}], resolved: [{id, evidence}] (only ids of the still-open blockers above)}.",
       POLICY,
       digestLine("freeze", freezeHash),
       // The checker judges PLAN contents, which the freeze key does not cover (CR-GSF-19).
       digestLine("checked", (await gsd(["revisions", "hash", phaseDir, "checked", "--settings", settingsDigest.checked])).json?.hash ?? "none"),
     ].filter(Boolean).join("\n\n");
-    const opts = { label: `checker-${iter}`, agentType: agentFor("checker", "gsd-plan-checker"), readOnly: true, schema: ISSUES_SCHEMA, judges: await plansJudges(scopeIds), ...roleOpts("checker") };
+    const opts = { label: `checker-${iter}`, agentType: agentFor("checker", "gsd-plan-checker"), readOnly: true, schema: CHECKER_SCHEMA, judges: await plansJudges(scopeIds), ...roleOpts("checker") };
     let c = await call(prompt, opts);
     if (c.result === null && !fatal(c.reason)) c = await call(prompt, opts);
     if (c.result === null) return { stop: failedCall("plan checker", c.reason) };
+    const confirmed = new Set((c.result.resolved ?? []).map((r) => r.id));
+    const kept = earlier.filter((i) => !confirmed.has(i.id));
     const checkerIssues = [];
     for (const i of c.result.issues ?? []) {
       if (String(i.severity).toLowerCase() === "info") advisories.push({ lane: "checker", plan: i.plan ?? null, description: i.description });
       else checkerIssues.push({ ...i, severity: String(i.severity).toLowerCase() === "warning" ? "warning" : "blocker" });
     }
+    // A still-open blocker the checker repeats is the same issue: the repeat replaces the carried copy, so it is counted once.
+    const fresh = checkerIssues.filter((i) => i.severity === "blocker");
+    pending = [...kept.filter((k) => !fresh.some((f) => sameIssue(k, f))), ...fresh];
     // Only blockers drive the stall test, the cap and the revisions; warnings are carried into the result (kit-feedback 13, 20).
     const all = [...checkerIssues, ...probeIssues];
-    const blockers = all.filter((i) => i.severity === "blocker");
+    const blockers = [...pending, ...probeIssues.filter((i) => i.severity === "blocker")];
     const carried = all.filter((i) => i.severity === "warning");
-    log(`checker iteration ${iter}: ${checkerIssues.length} checker + ${probeIssues.length} probe issues, ${blockers.length} blockers`);
+    log(`checker iteration ${iter}: ${checkerIssues.length} checker + ${probeIssues.length} probe issues, ${blockers.length} blockers (${earlier.length - kept.length} of ${earlier.length} earlier blockers confirmed resolved)`);
     for (const key of [...live, null]) {
       if (!stuck.has(key)) carriedBy.set(key, carried.filter((w) => keyOf(w) === key).map((w) => `checker${w.plan ? ` (${w.plan})` : ""}: ${w.description}`));
     }

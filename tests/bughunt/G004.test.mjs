@@ -26,8 +26,10 @@ test("G004 a warning-only checker pass plans with no revision and carries the wa
 
 test("G004 a revision carries blockers only; warnings never go back to the planner and do not stall the pass", async () => {
   let revised = null;
+  // F44: a blocker leaves the count only when the checker lists it as resolved.
   const r = await plan(makeWorld(), {}, {
-    ...checkerRounds([blocker("owns gap"), warning("soft one"), warning("soft two"), warning("soft three"), warning("soft four")], [warning("soft one"), warning("soft two"), warning("soft three"), warning("soft four")]),
+    "checker-1": () => ({ issues: [blocker("owns gap"), warning("soft one"), warning("soft two"), warning("soft three"), warning("soft four")] }),
+    "checker-2": () => ({ issues: [warning("soft one"), warning("soft two"), warning("soft three"), warning("soft four")], resolved: [{ id: "open-1", evidence: "owns fixed" }] }),
     "revise-01-01": (p) => { revised = p; return { marker: "## REVISION COMPLETE" }; },
   });
   assert.equal(r.result.status, "planned");
@@ -38,11 +40,12 @@ test("G004 a revision carries blockers only; warnings never go back to the plann
 });
 
 test("G004 the stall test compares blockers only: warnings that grow do not stop a phase whose blockers fall", async () => {
-  const r = await plan(makeWorld(), {}, checkerRounds(
-    [blocker("first"), blocker("second")],
-    [blocker("first"), warning("w1"), warning("w2"), warning("w3")],
-    [warning("w1"), warning("w2"), warning("w3")],
-  ));
+  // F44: "second" is confirmed resolved in round 2; "first" is repeated there and confirmed in round 3.
+  const r = await plan(makeWorld(), {}, {
+    "checker-1": () => ({ issues: [blocker("first"), blocker("second")] }),
+    "checker-2": () => ({ issues: [blocker("first"), warning("w1"), warning("w2"), warning("w3")], resolved: [{ id: "open-2", evidence: "second fixed" }] }),
+    "checker-3": () => ({ issues: [warning("w1"), warning("w2"), warning("w3")], resolved: [{ id: "open-1", evidence: "first fixed" }] }),
+  });
   assert.equal(r.result.status, "planned");
   assert.deepEqual(labels(r, "checker-"), ["checker-1", "checker-2", "checker-3"]);
   assert.equal(labels(r, "revise-01-01").length, 2);
