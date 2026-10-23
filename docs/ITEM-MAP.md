@@ -136,9 +136,9 @@ Items, or parts of items, that no kit test pins, and defects found while mapping
    schema; the shared step does not refuse a generated target. Open in part B.
 4. **`update --force` without `--enable-plugin` (84/86 addendum).** Q84 F2 prints the doctor line and the hook
    consequence; the plain "the mod stays (or becomes) unselected" line of the addendum is open in part A.
-5. **Fixes that live only in a composition.** Rows marked `composition` (9, 13, 16, 17, 18, 20, 25, 28, 30, 32, 33,
-   34, 35, 36, 37, 43, 44, 46, 47, 51, 55, 57, 60, 61, 71, 72, 76, 77, 78, 79, 82, 85 and the composition halves of 2, 21,
-   22, 40, 50, 53, 58, 64-70) are pinned by tests that run the kit's default `gsd-*.js`. Once part A lets a project
+5. **Fixes that live only in a composition.** Rows marked `composition` (9, 13, 16, 17, 18, 20, 25, 28, 30, 33, 34,
+   35, 37, 43, 44, 46, 47, 51, 55, 57, 60, 61, 64, 65, 66, 71, 72, 76, 77, 78, 79, 82, 85), the composition parts of
+   the partial rows 32 and 36, and the composition halves of 2, 21, 22, 40, 50, 53, 58 and 67-70 are pinned by tests that run the kit's default `gsd-*.js`. Once part A lets a project
    keep an edited composition, these tests say nothing about the project's copy: an evolve edit can drop such a fix,
    and the A3 verb check only catches unknown verbs, not a lost step. Part B moves 78, 82 and 85 (and the other
    execute bookkeeping) into verbs, which closes it for them; the plan-side rows stay composition. A way to run these
