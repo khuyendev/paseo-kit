@@ -114,7 +114,9 @@ const SCHEMAS = {
 export function frontmatterValidate(g, file, schema) {
   if (!SCHEMAS[schema]) throw fail(`--schema must be one of ${Object.keys(SCHEMAS).join(", ")}`);
   const abs = inRoot(g.codeRoot, file);
-  const text = abs ? readIf(abs) : null;
+  if (!abs) throw fail(`${file} is outside the code root`);
+  if (isDir(abs)) throw fail(`${file} is a directory`);
+  const text = readIf(abs);
   if (text === null) throw none(`no file ${file}`);
   const p = frontmatter(text);
   const problems = p.error ? [p.error] : SCHEMAS[schema].filter((k) => !Object.hasOwn(p.fm, k)).map((k) => `missing ${k}`);
