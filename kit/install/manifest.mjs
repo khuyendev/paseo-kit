@@ -19,10 +19,15 @@ const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArr
 const isCompositionEntry = (e) => isPlainObject(e) && typeof e.seeded === "string" && DIGEST.test(e.seeded)
   && (e.version === null || typeof e.version === "string");
 
+// Kit feedback 96: the adapter baseline {overlay: digest of the overlay's adapter and gsd sections, keys: default key paths}.
+const isAdapterRecord = (a) => isPlainObject(a) && typeof a.overlay === "string" && DIGEST.test(a.overlay)
+  && Array.isArray(a.keys) && a.keys.every((k) => typeof k === "string");
+
 export function isCurrentFormat(m) {
   return isPlainObject(m) && !Object.hasOwn(m, "kit") && typeof m.version === "string" && isPlainObject(m.files)
     && Object.values(m.files).every((d) => typeof d === "string" && DIGEST.test(d))
-    && (m.composition === undefined || (isPlainObject(m.composition) && Object.values(m.composition).every(isCompositionEntry)));
+    && (m.composition === undefined || (isPlainObject(m.composition) && Object.values(m.composition).every(isCompositionEntry)))
+    && (m.adapter === undefined || isAdapterRecord(m.adapter));
 }
 
 // null when absent; an older-format manifest is refused without being used (INST-31).
@@ -48,10 +53,12 @@ export function requireManifest(project) {
 
 const sortedOf = (obj) => Object.fromEntries(Object.keys(obj).sort(byCodePoint).map((k) => [k, obj[k]]));
 
-// `composition` is written only when it has entries, so a kit without composition parts keeps the manifest's key list.
-export function writeManifest(project, { version, installedAt, files, composition = {} }, now = new Date()) {
+// `composition` is written only when it has entries and `adapter` only when known, so a kit without them keeps the
+// manifest's key list.
+export function writeManifest(project, { version, installedAt, files, composition = {}, adapter = null }, now = new Date()) {
   const updatedAt = now.toISOString();
   const record = { _notes: NOTES, version, installedAt: installedAt ?? updatedAt, updatedAt, files: sortedOf(files) };
   if (Object.keys(composition).length) record.composition = sortedOf(composition);
+  if (adapter) record.adapter = adapter;
   writeJsonAtomic(manifestFile(project), record);
 }

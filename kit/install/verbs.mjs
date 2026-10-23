@@ -6,7 +6,7 @@ import { copyToKit, copyToProject, deleteFromProject, digests, linkedPart, linkP
 import { checkWiringTargets, wire } from "./wiring.mjs";
 import { checkHookSettings } from "./hooks.mjs";
 import { checkModGates } from "./mod.mjs";
-import { overlayLines } from "./overlay.mjs";
+import { adapterBaseline, addedKeyLines, overlayLines } from "./overlay.mjs";
 import { compositionEntries, droppedLine, isComposition, isEdited, keptLine, statusLine, verbLines } from "./composition.mjs";
 import { seededPass } from "./seeded.mjs";
 import { fail } from "./failure.mjs";
@@ -19,9 +19,9 @@ const allKeys = (kit, files) => [...new Set([...kit.units.keys(), ...Object.keys
 // Block text differing from the shipped body is flagged whatever its state (INST-13).
 const blockDiffers = (key, { P, K }) => isBlockKey(key) && P != null && P !== MALFORMED && K != null && P !== K;
 
-function finishInstallOrUpdate(ctx, { records, installedAt, composition = {} }) {
+function finishInstallOrUpdate(ctx, { records, installedAt, composition = {}, adapter = null }) {
   const problems = wire({ ...ctx, records });
-  writeManifest(ctx.project, { version: ctx.kit.version, installedAt, files: records, composition: compositionEntries(ctx.kit, records, composition) }, ctx.now());
+  writeManifest(ctx.project, { version: ctx.kit.version, installedAt, files: records, composition: compositionEntries(ctx.kit, records, composition), adapter }, ctx.now());
   return problems;
 }
 
@@ -68,6 +68,8 @@ export function update(ctx) {
   if (ctx.enablePlugin) checkModGates(ctx.env);
   const records = { ...manifest.files };
   const retiredHooks = new Set();
+  // Read before any part is copied: the defaults the project's last adapter write saw (kit feedback 96).
+  const baseline = adapterBaseline(ctx.project, manifest.adapter) ?? manifest.adapter ?? null;
   const seeded = seededPass(ctx, records, "update");
   let changed = seeded.changed;
   let kept = seeded.kept;
@@ -113,8 +115,9 @@ export function update(ctx) {
       kept++;
     }
   }
-  kept += finishInstallOrUpdate({ ...ctx, retiredHooks }, { records, installedAt: manifest.installedAt, composition: manifest.composition });
+  kept += finishInstallOrUpdate({ ...ctx, retiredHooks }, { records, installedAt: manifest.installedAt, composition: manifest.composition, adapter: baseline });
   const refused = overlayLines(ctx, manifest.version) + verbLines(ctx);
+  addedKeyLines(ctx, baseline);
   const asEdited = composed ? `, ${composed} composition part(s) kept as edited` : "";
   ctx.out(`update: ${changed} part(s) changed, ${kept} kept${asEdited}; kit ${ctx.kit.version}`);
   return kept || refused ? 2 : 0;
@@ -202,7 +205,7 @@ export function pull(ctx, partNames) {
     }
   }
   const composition = compositionEntries(ctx.kit, records, manifest.composition);
-  writeManifest(ctx.project, { version: ctx.kit.version, installedAt: manifest.installedAt, files: records, composition }, ctx.now());
+  writeManifest(ctx.project, { version: ctx.kit.version, installedAt: manifest.installedAt, files: records, composition, adapter: manifest.adapter ?? null }, ctx.now());
   const reminder = copied ? "; record them in the kit CHANGELOG.md and commit the kit, then update the other projects" : "";
   ctx.out(`pull: ${copied} part(s) copied into the kit${reminder}`);
   return skipped ? 2 : 0;

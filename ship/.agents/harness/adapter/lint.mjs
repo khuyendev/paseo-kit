@@ -76,6 +76,34 @@ function lintAdapter(root, cfg) {
   for (const [role, entry] of Object.entries(cfg.gsd.roles)) {
     if (!entry.reason?.trim()) fail(`gsd.roles.${role}: no reason (every role entry states why)`);
   }
+  out.push(...smokeHints(root, a));
+  return out;
+}
+
+// Kit feedback 96: a platform build target named in a command (code span or fenced block) of the stack skill, the codebase
+// conventions or the instructions, while adapter.commands.smoke_builds is empty: the F57 smoke build never runs.
+const BUILD_TARGET = /\b(?:build\s+(?:apk|appbundle|aab|ipa|ios|macos|windows|linux|web)|assemble(?:Debug|Release)|xcodebuild)\b/g;
+const CONVENTIONS = ".planning/codebase/CONVENTIONS.md";
+function smokeHints(root, a) {
+  if ((a.commands.smoke_builds ?? []).length) return [];
+  const skill = a.stack_skill && inRoot(root, `${SKILLS}/${a.stack_skill}`) && fs.existsSync(path.join(root, SKILLS, a.stack_skill)) ? expand(root, `${SKILLS}/${a.stack_skill}`) : [];
+  const files = [...new Set([...skill, CONVENTIONS, ...a.instructions].filter((rel) => /\.md$/i.test(rel)))];
+  const out = [];
+  for (const rel of files) {
+    if (!inRoot(root, rel) || !fs.statSync(path.join(root, rel), { throwIfNoEntry: false })?.isFile()) continue;
+    const targets = new Set();
+    let first = null;
+    let fenced = false;
+    for (const [i, line] of readText(path.join(root, rel)).split(/\r?\n/).entries()) {
+      if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; continue; }
+      const spans = fenced ? [line] : [...line.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+      for (const span of spans) for (const m of span.matchAll(BUILD_TARGET)) {
+        targets.add(m[0].replace(/\s+/g, " "));
+        first ??= i + 1;
+      }
+    }
+    if (targets.size) out.push({ level: "warn", file: rel, line: first, msg: `names the build target(s) ${[...targets].join(", ")} while adapter.commands.smoke_builds is empty: add one argv per target the project must build, so a wave that changes a dependency manifest builds it before its gate (F57), or leave it empty when no wave needs it` });
+  }
   return out;
 }
 
