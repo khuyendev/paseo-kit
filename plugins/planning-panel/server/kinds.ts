@@ -1,7 +1,9 @@
 // Artifact kind and ids from a `.planning/`-relative path (GSDC-06 filenames, GSDC-01 tree).
 import type { FileKind } from "../shared/planning.ts";
 
-const PHASE_DIR = /^phases\/(\d+(?:\.\d+)*)(?:-([^/]*))?\//;
+// Windows folds case, so `Phases/` is the phase directory there too; other platforms keep the spelling exact.
+const FOLD = process.platform === "win32" ? "i" : "";
+const PHASE_DIR = new RegExp(String.raw`^phases\/(\d+(?:\.\d+)*)(?:-([^/]*))?\/`, FOLD);
 const PLAN_ARTIFACT = /^(\d+(?:\.\d+)*)-(\d+)-(PLAN|SUMMARY|CONTEXT|RESEARCH|VERIFICATION|UAT|WIRING|OUTLINE-REVIEW)\.md$/i;
 const PHASE_ARTIFACT = /^(\d+(?:\.\d+)*)-(PLAN-OUTLINE|CONTEXT|RESEARCH|VERIFICATION|UAT|WIRING|OUTLINE-REVIEW)\.md$/i;
 const TOP: Record<string, FileKind> = {
@@ -25,7 +27,7 @@ export function phaseOf(rel: string): { id: string; dir: string; name: string } 
 
 // Only a direct child of a phase directory is live phase inventory; `superseded/` and other nested copies keep
 // their kind for the Files view but carry no plan id, so no board, stat or plan lookup counts them (CR-PNL-05).
-const ACTIVE = /^phases\/[^/]+\/[^/]+$/;
+const ACTIVE = new RegExp(String.raw`^phases\/[^/]+\/[^/]+$`, FOLD);
 
 export function classify(rel: string): PathInfo {
   const name = rel.split("/").pop() ?? rel;

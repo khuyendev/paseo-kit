@@ -61,6 +61,12 @@ export function planCompletion(summary: Pick<IndexFile, "status" | "error"> | un
   return summaryDone(summary.status) ? "done" : "open";
 }
 
+// Whether an index path lies under a roster directory. Case folds: the roster spells a phase directory in lowercase,
+// while the index keeps the disk spelling (`Phases/` on Windows, see kinds.ts).
+export function isUnderDir(path: string, dir: string): boolean {
+  return path.toLowerCase().startsWith(`${dir.toLowerCase()}/`);
+}
+
 export type Tone = "muted" | "accent" | "warning" | "danger" | "success";
 export const STATUS_TONE: Record<PhaseStatus, Tone> = {
   NOT_STARTED: "muted",

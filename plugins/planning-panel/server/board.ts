@@ -2,13 +2,14 @@
 // `status` is not halted/failed; a SUMMARY that cannot be parsed leaves the plan unknown. Percentages are null
 // unless the index scope is complete and no plan is unknown (INV-36).
 import type { BoardPhase, IndexFile, IndexPhase, Scope } from "../shared/planning.ts";
-import { PHASE_STATUSES, planCompletion } from "../shared/planning.ts";
+import { isUnderDir, PHASE_STATUSES, planCompletion } from "../shared/planning.ts";
 
 const pct = (done: number, total: number, known: boolean) => (known && total > 0 ? Math.round((done / total) * 100) : null);
 
 export function boardPhase(phase: IndexPhase, files: readonly IndexFile[], scope: Scope): BoardPhase {
   // Plan ids are set only on direct children of a phase directory (kinds.ts), so this is the live inventory.
-  const inDir = phase.dir === null ? [] : files.filter((f) => f.planId && f.path.startsWith(`${phase.dir}/`));
+  const dir = phase.dir;
+  const inDir = dir === null ? [] : files.filter((f) => f.planId && isUnderDir(f.path, dir));
   const plans = inDir.filter((f) => f.kind === "plan");
   const summaries = new Map(inDir.filter((f) => f.kind === "summary").map((f) => [f.planId!, f]));
   const waves = new Map<number | null, { total: number; done: number; unknown: number }>();

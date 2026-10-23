@@ -3,7 +3,7 @@ import { Icon, TextInput } from "@getpaseo/plugin/client/react-native";
 import { useMemo, useState } from "react";
 import { View } from "react-native";
 import type { Board, BoardPhase, IndexFile, PlanningIndex } from "../shared/planning.ts";
-import { STATUS_LABEL, STATUS_TONE, planCompletion } from "../shared/planning.ts";
+import { isUnderDir, STATUS_LABEL, STATUS_TONE, planCompletion } from "../shared/planning.ts";
 import { formatRelative, formatShortDate } from "./format.ts";
 import { Badge, Chip, IconButton, Press, ProgressBar, SegmentedBar, Section, T, useKit } from "./kit.tsx";
 import { type Item, phasesShown } from "./nav.ts";
@@ -109,7 +109,7 @@ export function PhasesView(props: { index: PlanningIndex; onOpen: (item: Item) =
   const { index, onOpen, nowMs } = props;
   const { colors } = useKit();
   // Plan ids exist only on live phase inventory; the SUMMARY is the plan's sibling with the same id.
-  const plansOf = (dir: string | null) => (dir === null ? [] : index.files.filter((f) => f.kind === "plan" && f.planId && f.path.startsWith(`${dir}/`)));
+  const plansOf = (dir: string | null) => (dir === null ? [] : index.files.filter((f) => f.kind === "plan" && f.planId && isUnderDir(f.path, dir)));
   const summary = (plan: IndexFile) => index.files.find((f) => f.kind === "summary" && f.planId === plan.planId && f.path.startsWith(plan.path.slice(0, plan.path.lastIndexOf("/") + 1)));
   if (index.phases.length === 0) return <T tone="muted">No phases in ROADMAP.md or under .planning/phases/ yet.</T>;
   const shown = phasesShown(index.phases, props.focus);
