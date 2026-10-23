@@ -91,6 +91,7 @@ async function ask(prompt, opts, what) {
 
 let prev = Infinity;
 let planRevision = null;
+let structure = [];
 for (let cycle = 1; cycle <= MAX_CYCLES; cycle++) {
   // Recomputed every cycle: the editor changes the plans being judged (CR-GSF-19).
   const digest = (await gsd(["revisions", "hash", phaseDir, "checked"])).json?.hash ?? "none";
@@ -121,16 +122,19 @@ for (let cycle = 1; cycle <= MAX_CYCLES; cycle++) {
   }
   const count = counted(kept);
   log(`plan review cycle ${cycle}: ${count} high or actionable issues`);
-  if (count === 0) return { status: "converged", cycles: cycle, planRevision };
+  if (count === 0) return { status: "converged", cycles: cycle, planRevision, structure };
   if (count >= prev) return { status: "needs-owner", reason: `plan review not converging: ${count} issues, not below ${prev}`, issues: kept };
   prev = count;
   phase("Edit");
   const ed = await call([`Revise these plans in one pass so the issues below are resolved: ${plans.map(planPath).join(", ")}.`, `Issues (JSON): ${JSON.stringify(kept)}`, "Return JSON {marker: REVISION COMPLETE | REVISION_CONFLICT, conflict?}. Never ask the owner; never commit.", policy, digestLine("checked", digest)].join("\n\n"), { label: `editor-${cycle}`, agentType: "gsd-planner", schema: EDITOR_SCHEMA, ...ro("plan_editor") });
   if (String(ed.result?.marker ?? "").includes("REVISION_CONFLICT")) return { status: "needs-owner", reason: "plan editor returned REVISION_CONFLICT", conflict: ed.result.conflict ?? null, issues: kept };
   if (!ed.result) return { status: "failed", reason: `plan editor returned nothing${ed.reason ? ` (${ed.reason})` : ""}` };
+  // The warnings of this check are the plans' warnings now; gsd-plan replaces the earlier ones with them (G019).
+  structure = [];
   for (const p of plans) {
     const st = await gsd(["verify", "plan-structure", planPath(p)]);
     if (st.code !== 0) return { status: "failed", reason: `plan ${p} fails verify plan-structure after the edit`, errors: st.json?.errors ?? [] };
+    structure.push({ plan: p, warnings: st.json?.warnings ?? [] });
   }
   const h = await gsd(["handoff", N]);
   if (h.code !== 0) return { status: "failed", reason: "handoff refused after the plan-review edit", errors: h.json?.errors ?? [] };

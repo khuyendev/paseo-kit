@@ -476,8 +476,11 @@ for (const ids of wavesOf(rows)) {
   const todo = [];
   for (const id of ids) {
     const same = (await gsd(["revisions", "check", phaseDir, `plan:${id}`])).code === 0;
-    if (!skeletonFresh && same && (await gsd(["verify", "plan-structure", planPath(id)])).code === 0) log(`plan ${id} kept: unchanged since recorded`);
-    else todo.push(id);
+    const st = !skeletonFresh && same ? await gsd(["verify", "plan-structure", planPath(id)]) : null;
+    if (st?.code === 0) {
+      setStructureWarnings(id, st.json?.warnings);
+      log(`plan ${id} kept: unchanged since recorded`);
+    } else todo.push(id);
   }
   const outcomes = await parallel(todo.map((id) => () => planOne(id)));
   for (const [i, o] of outcomes.entries()) if (!o || o.stop) return o?.stop ?? failedCall(`planner ${todo[i]}`, null);
@@ -509,14 +512,23 @@ async function planOne(id) {
   }
   return { ok: true };
 }
+// Plan-structure warnings do not block (plan-checks.mjs:78); they reach the checker and the result like the other warnings.
+// A check replaces the warnings of its plan: they describe the plan file as it stands after that check.
+function setStructureWarnings(id, list) {
+  const prefix = `plan-structure (${id}): `;
+  for (let i = warnings.length - 1; i >= 0; i--) if (warnings[i].startsWith(prefix)) warnings.splice(i, 1);
+  for (const w of list ?? []) warnings.push(`${prefix}${typeof w === "string" ? w : JSON.stringify(w)}`);
+}
 async function structureFix(id, session) {
   let st = await gsd(["verify", "plan-structure", planPath(id)]);
+  setStructureWarnings(id, st.json?.warnings);
   if (st.code === 0) return null;
   const errors = st.json?.errors ?? [st.json?.error ?? `exit ${st.code}`];
   const { result: r, reason } = await plannerCall(session, `fix-${id}`, `Fix ${planPath(id)} in place. verify plan-structure reported exactly these errors:\n${errors.map((e) => `- ${typeof e === "string" ? e : JSON.stringify(e)}`).join("\n")}`, "freeze", freezeHash);
   if (fatal(reason)) return failedCall(`structure fixer ${id}`, reason);
   if (ownerMarker(r)) return ownerStop("Plan", r);
   st = await gsd(["verify", "plan-structure", planPath(id)]);
+  setStructureWarnings(id, st.json?.warnings);
   return st.code === 0 ? null : result("failed", { reason: `plan ${id} still fails verify plan-structure`, errors: st.json?.errors ?? [] });
 }
 
@@ -532,6 +544,7 @@ if (planReview) {
   phase("Plan review");
   const pr = await workflow("gsd-plan-review", { phaseDir, plans: planIds, roles: roleOverrides, researchPath: approvedResearch });
   if (pr?.status !== "converged") return result(pr?.status === "failed" ? "failed" : "needs-owner", { stage: "Plan review", reason: pr?.reason ?? "plan review did not converge", issues: pr?.issues ?? [] });
+  for (const s of pr.structure ?? []) setStructureWarnings(s.plan, s.warnings);
 }
 
 // ---- coverage and handoff (GSDF-29, GSDF-36) ----
@@ -637,6 +650,7 @@ async function handoffStage(ids, docs, override, handoffArgs = [], gap = null) {
   if (cov.code !== 0) return owner("Handoff", "coverage gate failed", { coverage: cov.json, options: ["re-plan (recommended)", "move the requirement or decision to a later phase", "tag the decision informational"] });
   const h = await gsd(["handoff", N, ...handoffArgs]);
   if (h.code !== 0) return result("failed", { reason: `handoff refused: ${h.json?.error ?? h.json?.errors?.join?.("; ") ?? h.code}`, errors: h.json?.errors ?? [] });
+  for (const w of h.json?.warnings ?? []) warnings.push(`handoff: ${typeof w === "string" ? w : JSON.stringify(w)}`);
   if (gap && (h.json?.waves ?? []).length !== 1) return owner("Gaps", `gap handoff has ${(h.json?.waves ?? []).length} execution waves; gap closure is one wave`, { options: ["re-plan the gaps as independent plans", "plan a new phase", "abandon"] });
   await gsd(["revisions", "record", phaseDir, "handoff"]);
   const total = ((await gsd(["phase-plan-index", N])).json?.plans ?? []).length || ids.length;
