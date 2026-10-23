@@ -6,6 +6,22 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Thinner default composition (follow-up of the 87 rework; owner 2026-10-24: the goal "workflow mặc định mỏng, logic
+  nằm trong verb" was only partly met; design kit-bughunt/thin/THIN.md, one Opus agent per stage). The workflow engine
+  provides the helpers every gsd script used to copy (`flow`, `gsd`, `run`, `loadCfg`, `call`, `sha`, ..., plus `pool`,
+  `slots`, `serialize`, `turnLock` and `renderPrompt`) as globals; the copied block is gone from all nine scripts (a
+  script that still defines one keeps its own). Agent prompt texts are kit-owned templates
+  `.agents/workflows/prompts/<name>.md` (shipped prompt text; project templates in `prompts/project/`), rendered by the
+  flow verb `prompt` (missing variable = error; `{{#x}}`/`{{^x}}` optional parts) and `plan-prompt <kind>`. Deterministic
+  decisions moved to pure flow verbs: `exec-*` (args, setup, handoff, records, branch, verdict, request and fixer
+  routing, fix-round end and stall rule, review scope, findings, pause, overlap groups) and `plan-*` (args, prompts,
+  skeleton issue book, probes, linked plans, reallocation diff, validation). gsd-execute.js 1887 -> 1465 lines,
+  gsd-plan.js 1549 -> 1018; tests hold each at its size (the 700-line budget tests stay skipped). Parity: every
+  fake-host run (826 for execute, all plan runs) gives the same agent prompts, options, logs and results, except the
+  order of concurrent steps of different plans in 13 execute runs (each plan's own order is unchanged); a run started
+  by an old script resumes under the new one. Measured check: tests/thin/, full offline suite 2348: 2334 pass, 1 known
+  load flake (F02 lock test, passes alone), 13 skipped; not run on a live phase.
+
 - Kit feedback 88 (owner 2026-10-24: "làm cái pause stop luôn đi"; one Opus agent, note kit-bughunt/r87/design/R88.md):
   a clean stop at a wave boundary. Runtime: `ph workflow stop <runId> [--at wave-boundary] [--reason <text>]` writes
   `<runDir>/stop.json` and kills nothing; `ph runs` shows a pending request; a script that returns `paused` ends the run
