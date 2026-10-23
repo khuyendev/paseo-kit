@@ -1,8 +1,10 @@
 // STATE.md (GSDC-10, GSDC-11) and the single writer of PROJECT/STATE/ROADMAP/REQUIREMENTS (GSDC-12, INV-38):
 // every mutation takes STATE.md.lock and re-derives the STATE frontmatter from disk afterwards.
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { writeTextAtomic } from "../lib/io.mjs";
+import { pidAlive } from "../lib/proc.mjs";
 import { done, fail, lf, nowIso, readIf, today } from "./common.mjs";
 import { headOf } from "./git.mjs";
 import { findPhase, planIds, planningDir, sharedFile, summaryIds } from "./planning.mjs";
@@ -13,27 +15,65 @@ import { frontmatter } from "./yaml.mjs";
 export const STATE_VERSION = 1;
 export const STATUS_WORDS = ["Ready to plan", "Planning", "Ready to execute", "In progress", "Verifying", "Phase complete", "All phases complete"];
 export const SECTIONS = ["Project Reference", "Current Position", "Decisions", "Models", "Owner rules", "Overrides", "Wave log", "Current state"];
-const LOCK_STALE_MS = 10000;
 const LOCK_WAIT_MS = 30000;
+// A lock whose holder is alive is taken over only past this age; no mutation under the lock comes near it.
+const LOCK_STALE_MS = 600000;
+// A reap claim older than this was left by a reaper that crashed.
+const CLAIM_STALE_MS = 30000;
 
 const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-// Exclusive-create lock; a lock older than 10 s is stale and taken over.
+const ageOf = (file) => {
+  try {
+    return Date.now() - fs.statSync(file).mtimeMs;
+  } catch {
+    return 0;
+  }
+};
+
+// The lock file holds `<pid> <token>` of its writer: stale when that process is gone or the lock is far too old.
+function lockIsStale(lock, text) {
+  const pid = Number.parseInt(text, 10);
+  return (Number.isInteger(pid) && pid > 0 && !pidAlive(pid)) || ageOf(lock) > LOCK_STALE_MS;
+}
+
+// Removes a stale lock. Reapers take turns through a claim file and read the lock again under it, so a lock that
+// another writer has taken over meanwhile is kept.
+function reapStaleLock(lock) {
+  try {
+    const seen = readIf(lock);
+    if (seen === null || !lockIsStale(lock, seen)) return;
+    const claim = `${lock}.reap`;
+    try {
+      fs.writeFileSync(claim, "", { flag: "wx" });
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+      if (ageOf(claim) > CLAIM_STALE_MS) fs.rmSync(claim, { force: true });
+      return;
+    }
+    try {
+      if (readIf(lock) === seen) fs.rmSync(lock, { force: true });
+    } finally {
+      fs.rmSync(claim, { force: true });
+    }
+  } catch {
+    // removed by its holder meanwhile
+  }
+}
+
+// Exclusive-create lock; a stale lock (see lockIsStale) is taken over.
 export function withStateLock(root, fn) {
   fs.mkdirSync(planningDir(root), { recursive: true });
   const lock = `${sharedFile(root, "STATE.md")}.lock`;
+  const mine = `${process.pid} ${randomUUID()}\n`;
   const start = Date.now();
   for (;;) {
     try {
-      fs.writeFileSync(lock, `${process.pid}\n`, { flag: "wx" });
+      fs.writeFileSync(lock, mine, { flag: "wx" });
       break;
     } catch (e) {
       if (e.code !== "EEXIST") throw e;
-      try {
-        if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) fs.rmSync(lock, { force: true });
-      } catch {
-        // removed by its holder meanwhile
-      }
+      reapStaleLock(lock);
       if (Date.now() - start > LOCK_WAIT_MS) throw fail(`STATE.md.lock is held (${lock})`);
       pause(25 + Math.floor(Math.random() * 50));
     }
@@ -41,7 +81,8 @@ export function withStateLock(root, fn) {
   try {
     return fn();
   } finally {
-    fs.rmSync(lock, { force: true });
+    // Removed only while it is still ours: a lock taken over after a stale reap belongs to its new holder.
+    if (readIf(lock) === mine) fs.rmSync(lock, { force: true });
   }
 }
 
