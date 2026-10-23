@@ -305,6 +305,7 @@
     ".agents/harness/adapter/frontmatter.mjs",
     ".agents/harness/adapter/hooks.mjs",
     ".agents/harness/adapter/lint-assets.mjs",
+    ".agents/harness/adapter/lint-probes.mjs",
     ".agents/harness/adapter/lint-scripts.mjs",
     ".agents/harness/adapter/lint-text.mjs",
     ".agents/harness/adapter/lint.mjs",

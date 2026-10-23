@@ -280,6 +280,7 @@ const GOLDEN = {
     hook_timeout_s: 30,
     dependency_probe: null,
     dependency_probe_timeout_s: 300,
+    command_probes: [],
     attribution: null,
     worktree_setup: { copy: [], link: [] },
   },

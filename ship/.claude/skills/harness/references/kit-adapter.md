@@ -69,6 +69,7 @@ tool needs no node wrapper.
 | `adapter.mutex` | ADPT-10 | optional machine-wide lock name for heavy commands (one build at a time across worktrees) |
 | `adapter.smoke_triggers` | F57 | string globs: the dependency manifests and lock files of common stacks by default (`**/pubspec.yaml`, `**/package.json`, `**/Cargo.toml`, ...). Add the native-asset package files of the project (a package whose native build needs a toolchain component). A wave that changes a matching file (deleted ones too) makes gsd-execute build `adapter.commands.smoke_builds` once per phase, before the wave's gate; a failing build stops the run needs-owner at stage Smoke build. Nothing runs while `smoke_builds` is empty |
 | `adapter.startup_globs`, `adapter.hook_timeout_s`, `adapter.attribution` | ADPT-13 | files whose change needs a cold-start smoke test; adapter script timeout; optional failure-attribution script |
+| `adapter.command_probes` | Q81 | `[{name, argv, timeout_s?}]` (default `[]`): one harmless, read-only argv for every wrapper command the stack skill prescribes (`--version`, or a format check with `--output=none` on one file). `ph harness lint` runs each probe and fails when the wrapper rejects it; see section 6 |
 | `adapter.dependency_probe`, `adapter.dependency_probe_timeout_s` | — | argv or `null` (default: no probe). gsd-plan runs it at handoff when a plan's `<shared_changes>` declares a dependency (`<path>: dependency <name> <constraint> [dev]`): the probe gets one JSON file as its last argument, `{phase, dependencies: [{plan, path, name, constraint, dev}]}`, and runs in the project root. It must resolve the declared set against the project as it stands. Exit 0 passes; a non-zero exit stops the run `needs-owner` at stage Dependencies with the probe output, so the plans can be fixed before execution. Timeout 300 s by default |
 | `adapter.worktree_setup` | ADPT-13 | `{copy: [path], link: [path]}`: git-ignored paths (dependency folders such as `node_modules`, `.venv` or `vendor`, local generated files) that every new harness worktree gets from the checkout before its agent starts, because `git worktree add` checks out tracked files only. `copy` gives each worktree its own copy (slow for a large folder); `link` takes directories only and makes a junction (a symlink on POSIX) to the checkout's folder: fast, but an install inside the worktree changes the checkout. Set it when `gsd.isolation` is `worktree` (or agents use `--worktree`) and the build or tests need such a path; each path must exist in the checkout and be git-ignored. With `gsd.isolation: worktree`, `ph doctor` (note) and `ph harness lint` (warning) name each git-ignored path the adapter uses (a toolchain folder at the top: `node_modules`, `.venv`, `vendor`, `.dart_tool`; or a path written in its build, test or verify argv or its instruction files) that no entry copies or links |
 | `gsd.roles` | ADPT-11 | `{<role>: {model, effort, reason}}` for the roles whose model or effort differs from the agent definition; a non-empty `reason` on every entry |
@@ -204,6 +205,15 @@ Then build the declared smoke targets once with `node .agents/harness/ph.mjs gsd
   the front matter stops being YAML and the skill is listed without it. `ph evolve-stats` lists every project skill
   with the times the model invoked it (`_workspace/skill-usage.jsonl`, written by the kit's skill usage hook); a
   skill at 0 calls after it should have fired needs a better description.
+- Command contract (kit-feedback 81): every command the stack skill prescribes to workers must exist as an
+  `adapter.commands` entry or as a subcommand the wrapper really implements, and each wrapper command gets an
+  `adapter.command_probes` entry, a harmless read-only form that proves the wrapper accepts it. A stack with several
+  tools (Flutter and Dart, node and a linter) gets one sanctioned invocation per tool, each a script or subcommand of
+  the adapter (`node tools/adapter/flutter.mjs test`, `node tools/adapter/dart.mjs format --output=none <file>`),
+  all selecting the same pinned SDK and environment (one shared helper in `tools/adapter/`). Never write "every
+  Flutter or Dart command goes through the wrapper" when the wrapper forwards everything to one tool: a wrapper that
+  passes `format` or `analyze` to `flutter` fails with exit 64. Write the invocation into the stack skill only
+  after its probe passes `ph harness lint`.
 - Reuse the kit's GSD agents in `.agents/agents/` (`gsd-executor`, `gsd-code-reviewer`, `gsd-code-fixer`,
   `gsd-verifier` and the others) before creating any agent. A project agent is justified only when a role needs
   knowledge or tools the stack skill cannot give the generic agent (for example an interface architect for a
@@ -265,7 +275,7 @@ flags); workflow scripts with `Date.now()`, `Math.random()` or a non-literal `me
 `meta.phases`; orchestrator skills without an execution mode at the top, an unlabelled stage of a mixed one, or no
 `## Test scenarios` with a normal and an error flow; malformed history rows and eval records. Warnings (exit 0):
 bare mentions of primitives, an agent with Write but not Edit, unguarded `agent()`/`parallel()` results used as
-arrays, a generated skill without a trigger record, a git-ignored path the adapter uses that `worktree_setup` does not set up (with `gsd.isolation: worktree`). `--all` also reports other owner content, as warnings only.
+arrays, a generated skill without a trigger record, a git-ignored path the adapter uses that `worktree_setup` does not set up (with `gsd.isolation: worktree`), a `node <script> <subcommand>` the stack skill prescribes that no `adapter.commands` argv or `adapter.command_probes` entry runs. `ph harness lint` also runs every `adapter.command_probes` argv (read-only, short timeout) and fails when the wrapper rejects one (`--no-probes` skips them). `--all` also reports other owner content, as warnings only.
 Fix every failure before reporting; never change provider settings to satisfy lint.
 
 The semantic checks of the method (stage inputs and outputs connect, mode handoffs, a dry run, step 6-5) stay

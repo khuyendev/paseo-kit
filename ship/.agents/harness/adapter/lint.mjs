@@ -9,6 +9,7 @@ import { isInside, realInside, toSlash } from "../lib/paths.mjs";
 import { runGit } from "../runtime/worktrees.mjs";
 import { setupGaps, setupProblems } from "../runtime/worktree-setup.mjs";
 import { isBuiltinRunnerKind } from "./contract.mjs";
+import { lintCommandContract } from "./lint-probes.mjs";
 import { isWorkflowScript, lintAgentFile, lintSkillFolder, lintTextFile, walkFiles } from "./lint-assets.mjs";
 import { lintWorkflowScript } from "./lint-scripts.mjs";
 import { EVAL_RECORD_KINDS, HISTORY_REL, badScopePath, lintHistory, scopePaths, triggerRecordRel, validateEvalRecord, validateTriggerRecord } from "./records.mjs";
@@ -34,6 +35,7 @@ function adapterArgvScripts(a) {
   for (const [k, v] of Object.entries(a.commands.verify)) lists.push([`adapter.commands.verify.${k}`, v.argv]);
   (a.commands.smoke_builds ?? []).forEach((argv, i) => lists.push([`adapter.commands.smoke_builds[${i}]`, argv]));
   lists.push(["adapter.dependency_probe", a.dependency_probe]);
+  for (const p of a.command_probes ?? []) lists.push([`adapter.command_probes.${p.name}`, p.argv]);
   for (const [ext, v] of Object.entries(a.syntax_checkers)) lists.push([`adapter.syntax_checkers.${ext}`, v.argv]);
   return lists.flatMap(([where, argv]) => scriptOperands(argv).map((rel) => ({ where, rel })));
 }
@@ -68,6 +70,7 @@ function lintAdapter(root, cfg) {
   for (const { where, rel } of adapterArgvScripts(a)) if (!exists(rel)) fail(`${where}: script ${rel} does not exist`); else linkOut(where, rel);
   for (const rel of a.instructions) if (!exists(rel)) fail(`adapter.instructions: ${rel} does not exist`); else linkOut("adapter.instructions", rel);
   for (const p of setupProblems(root, a.worktree_setup, runGit)) fail(p);
+  out.push(...lintCommandContract(root, cfg));
   for (const gap of setupGaps(root, cfg, runGit)) out.push({ level: "warn", file: OVERLAY_REL, line: null, msg: gap });
   for (const [role, entry] of Object.entries(cfg.gsd.roles)) {
     if (!entry.reason?.trim()) fail(`gsd.roles.${role}: no reason (every role entry states why)`);
