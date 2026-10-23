@@ -90,6 +90,12 @@ function lstatInside(root, rel) {
   return "other";
 }
 
+// A write under the target must not cross a link: the write would land where the link points, outside the install
+// root (G184). Each path is checked before the first write of a command, so a refusal leaves nothing written.
+function refuseLinkedWrite(target, rel) {
+  if (lstatInside(target, rel) === "symlink") throw fail(`${rel} crosses a link or junction under ${target}; the upstream commands do not write through links`);
+}
+
 // Seeds (inventory sources) plus every file they reach, up to depth 3, that exists in the clone.
 function reachable(clone, seeds) {
   const files = new Set();
@@ -133,6 +139,7 @@ export function vendor(L, clone, commitArg) {
     if (buf.includes(0)) throw fail(`refusing binary file from the upstream clone: ${rel}`);
     texts.set(rel, buf.toString("utf8"));
   }
+  for (const rel of [...files, "UPSTREAM.json"]) refuseLinkedWrite(L.target, `${SNAPSHOT_REL}/${rel}`);
   fs.rmSync(L.snapshot, { recursive: true, force: true });
   const hashes = {};
   for (const [rel, text] of texts) {
@@ -263,6 +270,7 @@ export function build(L) {
   const problems = snapshotProblems(L);
   if (problems.length) throw fail(`snapshot problems (nothing written; change the adapter, never the snapshot): ${problems.join("; ")}`, { problems });
   const files = generate(L);
+  for (const rel of files.keys()) refuseLinkedWrite(L.target, rel);
   const written = [];
   for (const [rel, text] of files) {
     const file = L.abs(rel);
@@ -451,6 +459,7 @@ export async function upstreamVerb(g, sub, args) {
   if (!opts.from || !opts.commit) throw fail("upstream bump needs --from <clone> --commit <sha>");
   const before = { snapshot: { ...(readPin(L)?.files ?? {}) }, generated: generatedHashes(L) };
   const pin = readPin(L) ?? { repo: "open-gsd/gsd-core" };
+  refuseLinkedWrite(L.target, `${SNAPSHOT_REL}/UPSTREAM.json`);
   writeJsonAtomic(L.pinFile, { ...pin, commit: opts.commit });
   vendor(L, path.resolve(opts.from), opts.commit);
   const built = build(L);
