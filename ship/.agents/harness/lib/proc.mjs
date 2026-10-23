@@ -57,7 +57,14 @@ function spawnArgv(argv, options) {
   return spawn(cmd, args, options);
 }
 
-export function runArgv(argv, { cwd, env, input, timeoutMs } = {}) {
+// Keeps the last `tailChars` characters of a stream while it grows (no limit when absent or 0). The text may hold up to
+// twice that before it is cut back, so a command that prints without bound cannot grow the buffer past 2 x tailChars.
+export function appendTail(text, chunk, tailChars) {
+  const joined = text + chunk;
+  return tailChars && joined.length > 2 * tailChars ? joined.slice(-tailChars) : joined;
+}
+
+export function runArgv(argv, { cwd, env, input, timeoutMs, tailChars } = {}) {
   return new Promise((resolve) => {
     let child;
     try {
@@ -70,8 +77,8 @@ export function runArgv(argv, { cwd, env, input, timeoutMs } = {}) {
     let stderr = "";
     let timedOut = false;
     let spawnError = null;
-    child.stdout.setEncoding("utf8").on("data", (d) => (stdout += d));
-    child.stderr.setEncoding("utf8").on("data", (d) => (stderr += d));
+    child.stdout.setEncoding("utf8").on("data", (d) => (stdout = appendTail(stdout, d, tailChars)));
+    child.stderr.setEncoding("utf8").on("data", (d) => (stderr = appendTail(stderr, d, tailChars)));
     const timer = timeoutMs ? setTimeout(() => ((timedOut = true), killTree(child)), timeoutMs) : null;
     child.on("error", (e) => (spawnError = e));
     child.on("close", (code) => {

@@ -1,7 +1,7 @@
 // shell() of workflow scripts (FLOW-11): host commands run on purpose, as a string through the platform shell or as
 // an argv without any shell. Never rejects.
 import { spawn, spawnSync } from "node:child_process";
-import { runArgv } from "../lib/proc.mjs";
+import { appendTail, runArgv } from "../lib/proc.mjs";
 import { errText } from "../lib/cli.mjs";
 
 function killTree(child) {
@@ -16,7 +16,7 @@ function killTree(child) {
 }
 
 // Node's own shell option: `/bin/sh -c` on POSIX, `cmd.exe /d /s /c` on win32.
-function runShellString(command, { cwd, env, input, timeoutMs }) {
+function runShellString(command, { cwd, env, input, timeoutMs, tailChars }) {
   return new Promise((resolve) => {
     let child;
     try {
@@ -29,8 +29,8 @@ function runShellString(command, { cwd, env, input, timeoutMs }) {
     let stderr = "";
     let timedOut = false;
     let launchError = null;
-    child.stdout.setEncoding("utf8").on("data", (d) => (stdout += d));
-    child.stderr.setEncoding("utf8").on("data", (d) => (stderr += d));
+    child.stdout.setEncoding("utf8").on("data", (d) => (stdout = appendTail(stdout, d, tailChars)));
+    child.stderr.setEncoding("utf8").on("data", (d) => (stderr = appendTail(stderr, d, tailChars)));
     const timer = setTimeout(() => ((timedOut = true), killTree(child)), timeoutMs);
     child.on("error", (e) => (launchError = e));
     child.on("close", (code) => {
@@ -45,12 +45,13 @@ function runShellString(command, { cwd, env, input, timeoutMs }) {
 const tail = (text, n) => (text.length > n ? text.slice(-n) : text);
 
 // `cmd` is a string or `[file, ...args]`; resolves {code, stdout, stderr, durationS}. Code -1: not launched or timed out.
+// Each stream is cut to its last `tailChars` characters while the command runs, so memory stays bounded.
 export async function runShell(cmd, { cwd, env, input, timeoutS, tailChars = 20000, now = Date.now } = {}) {
   const t0 = now();
   const timeoutMs = timeoutS * 1000;
   const r = Array.isArray(cmd)
-    ? await runArgv(cmd.map(String), { cwd, env, input, timeoutMs })
-    : await runShellString(String(cmd), { cwd, env, input, timeoutMs });
+    ? await runArgv(cmd.map(String), { cwd, env, input, timeoutMs, tailChars })
+    : await runShellString(String(cmd), { cwd, env, input, timeoutMs, tailChars });
   let { stdout, stderr } = r;
   let code = r.code;
   if (r.timedOut) {
