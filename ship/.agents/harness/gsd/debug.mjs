@@ -57,6 +57,17 @@ export function sections(body) {
 
 const sectionText = (body, name) => (sections(body).get(name) ?? []).join("\n").trim();
 
+// Symptoms are fenced data, so immutability is checked on each value's words: a re-wrap, indent, trailing space or
+// blank line inside a value is formatting, while a changed word is a new symptom (G116).
+function symptomsDigest(body) {
+  const text = sectionText(body, "Symptoms");
+  const values = SYMPTOM_KEYS.map((k) => {
+    const value = new RegExp(`^${k}:[\\s\\S]*?DATA_START([\\s\\S]*?)DATA_END`, "m").exec(text)?.[1] ?? "";
+    return `${k}: ${value.split(/\s+/).filter(Boolean).join(" ")}`;
+  });
+  return sha256(values.join("\n"));
+}
+
 function renderBody(tpl, symptoms) {
   const out = [];
   let cur = null;
@@ -208,7 +219,7 @@ function createSession(g, input, sig, goal, signatureId) {
     signature_kind: sig.kind,
     signature_key: sig.key,
     signature_id: signatureId,
-    symptoms_hash: textDigest(sectionText(body, "Symptoms")),
+    symptoms_hash: symptomsDigest(body),
     goal,
     owns: (input.owns ?? []).map(String),
     files: (input.files ?? []).map(String),
@@ -239,7 +250,9 @@ export function debugStatus(g, slug) {
   if (!secs.has("Symptoms")) problems.push("missing ## Symptoms");
   const next = /^next_action:\s*(.*)$/m.exec((secs.get("Current Focus") ?? []).join("\n"))?.[1]?.trim() ?? "";
   if (VAGUE.test(next)) problems.push(`next_action is vague: ${JSON.stringify(next)}`);
-  if (secs.has("Symptoms") && s.fm.symptoms_hash !== textDigest(sectionText(s.body, "Symptoms"))) problems.push("Symptoms changed since create (they are immutable)");
+  // Sessions created before the value digest hold the raw section digest; an untouched section still passes.
+  const hash = s.fm.symptoms_hash;
+  if (secs.has("Symptoms") && hash !== symptomsDigest(s.body) && hash !== textDigest(sectionText(s.body, "Symptoms"))) problems.push("Symptoms changed since create (they are immutable)");
   const json = { slug, path: rel(g, s.file), status: s.fm.status ?? null, goal: s.fm.goal ?? null, next_action: next, sections: [...secs.keys()], frontmatter: s.fm, valid: problems.length === 0, problems };
   return done(json, problems.length ? 1 : 0);
 }
