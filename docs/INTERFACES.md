@@ -533,7 +533,26 @@ Prompt templates (THIN.md item 2): a prompt that is a contract with a verb or a 
 always reads the kit file. `{{var}}` is replaced in one pass by a string, number or boolean; a missing variable fails
 (flow verb `prompt` exits 1 naming every missing one; `renderPrompt` throws it, which fails the run unless the script
 catches it). The text is read with LF line ends; a leading `<!-- ... -->` (the template's contract notes) and one final
-line break are not part of the prompt. Kit templates: `debug-turn` (gsd-debug).
+line break are not part of the prompt. Kit templates: `debug-turn` (gsd-debug); `plan-*` (gsd-plan, below).
+
+Planning verbs (THIN.md stage 2, `workflows/lib/flow-plan.mjs`): gsd-plan keeps the step order, the agent calls, the stops and
+their answers, the retry counts and the role of each call (its agent definitions are in the script); what is deterministic
+is in pure flow verbs (no record): `plan-args` checks and normalises the run's arguments and the composition policies the
+script resolved from them and from its gsd.* policy keys (section 4.3: no kit module reads those) in the GSDF-15 order (the first
+problem is the answer; `skipResearch` without a reason is `needs-owner`), and returns the settings each revision key hashes
+(the script hashes them with `sha`, so the digests are the ones of 04e008f), the skeleton lanes with their lens text and role
+options, SKELETON-LANES.json, the agent schemas and the planner markers; `plan-prompt <kind>` renders the prompt of one agent call
+from the kit templates `prompts/plan-*.md` and structured data (`ctx`: the phase, its research, requirements, adapter
+instructions, limits and Dimension 8 note; per kind the plans, issues, contract shows, digests). A plan template follows the
+`prompt` rules plus one: a paragraph whose variables are all empty strings is left out (never the whole template), else a line
+whose variables are all empty strings is left out, so an optional part costs no blank line. Kinds: `outline`, `outline-fix`,
+`revise`, `write`, `fix`, `realloc`, `gaps`, `architect`, `skeleton-lane`, `skeleton-resolve`, `checker`, `depcheck`,
+`join-resolve`. `plan-skeleton <op>` keeps the skeleton gate's issue book (the script passes it in and gets it back): `first`
+(the lanes' replies and the architect's outline changes), `route` (open issues to the outline writer or the architect),
+`add`, `pending` (each lane's open issues), `resolve` (the resolution checks), `end`, `report` (OUTLINE-REVIEW.md and the
+review-metrics findings). `plan-probes` turns the three `ph gsd check` probes into issues (and the Files/plan lines with
+`gsd.checker_reallocate`); `plan-linked` names the plans a plan edit can affect (incremental recheck); `plan-realloc-diff` what
+an outline reallocation changed; `plan-validation` what the validation strategy step means for the run.
 
 Rule: a verb is renamed or changes the shape of its input, output or record only with a CHANGELOG line that names the
 old and the new form and a compatibility alias for one release (the old name or shape is still accepted). A new verb
@@ -609,6 +628,13 @@ error, `{status: "error", error}`); `ph gsd` verbs exit 0, 1, 66 (nothing matche
 | `plan-mark` | `<phaseDir>`, `{run, plans, stage: planned\|recorded}` | `{status}` | `plan-progress.json` |
 | `plan-outline` | `<phaseDir>`, `{run, inputs, sha}` | `{status}` | `plan-progress.json` |
 | `plan-checker`, `plan-contracts`, `plan-realloc`, `plan-recheck` | `<phaseDir>`, `{run, part, step, ops}` | `{status, log}` | `plan-progress.json` (op log per part) |
+| `plan-args` | `{args, policy, gsd, adapter, kitLenses}` | `{status: ok, mode, ..., lanes, roles, settings, laneInputs, skeleton, schemas, ownerMarkers, knownMarkers}`, or exit 1 `{status: failed\|needs-owner, reason}` | none |
+| `plan-prompt` | `<kind>`, `{ctx, ...data}` | `{kind, text}`; exit 1 on an unknown kind, a missing template or variable | none (reads `prompts/plan-*.md`) |
+| `plan-skeleton` | `<op>`, `{sk, ...}` | `{sk, advisories, ...}` (op `first`, `route`, `add`, `pending`, `resolve`, `end`, `report`) | none |
+| `plan-probes` | `{runs: {<probe>: {code, json}}, filesPerPlan, tracerExtraFiles}` | `{found}` | none |
+| `plan-linked` | `{ids, scope, index, manifest, plans}` | `{linked}` | none |
+| `plan-realloc-diff` | `{before, after, named, planIds, sent}` | `{idsAfter, changed, removed, unchanged, accept}` | none |
+| `plan-validation` | `{off, approvedResearch, strategy}` | `{validation, report, warnings, log, commit}` | none |
 | `prompt` | `<name>` (`<kit name>` or `project/<name>`), `{<var>: string\|number\|boolean}` | `{name, path, text, unused}`; exit 1 on a bad name, a missing template, a missing variable or a bad value | none (reads the template) |
 | `stop-requested` | `[runId]` (default: the current run, `PASEO_HARNESS_WORKFLOW_RUN` / `_RUN_DIR`, which `ph workflow` sets) | `{stop, runId, at?, requestedAt?, reason?}`: whether `ph workflow stop` asked the run to stop at its next wave boundary (`stop: false, runId: null` outside a run) | none (reads `<runDir>/stop.json`) |
 

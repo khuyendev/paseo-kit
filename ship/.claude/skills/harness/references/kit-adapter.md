@@ -46,7 +46,9 @@ helpers a composition needs as globals (`flow`, `gsd`, `call`, `loadCfg`, `sha`,
 list is in the kit's docs/INTERFACES.md section 13); a script does not copy them. Prompt texts that are a contract with
 a verb or a schema are kit templates (`.agents/workflows/prompts/<name>.md`); the project's own prompts go to
 `.agents/workflows/prompts/project/<name>.md` and are rendered with `renderPrompt("project/<name>", {vars})`, which fails
-on a missing variable.
+on a missing variable. gsd-plan renders its agent prompts with the flow verb `plan-prompt <kind>` (kit templates
+`prompts/plan-*.md`) and leaves its bookkeeping to pure flow verbs (`plan-args`, `plan-skeleton`, `plan-probes`, `plan-linked`,
+`plan-realloc-diff`, `plan-validation`); a project changes its planning through the script's steps and stops, not those texts.
 
 ## 2. When to run
 
