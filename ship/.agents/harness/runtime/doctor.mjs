@@ -118,6 +118,8 @@ function adapterLines(ctx, line) {
   for (const p of problems) line("problem", p);
   if (setupEntries(setup).length && !problems.length) line("ok", `worktree setup: ${setup.copy.length} copy, ${setup.link.length} link path(s) present and git-ignored`);
   for (const gap of setupGaps(ctx.root, ctx.cfg, runGit)) line("note", gap);
+  // Kit feedback 87 C1: the gate's check-weakening is an invariant; switching it off is the owner's choice, never silent.
+  if (ctx.cfg.adapter.checks?.enabled === false) line("note", "warning: adapter.checks.enabled is false: gates do not check for deleted tests, removed assertions or added skips (kit feedback 87 C1); remove the key to turn the check back on");
 }
 
 // Kit feedback 75: harness worktrees of finished runs that are still on disk (603 MB over 23 of them in one project).

@@ -8,6 +8,7 @@ import { frontmatterGet, frontmatterValidate, historyDigest, initPayload, initPr
 import { contractsChange, contractsShow, verifyContractsVerb } from "./contracts.mjs";
 import { debugBudget, debugCheckpoint, debugClose, debugCreate, debugExtend, debugList, debugStatus } from "./debug.mjs";
 import { commitVerb, evaluationScope, selectRevertCommits } from "./gitverbs.mjs";
+import { allowVerb } from "./allow.mjs";
 import { grantPath } from "./grants.mjs";
 import { haltClear } from "./halts.mjs";
 import { requestClear, sharedClear } from "./owner-answers.mjs";
@@ -124,6 +125,7 @@ export const verbHandlers = {
   "shared.clear": { usage: "ph gsd shared.clear <phase> <wave> [--path <file>] --reason <text>", options: { path: "string", reason: "string" }, run: (g, a, o) => sharedClear(g, phaseOf(g, a), a[1], o) },
   "request.clear": { usage: "ph gsd request.clear <phase> --plan <NN-MM> --path <file> --reason <text>", options: { plan: "string", path: "string", reason: "string" }, run: (g, a, o) => requestClear(g, phaseOf(g, a), o.plan, o) },
   grant: { usage: "ph gsd grant <phase> --path <file> [--plan <NN-MM>]", options: { path: "string", plan: "string" }, run: (g, a, o) => grantPath(g, phaseOf(g, a), o.path, o.plan) },
+  allow: { usage: "ph gsd allow <phase | debug> --path <file> --reason <text>", options: { path: "string", reason: "string" }, run: (g, a, o) => allowVerb(g, a[0], o) },
   "verify.plan-structure": {
     usage: "ph gsd verify.plan-structure <phase | path/NN-MM-PLAN.md> [--plans <ids>]",
     options: { plans: "string" },

@@ -75,6 +75,14 @@ export async function planStructure(g, phase, plan) {
     if (t.reversibility === "one-way" && !decisionBefore && !settled.some((id) => mentions(t.inner, id))) warnings.push(`${label}: one-way reversibility without a checkpoint:decision immediately before it`);
     decisionBefore = t.type === "checkpoint:decision";
   }
+  // Kit feedback 87 C1: each <check_changes> line names one file and why its checks get weaker; the gate accepts exactly those.
+  const forms = g.cfg.adapter.ownership.owns_forms;
+  for (const c of plan.checkChanges ?? []) {
+    if (!c.path) errors.push(`<check_changes> line is not \`<path>: <reason>\`: ${c.line}`);
+    else if (/[*?[\]{}]/.test(c.path)) errors.push(`<check_changes> names a glob, not a file: ${c.path}`);
+    else if (!c.reason.trim()) errors.push(`<check_changes> ${c.path} gives no reason`);
+    else if (plan.owns.length && !plan.owns.some((o) => { const m = ownsPath(o, forms); return m !== null && covers(m, c.path); })) warnings.push(`<check_changes> ${c.path} is outside the plan's owns`);
+  }
   if (Number(plan.wave) > 1 && !plan.dependsOn.length) warnings.push(`wave ${plan.wave} with empty depends_on`);
   const limit = g.cfg.gsd.plan_limits.tasks_per_plan;
   if (tasks.length > limit) errors.push(`${tasks.length} tasks > gsd.plan_limits.tasks_per_plan ${limit} (split the plan)`);
@@ -97,6 +105,7 @@ export async function planStructure(g, phase, plan) {
     warnings,
     task_count: tasks.length,
     tasks: tasks.map((t) => ({ index: t.index, name: t.name, type: t.type, automated: t.automated.map((o) => o.command) })),
+    ...((plan.checkChanges ?? []).length ? { check_changes: plan.checkChanges.filter((c) => c.path).map(({ path: p, reason }) => ({ path: p, reason })) } : {}),
     frontmatter_fields: Object.keys(fm),
     ...(unresolvable ? { unresolvable } : {}),
   };

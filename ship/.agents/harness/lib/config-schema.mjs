@@ -130,7 +130,9 @@ export const SCHEMA = obj({
     command_probes: arr(obj({ name: str({ nonEmpty: true }), argv: argv(), timeout_s: int(1) }, ["timeout_s"])),
     attribution: nullable(str({ nonEmpty: true, repoPath: true })),
     worktree_setup: obj({ copy: strs(), link: strs() }),
-  }),
+    // Kit feedback 87 C1: the gate's check-weakening; null paths and regexes = the stack defaults of workflows/lib/flow-checks.mjs.
+    checks: obj({ enabled: bool(), paths: nullable(strs()), test_decl: nullable(strs()), assert: nullable(strs()), skip: nullable(strs()) }, ["enabled", "paths", "test_decl", "assert", "skip"]),
+  }, ["checks"]),
   gsd: obj({
     roles: map(obj({ model: str({ nonEmpty: true }), effort: effort(), reason: str() }, ["model", "effort", "reason"])),
     granularity: str({ oneOf: ["coarse", "standard", "fine"] }),
@@ -310,6 +312,13 @@ function checkRelations(cfg) {
   for (const role of Object.keys(cfg.adapter.agents)) {
     if (!GSD_ROLES.includes(role)) throw new ConfigError(`adapter.agents.${role}`, `unknown GSD role (roles: ${GSD_ROLES.join(", ")})`);
   }
+  for (const k of ["test_decl", "assert", "skip"]) (cfg.adapter.checks?.[k] ?? []).forEach((src, i) => {
+    try {
+      new RegExp(src);
+    } catch (e) {
+      throw new ConfigError(`adapter.checks.${k}[${i}]`, `invalid regular expression (${e.message})`);
+    }
+  });
   (cfg.adapter.envelope ?? []).forEach((axis, i) => {
     if (Object.hasOwn(axis, "values") === Object.hasOwn(axis, "range")) throw new ConfigError(`adapter.envelope[${i}]`, "needs exactly one of values or range");
   });
