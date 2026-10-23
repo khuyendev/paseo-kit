@@ -5,7 +5,7 @@ import type { Register, EngineInterface } from 'claude-code'
 const METHODS = ['read_ranges', 'edit_multiple_files', 'write_multiple_files']
 const PREFIX = 'mcp__harness-files__'
 const PROTOCOL = 1
-const MAX_REQUEST = 16 * 1024 * 1024
+const MAX_REQUEST = 16 * 1024 * 1024 // UTF-8 bytes, the unit the backend counts on stdin
 const MAX_RESULT = 44000 // below Claude Code's ~50,000-char persistence threshold (FTOL-13)
 const TRANSPORT_MS = 30000
 const BASH_MS = 120000
@@ -18,6 +18,15 @@ type Found = { backend: string }
 
 const fail = (text: string) => new Error(text)
 const cut = (s: string, n = 1500) => String(s ?? '').slice(0, n)
+// JSON.stringify never emits a lone surrogate, so each pair is two units of 2 bytes: 4 bytes in all
+const utf8Bytes = (s: string) => {
+  let bytes = 0
+  for (let i = 0; i < s.length; i++) {
+    const unit = s.charCodeAt(i)
+    bytes += unit < 0x80 ? 1 : unit < 0x800 || (unit >= 0xd800 && unit <= 0xdfff) ? 2 : 3
+  }
+  return bytes
+}
 
 // FTOL-05: discovery runs on every call and nothing is cached, so the install manifest and every trusted file are checked each time.
 async function backend($: EngineInterface, cwd: string): Promise<string> {
@@ -35,7 +44,7 @@ async function backend($: EngineInterface, cwd: string): Promise<string> {
 // FTOL-06: one JSON object on stdin; anything but a complete protocol-1 reply fails closed.
 async function transport($: EngineInterface, backendPath: string, input: Record<string, unknown>, cwd: string): Promise<any> {
   const stdin = JSON.stringify(input)
-  if (stdin.length > MAX_REQUEST) throw fail('file request exceeds 16 MiB; split the call')
+  if (utf8Bytes(stdin) > MAX_REQUEST) throw fail('file request exceeds 16 MiB; split the call')
   const out = await $.process.run(['node', backendPath], { cwd, stdin, timeoutMs: TRANSPORT_MS })
   if (out.exitCode !== 0) throw fail(`File transport failed: ${cut(out.stderr) || `backend exit ${out.exitCode}`}`)
   if (out.isStdoutTruncated || out.isStderrTruncated || !out.stdout) throw fail('File transport failed: incomplete backend output')

@@ -1415,7 +1415,7 @@ Every behavior M1, M2 and M3 absorb in the SYNTHESIS module table, once each. IN
 - Scope: v1
 
 #### FTOL-06 Versioned transport, fail closed
-- Requirement: Backend requests travel as one JSON object on stdin (max 16 MiB, else `file request exceeds 16 MiB; split the call`) and replies carry `protocol: 1`; the mod reports a non-zero exit, truncated stdout/stderr or empty stdout as `File transport failed: <cause>` and any other protocol as `Harness file mod/backend protocol mismatch: update the installed project assets and plugin together`, both before any native execution.
+- Requirement: Backend requests travel as one JSON object on stdin (max 16 MiB of UTF-8 bytes, else `file request exceeds 16 MiB; split the call`) and replies carry `protocol: 1`; the mod reports a non-zero exit, truncated stdout/stderr or empty stdout as `File transport failed: <cause>` and any other protocol as `Harness file mod/backend protocol mismatch: update the installed project assets and plugin together`, both before any native execution.
 - Acceptance: offline: a stub backend answering `protocol: 9` yields the mismatch text and zero native Bash calls; truncated and empty replies yield `File transport failed`.
 - Source: FIL-06, P4.
 - Scope: v1
