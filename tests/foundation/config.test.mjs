@@ -321,6 +321,7 @@ const GOLDEN = {
     review_metrics: true,
     validation_strategy: true,
     contract_check: true,
+    unowned_outside_roots: "report",
   },
 };
 

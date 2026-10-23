@@ -119,11 +119,14 @@ const integrationFiles = new Set();
 const ev = (e) => { events.push(e); log(`event ${e}`); };
 // Kit feedback 68: plans, artifacts and owned files changed outside the flow since their last record, from `ph gsd hand-edit scan`.
 let handEdits = null;
+// Kit feedback 77, 80: paths of the main tree that no plan owns and that the run reports without stopping or committing them: outside
+// adapter.ownership.source_roots (gsd.unowned_outside_roots), or tracked files whose only change is line endings.
+const reported = { outsideRoots: new Set(), eolOnly: new Set() };
 const treeReport = () => {
   const left = Object.entries(worktrees).filter(([plan]) => !discarded.includes(plan)).map(([plan, path]) => ({ plan, path, ...(keptTrees[plan] ? { why: keptTrees[plan] } : {}) }));
   return discarded.length || left.length ? { discarded, kept: left } : null;
 };
-const result = (status, extra = {}) => ({ status, phaseDir, mode: execMode, isolation: g.isolation, waves: waveResults, sharedChanges, ...(Object.keys(pendingRequests).length ? { requests: pendingRequests } : {}), ...(skipped.length ? { skipped } : {}), ...(treeReport() ? { worktrees: treeReport() } : {}), ...(handEdits ? { handEdits } : {}), events, ...extra });
+const result = (status, extra = {}) => ({ status, phaseDir, mode: execMode, isolation: g.isolation, waves: waveResults, sharedChanges, ...(Object.keys(pendingRequests).length ? { requests: pendingRequests } : {}), ...(skipped.length ? { skipped } : {}), ...(treeReport() ? { worktrees: treeReport() } : {}), ...(handEdits ? { handEdits } : {}), ...(reported.outsideRoots.size ? { outsideRoots: [...reported.outsideRoots] } : {}), ...(reported.eolOnly.size ? { eolOnly: [...reported.eolOnly] } : {}), events, ...extra });
 const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reason, ...extra });
 const digestOf = async (input) => (await flow(["digest"], input)).json?.hash ?? "none";
 
@@ -285,6 +288,9 @@ const progressWrite = serialize();
 const saveProgress = () => progressWrite(async () => (await flow(["write", PROGRESS], JSON.stringify(progress, null, 2))).code === 0);
 pendingRequests = progress.requests ??= {};
 sharedChanges = progress.shared ??= [];
+// Kit feedback 78: the integration files of a stopped run (shared changes, integration fixers, grants) are restored with the rest of
+// the state; without them the commit check sees the files an earlier run applied as changes outside every plan's owns.
+for (const f of progress.integration ?? []) integrationFiles.add(f);
 // kit-feedback 53: a granted file is integration output from the start of the run (the resume gate and the wave commit).
 await grantedFiles();
 // G075: the handoff must still describe the plans on disk. A failed or killed handoff rerun can leave a cut-short wave
@@ -609,12 +615,14 @@ const FIXER_EFFORT = "high";
 const fixerOpts = (label, extra = {}) => ({ label, agentType: agentFor("fixer", "gsd-code-fixer"), role: "fixer", ...(cfg.gsd.roles?.fixer?.effort ? {} : { effort: FIXER_EFFORT }), schema: fixerSchema, ...extra });
 // Main-tree edits outside every plan's owns stop the run before the gate and the review are paid for, not at Commit
 // (G070, kit-feedback 35).
+// Kit feedback 77: committing the paths on their own is the first answer; the resume gate accepts a commit that touches no plan-owned file.
+const UNOWNED_OPTIONS = ["commit them separately (git add and git commit of those paths only), then rerun with the same args", "move or revert them, then rerun with the same args", "add them to a plan's owns and replan"];
 const strayStop = (tasks, stage) => aloneOnTree(() => strayStopNow(tasks, stage));
 async function strayStopNow(tasks, stage) {
   const pf = await planFiles(tasks);
   if (pf.stop) return pf.stop;
   if (!pf.unowned.length) return null;
-  return owner(stage, `changes outside every plan's owns: ${pf.unowned.slice(0, 10).join(", ")}`, { paths: pf.unowned, options: ["move or revert them, then rerun with the same args", "add them to a plan's owns and replan"] });
+  return owner(stage, `changes outside every plan's owns: ${pf.unowned.slice(0, 10).join(", ")}`, { paths: pf.unowned, options: UNOWNED_OPTIONS });
 }
 // G089, G083: shared changes (requests no open plan owns; the plans' <shared_changes> of this execution wave) are made
 // by one integration fixer owning exactly their paths, before the gate; its files join the wave commit and
@@ -671,6 +679,8 @@ async function fixRounds(waveId, tasks, first, label, tail, { gate = () => runGa
       const files = [...new Set(placed.flatMap((f) => f.files ?? []))];
       for (const f of files) integrationFiles.add(f);
       progress.integration = [...integrationFiles];
+      // Kit feedback 83: written before the fixer runs, so a run that dies in it still knows the files it may have changed.
+      if (!(await saveProgress())) return { stop: result("failed", { reason: `${PROGRESS} could not be written before the integration fix` }) };
       fixes.push(async () => {
         const prompt = [`Integration fix: these gate failures belong to no plan. You own exactly these files: ${JSON.stringify(files)}.`, failureText(placed), "Return JSON {status: fixed|unresolved, attempts, remaining_failures, evidence}.", digestLine("fix:integration", await digestOf({ files }))].join("\n\n");
         return { id: null, kind: "integration", ...(await writeTree(() => call(prompt, fixerOpts(`integration-fix-${round}`)))) };
@@ -1035,6 +1045,9 @@ async function planFiles(tasks) {
   const asPlan = (t) => ({ id: t.plan, owns: t.owns ?? [], summary: t.summary, claimed: claimed[t.plan] ?? [] });
   const oc = await flow(["owned-changes", phaseDir], { plans: tasks.map(asPlan), pending: later.map(asPlan), integration: [...integrationFiles], ignore: [cfg.worktree_dir] });
   if (oc.code !== 0 || !oc.json?.files) return { stop: result("failed", { reason: `commit scope could not be resolved: ${oc.json?.error ?? `exit ${oc.code}`}` }) };
+  for (const [set, list, why] of [[reported.outsideRoots, oc.json.outside, "outside every plan's owns and outside adapter.ownership.source_roots"], [reported.eolOnly, oc.json.eolOnly, "owned by no plan and changed in line endings only"]]) {
+    for (const p of list ?? []) if (!set.has(p)) { set.add(p); log(`warning: ${p} is ${why}; reported, not committed and not a stop`); }
+  }
   const files = oc.json.files;
   for (const t of tasks) if (t.summary && !(files[t.plan] ??= []).includes(t.summary)) files[t.plan].push(t.summary);
   return { files, removed: oc.json.removed, integration: oc.json.integration, unowned: oc.json.unowned };
@@ -1079,7 +1092,7 @@ async function commitWaves(list, verify, evidence) {
   if (requests.length) return { stop: owner("Commit", "cross-plan change requests lack acknowledged resolution", { requests }) };
   const pf = await planFiles(list.flatMap((d) => d.tasks));
   if (pf.stop) return pf;
-  if (pf.unowned.length) return { stop: owner("Commit", `changes outside every plan's owns: ${pf.unowned.slice(0, 10).join(", ")}`, { paths: pf.unowned, options: ["move or revert them, then rerun with the same args", "add them to a plan's owns and replan"] }) };
+  if (pf.unowned.length) return { stop: owner("Commit", `changes outside every plan's owns: ${pf.unowned.slice(0, 10).join(", ")}`, { paths: pf.unowned, options: UNOWNED_OPTIONS }) };
   let withIntegration = true;
   for (const { w, tasks } of list) {
     const ids = tasks.map((t) => t.plan);
@@ -1529,7 +1542,7 @@ const doneTasks = done.flatMap((d) => d.tasks);
 const phaseFiles = await planFiles(doneTasks);
 if (phaseFiles.stop) return phaseFiles.stop;
 // G070: an edit outside every plan's owns stops before the phase review is paid for.
-if (phaseFiles.unowned.length) return owner("Commit", `changes outside every plan's owns: ${phaseFiles.unowned.slice(0, 10).join(", ")}`, { paths: phaseFiles.unowned, options: ["move or revert them, then rerun with the same args", "add them to a plan's owns and replan"] });
+if (phaseFiles.unowned.length) return owner("Commit", `changes outside every plan's owns: ${phaseFiles.unowned.slice(0, 10).join(", ")}`, { paths: phaseFiles.unowned, options: UNOWNED_OPTIONS });
 const phaseScope = [...new Set([...Object.values(phaseFiles.files).flat(), ...phaseFiles.integration])].filter((f) => !f.startsWith(".planning/")).sort();
 if (!phaseScope.length) log("phase review: the phase diff holds no code changes");
 // G071: the phase review covers the whole phase diff; an explicit files list scopes only the per-wave reviews.
