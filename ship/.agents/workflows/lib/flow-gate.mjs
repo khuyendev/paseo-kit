@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../../harness/config.mjs";
 import { readJsonIf, writeJsonAtomic, writeTextAtomic } from "../../harness/lib/io.mjs";
-import { resolveInside, safeName, toSlash } from "../../harness/lib/paths.mjs";
+import { isInside, resolveInside, safeName, toSlash } from "../../harness/lib/paths.mjs";
 import { runArgv } from "../../harness/lib/proc.mjs";
 import { invokeHook } from "../../harness/adapter/hooks.mjs";
 import { withMutex } from "../../harness/adapter/mutex.mjs";
@@ -39,11 +39,34 @@ function excerpt(text) {
   return [...errors, ...warns].slice(0, EXCERPT_LINES).join("\n") || lines.slice(-EXCERPT_LINES).join("\n");
 }
 
-function mentionedFiles(root, text) {
+// G167: a path may hold spaces (a spaced project root, `src/my file.ts`), so a file is named by the longest span that ends
+// at a file extension, starts after a token boundary and holds no character a path does not, and that is a visible file
+// under the root. A quoted path is such a span between its quotes. Spans are matched against the visible files, not stat'd.
+const PATH_STOP = /[\r\n"'`()<>|?*;=,{}[\]]/;
+const SPACE = /\s/;
+const MAX_PATH = 260;
+// Keys of the visible files: case-folded on Windows, like samePath.
+const pathKey = (rel) => (process.platform === "win32" ? rel.toLowerCase() : rel);
+// The files the gate can see: tracked, or untracked and not ignored (the same list inputsOf reads).
+function visibleFiles(root) {
+  return new Set(gitLines(root, ["ls-files", "-co", "--exclude-standard", "-z"]).flatMap((l) => l.split("\0")).filter(Boolean).map((rel) => pathKey(toSlash(rel))));
+}
+function mentionedFiles(root, text, visible) {
   const found = new Set();
-  for (const m of String(text).matchAll(/(?:^|[\s("'`])((?:[A-Za-z]:)?[\w./\\-]+\.[A-Za-z0-9]+)(?::\d+)?/g)) {
-    const abs = path.resolve(root, m[1]);
-    if (abs.startsWith(root) && fs.existsSync(abs)) found.add(toSlash(path.relative(root, abs)));
+  for (const line of String(text).split(/\r?\n/)) {
+    for (const ext of line.matchAll(/\.[A-Za-z0-9]+(?![A-Za-z0-9])/g)) {
+      const end = ext.index + ext[0].length;
+      let lo = end;
+      while (lo > 0 && end - lo < MAX_PATH && !PATH_STOP.test(line[lo - 1])) lo--;
+      for (let s = lo; s < end; s++) {
+        if (SPACE.test(line[s]) || (s > lo && !SPACE.test(line[s - 1]))) continue;
+        const abs = path.resolve(root, line.slice(s, end));
+        const rel = toSlash(path.relative(root, abs));
+        if (!isInside(abs, root) || !visible.has(pathKey(rel)) || !fs.statSync(abs, { throwIfNoEntry: false })?.isFile()) continue;
+        found.add(rel);
+        break;
+      }
+    }
   }
   return [...found];
 }
@@ -215,7 +238,8 @@ export async function gate(root, phaseDir, input) {
   if (moved.length) steps.push(noRun(root, logDir, "inputs-stable", "failed", `inputs changed while the gate ran: ${moved.slice(0, 10).join(", ")}`));
   const evidence = { v: 1, waveId: input.waveId, at: new Date().toISOString(), inputs, steps: steps.map(({ text, ...s }) => s) };
   writeJsonAtomic(evidenceFile, evidence);
-  const failures = steps.filter((s) => s.outcome !== "passed").map((s) => ({ step: s.name, plan: s.plan ?? null, outcome: s.outcome, excerpt: excerpt(s.text), log: s.log, files: mentionedFiles(root, s.text) }));
+  const visible = visibleFiles(root);
+  const failures = steps.filter((s) => s.outcome !== "passed").map((s) => ({ step: s.name, plan: s.plan ?? null, outcome: s.outcome, excerpt: excerpt(s.text), log: s.log, files: mentionedFiles(root, s.text, visible) }));
   const attribution = await attribute(root, cfg, input.plans ?? [], failures, prefixes);
   if (attribution.attributionError) notes.push(`attribution hook failed: ${attribution.attributionError}; its failures stay unplaced`);
   const timedOut = steps.filter((s) => s.outcome === "timeout").map((s) => `${s.name} timed out after its limit (exit ${TIMEOUT_CODE})`);
