@@ -6,6 +6,20 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Role text A + B, kit feedback 117 follow-up (owner 2026-10-24: keep the role text as upstream GSD and skills as
+  upstream; "Ok làm A thôi. Giữ đúng stream. Làm B cũng dc, theo config project"; graphify "bỏ cho gọn"; one Grok 4.7
+  agent, note kit-bughunt/fb11/design/RAB.md). Measured on the 2026-10-24 transcripts: the planner ran
+  load_graph_context (graphify / gsd-tools, not in the kit) in 32 of 59 runs and opened the PLAN template's
+  `@execute-plan.md` and `@summary.md` (50 KB) in 29 of 59. A: `ph gsd upstream.build` drops the steps that need an
+  upstream tool the kit does not ship (planner load_graph_context, history_digest, inject_global_learnings,
+  validate_plan; phase-researcher graph step, research_plan_seam, commit_research; project-researcher
+  research_plan_seam; plan-checker, verifier and code-reviewer gsd-tools launchers); graphify is always dropped. Inside
+  the planner's PLAN.md template `@path` lines become backticked paths, so the plan still names them and the planner no
+  longer opens them. B: optional `gsd.tdd_mode` / `gsd.mvp_mode` (absent = false, the kit runs neither) keep the TDD and
+  MVP sections; off, the build drops them; `gsd.validation_strategy: false` also drops the Nyquist sections. Generated
+  roles carry a config stamp and `upstream.check` / `ph doctor` report roles built for another config (rebuild with
+  `ph gsd upstream build`). Prompt sizes: planner 59.3 -> 55.2 KB, verifier 51.9 -> 49.4, phase-researcher 40.1 -> 37.3,
+  code-reviewer 24.7 -> 22.2, debugger 41.5 -> 39.9, executor 31.3 -> 30.2; everything else stays upstream text.
 - Kit feedback 110-117 and WildEraV6 4-7 (owner 2026-10-24: "Tiếp tục lấy feedback đi, có vụ prompt truyền vào vớ vẩn
   đấy", then "agent nạp đúng thứ cần thiết để làm việc thôi"; six Grok 4.7 agents, notes kit-bughunt/fb10/design/<ID>.md,
   verification kit-bughunt/fb10/VERIFY.md). Role prompts (117, WildEraV6 7): the inventory declares per role the
