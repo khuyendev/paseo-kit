@@ -368,6 +368,7 @@
     ".agents/harness/lib/hand-edit-log.mjs",
     ".agents/harness/lib/hash.mjs",
     ".agents/harness/lib/io.mjs",
+    ".agents/harness/lib/memory.mjs",
     ".agents/harness/lib/owner-answers.mjs",
     ".agents/harness/lib/paths.mjs",
     ".agents/harness/lib/proc.mjs",

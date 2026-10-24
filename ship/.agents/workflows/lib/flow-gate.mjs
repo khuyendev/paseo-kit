@@ -19,9 +19,34 @@ import { OWNER_ANSWERS_FILE, readAnswers } from "../../harness/lib/owner-answers
 import { checksStop, checkWeakening, isTestFile } from "./flow-checks.mjs";
 import { readState } from "./flow-state.mjs";
 import { fileTimeoutS, runBoundedTests } from "../../harness/gsd/test-run.mjs";
+import { sampleMemory, watchMemory } from "../../harness/lib/memory.mjs";
 
 const TIMEOUT_CODE = 124;
 const EXCERPT_LINES = 40;
+
+// Kit feedback 112 F1: a test tool that dies is not a hung test. First match wins; adapter.crash_signatures (regex
+// strings, absent by default) extends the list. The signature reported is the matched text.
+export const CRASH_SIGNATURES = Object.freeze([
+  "Out of memory",
+  "out of memory",
+  "DumpStackTrace",
+  "Connection closed before test suite loaded",
+  "FATAL ERROR:.*heap",
+  "std::bad_alloc",
+  "Segmentation fault",
+]);
+export function crashSignature(text, extra = []) {
+  const src = String(text ?? "");
+  if (!src) return null;
+  for (const pattern of [...CRASH_SIGNATURES, ...(Array.isArray(extra) ? extra : [])]) {
+    if (typeof pattern !== "string" || !pattern) continue;
+    let re;
+    try { re = new RegExp(pattern); } catch { continue; }
+    const hit = re.exec(src)?.[0];
+    if (hit) return hit.replace(/\s+/g, " ").trim().slice(0, 120);
+  }
+  return null;
+}
 
 // ADPT-15 through the adapter's invoker (closed request and response shapes); a script fault is {error}.
 export async function runHook(root, cfg, script, { op, ...fields }) {
@@ -293,26 +318,41 @@ function interruptedSteps(root, dir, waveId, inputs) {
 
 // The combined log is the human one; stdout and stderr also go to their own files for an evidence parser (G077).
 // A whole-file kill sets r.hungFile; the step then names that file (source "file") instead of scanning the log.
+// Kit feedback 112: a runtime crash in that output is not a hang, so the hung-file line is not written.
 function recordRun(root, logDir, name, argv, r, extra = {}) {
-  const hungNote = r.hungFile ? `\nhung test file: ${r.hungFile} (killed at its whole-file bound)\n` : "";
+  const { crashPatterns = [], ...rest } = extra;
+  const blob = `${r.stdout ?? ""}\n${r.stderr ?? ""}${r.error ? `\n${r.error}` : ""}`;
+  const outcome = r.timedOut ? "timeout" : r.error && r.code === null ? "unavailable" : r.code === 0 ? "passed" : "failed";
+  // A passing step may print the phrase (a test of the error text). Only a timed-out or failed step is a tool crash.
+  const signature = outcome === "timeout" || outcome === "failed" ? crashSignature(blob, crashPatterns) : null;
+  const hungNote = !signature && r.hungFile ? `\nhung test file: ${r.hungFile} (killed at its whole-file bound)\n` : "";
   const stdout = `${r.stdout ?? ""}${hungNote}`;
   const log = path.join(logDir, `${safeName(name)}.log`);
   writeTextAtomic(log, `${stdout}\n${r.stderr ?? ""}${r.error ? `\n${r.error}` : ""}`);
   const streams = { stdout: path.join(logDir, `${safeName(name)}.stdout.log`), stderr: path.join(logDir, `${safeName(name)}.stderr.log`) };
   writeTextAtomic(streams.stdout, stdout);
   writeTextAtomic(streams.stderr, `${r.stderr ?? ""}${r.error ? `\n${r.error}` : ""}`);
-  const outcome = r.timedOut ? "timeout" : r.error && r.code === null ? "unavailable" : r.code === 0 ? "passed" : "failed";
-  return { name, argv, outcome, exitCode: r.timedOut ? TIMEOUT_CODE : r.code, executed: { ...NOT_RUN }, log: toSlash(path.relative(root, log)), streams: { stdout: toSlash(path.relative(root, streams.stdout)), stderr: toSlash(path.relative(root, streams.stderr)) }, text: `${stdout}\n${r.stderr ?? ""}`, ...extra, ...(r.hungFile ? { hang: { files: [r.hungFile], source: "file" } } : {}) };
+  return { name, argv, outcome, exitCode: r.timedOut ? TIMEOUT_CODE : r.code, executed: { ...NOT_RUN }, log: toSlash(path.relative(root, log)), streams: { stdout: toSlash(path.relative(root, streams.stdout)), stderr: toSlash(path.relative(root, streams.stderr)) }, text: `${stdout}\n${r.stderr ?? ""}`, ...rest, ...(signature ? { crash: { signature } } : {}), ...(!signature && r.hungFile ? { hang: { files: [r.hungFile], source: "file" } } : {}) };
+}
+// Free memory at the start and the lowest sample while the command runs (kit feedback 112 F2).
+async function watched(fn) {
+  const watch = watchMemory();
+  try {
+    return { r: await fn(), memory: watch.finish() };
+  } finally {
+    watch.stop();
+  }
 }
 async function step(root, logDir, name, argv, timeoutS, extra = {}) {
-  return recordRun(root, logDir, name, argv, await runArgv(argv, { cwd: root, timeoutMs: timeoutS * 1000 }), extra);
+  const { r, memory } = await watched(() => runArgv(argv, { cwd: root, timeoutMs: timeoutS * 1000 }));
+  return recordRun(root, logDir, name, argv, r, { ...extra, memory });
 }
 
 // A step that did not run still has the ADPT-17 shape: a log holding the reason and an outcome that never certifies.
 function noRun(root, logDir, name, outcome, text, extra = {}) {
   const log = path.join(logDir, `${safeName(name)}.log`);
   writeTextAtomic(log, `${text}\n`);
-  return { name, argv: [], outcome, exitCode: null, executed: { ...NOT_RUN }, log: toSlash(path.relative(root, log)), text, ...extra };
+  return { name, argv: [], outcome, exitCode: null, executed: { ...NOT_RUN }, log: toSlash(path.relative(root, log)), text, memory: sampleMemory(), ...extra };
 }
 
 // Kit feedback 87 C1: every gate runs check-weakening over the files changed since HEAD (a composition passes no base and no file
@@ -338,7 +378,7 @@ function checksStep(root, phaseDir, logDir, notes) {
   const log = path.join(logDir, `${CHECKS_STEP}.log`);
   writeTextAtomic(log, `${text}\n`);
   const outcome = r.status === "error" ? "unavailable" : stop ? "failed" : "passed";
-  return { summary, stop, step: { name: CHECKS_STEP, argv: [], outcome, exitCode: outcome === "passed" ? 0 : 1, executed: { ...NOT_RUN }, log: toSlash(path.relative(root, log)), text, plan: null, task: null, kind: CHECKS_STEP } };
+  return { summary, stop, step: { name: CHECKS_STEP, argv: [], outcome, exitCode: outcome === "passed" ? 0 : 1, executed: { ...NOT_RUN }, log: toSlash(path.relative(root, log)), text, memory: sampleMemory(), plan: null, task: null, kind: CHECKS_STEP } };
 }
 
 // Flow verb test-command {testArgv?} -> {argv, caseTimeoutS}: the test command a gate runs, with the per-test timeout (kit feedback 102).
@@ -370,6 +410,8 @@ export async function gate(root, phaseDir, input) {
   const hung = [];
   let seen = null;
   const noteHang = (s) => {
+    // Kit feedback 112: a tool crash is not a hang, and later steps of this gate run are not blocked by it.
+    if (s.crash?.signature) return;
     if (s.outcome !== "timeout") return;
     // A whole-file kill (kit feedback 109 F4) already names its file; the output scan is the fallback (item 102).
     if (!s.hang?.files?.length) {
@@ -394,19 +436,21 @@ export async function gate(root, phaseDir, input) {
   // names several test files runs them one at a time; a suite (no file) keeps its step cap, and a shorter file bound kills
   // the tree once one file has been current that long.
   const fileTimeout = fileTimeoutS(cmds);
+  const crashPatterns = cfg.adapter.crash_signatures ?? [];
   const testPrefix = (argv) => Array.isArray(cmds.test) && cmds.test.length > 0 && Array.isArray(argv) && cmds.test.every((w, i) => argv[i] === w);
   const runBounded = async (name, argv, timeoutS, extra = {}) => {
-    if (!testPrefix(argv)) return step(root, logDir, name, argv, timeoutS, extra);
+    const tagged = { ...extra, crashPatterns };
+    if (!testPrefix(argv)) return step(root, logDir, name, argv, timeoutS, tagged);
     const files = argvFiles(root, argv, (seen ??= visibleFiles(root))).filter((f) => isTestFile(f, checks));
-    if (files.length < 2 && !(files.length === 0 && fileTimeout < timeoutS)) return step(root, logDir, name, argv, timeoutS, extra);
-    const r = await runBoundedTests({ cwd: root, argv, files, timeoutS, fileTimeoutS: fileTimeout, isTest: (rel) => isTestFile(rel, checks) });
-    return recordRun(root, logDir, name, argv, r, extra);
+    if (files.length < 2 && !(files.length === 0 && fileTimeout < timeoutS)) return step(root, logDir, name, argv, timeoutS, tagged);
+    const { r, memory } = await watched(() => runBoundedTests({ cwd: root, argv, files, timeoutS, fileTimeoutS: fileTimeout, isTest: (rel) => isTestFile(rel, checks) }));
+    return recordRun(root, logDir, name, argv, r, { ...tagged, memory });
   };
   const run = async (name, argv, timeoutS, extra = {}) => {
     const prior = reusable.get(name);
     if (prior && JSON.stringify(prior.argv) === JSON.stringify(argv)) {
       notes.push(`${name}: passed in an interrupted gate run of the same inputs; reused`);
-      return { ...prior, ...extra, reused: true, text: fs.existsSync(path.join(root, prior.log)) ? fs.readFileSync(path.join(root, prior.log), "utf8") : "" };
+      return { ...prior, memory: prior.memory ?? sampleMemory(), ...extra, reused: true, text: fs.existsSync(path.join(root, prior.log)) ? fs.readFileSync(path.join(root, prior.log), "utf8") : "" };
     }
     return runBounded(name, argv, timeoutS, extra);
   };
@@ -479,19 +523,23 @@ export async function gate(root, phaseDir, input) {
     : stepFailure(root, s, visible, checks)));
   const attribution = await attribute(root, cfg, [...(input.plans ?? []), ...(input.context ?? []).map(({ id, owns }) => ({ id, owns: owns ?? [] }))], failures.filter((f) => f.step !== CHECKS_STEP), prefixes);
   if (attribution.attributionError) notes.push(`attribution hook failed: ${attribution.attributionError}; its failures stay unplaced`);
-  const timedOut = steps.filter((s) => s.outcome === "timeout").map((s) => {
+  // Kit feedback 112: a crash is reported on its own. It is not a timeout hang, even when the step also hit its limit.
+  const crashed = steps.filter((s) => s.crash?.signature).map((s) => `${s.name} crashed: ${s.crash.signature}`);
+  const timedOut = steps.filter((s) => s.outcome === "timeout" && !s.crash?.signature).map((s) => {
     const h = hung.find((x) => x.step === s.name);
     return `${s.name} timed out after its limit (exit ${TIMEOUT_CODE})${h?.files.length ? `; hung test file(s) ${h.files.join(", ")} (${h.source === "argv" ? "named by its command" : h.source === "file" ? "killed at its whole-file bound" : "named last in its output"})${h.blocked.length ? `; blocked by hang in this pass: ${h.blocked.join(", ")}` : ""}` : ""}`;
   });
   // Kit feedback 108 F2: failing test files no plan of this gate owns, with the change that likely broke them when one names the file.
   const unownedTests = unownedTestsOf(root, phaseDir, input.plans ?? [], failures, prefixes);
-  return { green: failures.length === 0, evidence: toSlash(path.relative(root, evidenceFile)), notes, timedOut, ...(hung.length ? { hung } : {}), ...(suiteArgv ? { testCommand: suiteArgv, caseTimeoutS } : {}), failures, failureCount: failures.length, checks: weak.summary, ...attribution, ...(unownedTests.length ? { unownedTests } : {}) };
+  return { green: failures.length === 0, evidence: toSlash(path.relative(root, evidenceFile)), notes, timedOut, ...(crashed.length ? { crashed } : {}), ...(hung.length ? { hung } : {}), ...(suiteArgv ? { testCommand: suiteArgv, caseTimeoutS } : {}), failures, failureCount: failures.length, checks: weak.summary, ...attribution, ...(unownedTests.length ? { unownedTests } : {}) };
 }
 
 // A failed step as the fixers see it: the files its output names, and the test files a fixer may run to see it (kit feedback 102
 // F3): those its command names, among its files, and the hung ones. A step that hung (or was blocked by a hang) names its hung
 // files and the files its output reports at a position; a file only mentioned (a progress line of a test that ran) is none.
 function stepFailure(root, s, visible, checks) {
+  // Kit feedback 112: a tool crash is not attributed to the file its output printed last, and no fixer is given a test to run.
+  if (s.crash?.signature) return { step: s.name, plan: s.plan ?? null, outcome: s.outcome, excerpt: excerpt(s.text), log: s.log, files: [], crash: { signature: s.crash.signature } };
   const hungOnes = s.hang?.files ?? s.blockedByHang?.files ?? [];
   const files = [...new Set([...mentionedFiles(root, s.text, visible, { locatedOnly: hungOnes.length > 0 }), ...failureReportFiles(root, s.text, visible), ...hungOnes])];
   const tests = [...new Set([...argvFiles(root, s.argv, visible), ...files].filter((f) => isTestFile(f, checks)))];
@@ -504,6 +552,8 @@ async function attribute(root, cfg, plans, failures, prefixes) {
   const blockedBy = {};
   const ownersOfFiles = (f) => [...new Set(f.files.flatMap((file) => specificOwners(file, plans, prefixes).map((p) => p.id)))];
   for (const f of failures) {
+    // Kit feedback 112: a tool crash is an environment failure. It is not the plan's, even when the step is that plan's obligation.
+    if (f.crash) { unplaced.push(f); continue; }
     // An obligation failing only in files its plan does not own goes to the owners of those files, or to the
     // integration fixer when no plan of the gate owns them (a whole-project obligation hitting committed code,
     // kit-feedback 36); its own plan is then blocked by them.
@@ -514,15 +564,18 @@ async function attribute(root, cfg, plans, failures, prefixes) {
     else unplaced.push(f);
   }
   let attributionError = null;
-  if (unplaced.length && cfg.adapter.attribution) {
+  const open = unplaced.filter((f) => !f.crash);
+  if (open.length && cfg.adapter.attribution) {
     // G077: each failure carries an id, and an assignment names the failure it answers (an id, or the old echo of the
     // failure text at its own position).
-    const ids = unplaced.map((_, i) => `f${i + 1}`);
-    const res = await runHook(root, cfg, cfg.adapter.attribution, { op: "attribute", failures: unplaced.map((f, i) => ({ id: ids[i], text: f.excerpt, file: f.files[0] })), plans: plans.map((p) => ({ id: p.id, owns: p.owns ?? [] })) });
+    const ids = open.map((_, i) => `f${i + 1}`);
+    const res = await runHook(root, cfg, cfg.adapter.attribution, { op: "attribute", failures: open.map((f, i) => ({ id: ids[i], text: f.excerpt, file: f.files[0] })), plans: plans.map((p) => ({ id: p.id, owns: p.owns ?? [] })) });
     if (res.error) attributionError = res.error;
     for (const [i, as] of (res.assignments ?? []).entries()) {
       const at = ids.indexOf(as?.failure) >= 0 ? ids.indexOf(as.failure) : i;
-      if (as?.plan && unplaced[at]) { (byPlan[as.plan] ??= []).push(unplaced[at]); unplaced[at] = null; }
+      const hit = open[at];
+      const idx = hit ? unplaced.indexOf(hit) : -1;
+      if (as?.plan && idx >= 0) { (byPlan[as.plan] ??= []).push(unplaced[idx]); unplaced[idx] = null; }
     }
   }
   // An obligation of plan A failing in plan B's files marks A blocked by B.

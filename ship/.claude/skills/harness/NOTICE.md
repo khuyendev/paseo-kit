@@ -123,7 +123,7 @@ Region inventory (source line ranges of the carried file; each region is replace
 - `references/team-examples.md` lines 132-133 -> 2 line(s): (c)
 - `references/team-examples.md` lines 135-135 -> 1 line(s): (c)
 - `references/team-examples.md` lines 146-147 -> 2 line(s): (a)
-- `references/paseo-runtime.md` lines 1-432 -> 430 line(s): (c) (d) (f)
+- `references/paseo-runtime.md` lines 1-432 -> 432 line(s): (c) (d) (f)
 
 `references/paseo-runtime.md` is rewritten as a whole for the new `ph` (category c, with d and f); it keeps the section
 numbering the method text refers to. Kit-authored update (2026-10-23, bug-hunt fix G145, FIX1-BRIEF): section 6-6 and
@@ -135,3 +135,6 @@ until the watchdog stop, while the watchdog is armed; a cap otherwise).
 Kit-authored update (2026-10-24): `ph fanout --collect` re-reads the caller's running count at each admission and waits
 up to `wait_timeout_s` for a slot another agent of this caller frees; a name already taken names the live agent's id
 and `ph result` / `ph archive`.
+Kit-authored update (2026-10-24, kit feedback 112 F4): section 6-7 says that on Windows a `tail -F` watcher outlives
+the expired Monitor, so waiting on a run is `ph watch-run`, never a tail. The region inventory above records the new
+line count.

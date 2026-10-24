@@ -148,7 +148,10 @@ export const SCHEMA = obj({
     // Kit feedback 103: globs of catalog files (besides every .json file) whose manifest signature is checked by key path.
     // Absent from the defaults, and not part of the gate-configuration hash.
     catalogs: strs(),
-  }, ["checks", "catalogs"]),
+    // Kit feedback 112: extra runtime-crash regexes for the gate. Absent from the defaults, and not part of the
+    // gate-configuration hash (that is commands, verify_vocabulary and checks).
+    crash_signatures: arr(str({ nonEmpty: true })),
+  }, ["checks", "catalogs", "crash_signatures"]),
   gsd: obj({
     roles: map(obj({ model: str({ nonEmpty: true }), effort: effort(), reason: str() }, ["model", "effort", "reason"])),
     granularity: str({ oneOf: ["coarse", "standard", "fine"] }),
@@ -337,6 +340,13 @@ function checkRelations(cfg) {
   });
   (cfg.adapter.envelope ?? []).forEach((axis, i) => {
     if (Object.hasOwn(axis, "values") === Object.hasOwn(axis, "range")) throw new ConfigError(`adapter.envelope[${i}]`, "needs exactly one of values or range");
+  });
+  (cfg.adapter.crash_signatures ?? []).forEach((src, i) => {
+    try {
+      new RegExp(src);
+    } catch (e) {
+      throw new ConfigError(`adapter.crash_signatures[${i}]`, `invalid regular expression (${e.message})`);
+    }
   });
 }
 
