@@ -60,17 +60,36 @@ export function readManifest(phase) {
 }
 const entriesOf = (manifest) => (manifest?.plans ?? []).filter((p) => p && typeof p === "object" && typeof p.id === "string");
 
-// The manifest text the freeze key hashes. A CONTRACT_CHANGE edits `produces[*].signature`, `supersedes` and `contract_changes`
-// in the manifest; those parts stay out of the frozen skeleton's identity, so the change does not stale the reviewed skeleton and
-// every plan written on it. A manifest with no structured signature hashes as written (unchanged for every earlier project).
+// The manifest text the freeze key hashes. A CONTRACT_CHANGE edits `produces[*].signature`, `supersedes` and `contract_changes`;
+// an addition (`added`) and an owns verb's edits (`owns_outline`, the owns the skeleton reviewed) stay out of it too, so neither
+// stales the reviewed skeleton (kit feedback W15, W16). A manifest with no structured signature and none of that meta hashes as
+// written (unchanged for every earlier project).
 export function manifestFreezeText(text) {
   if (text === null || text === undefined) return text ?? null;
   let m;
   try { m = JSON.parse(text); } catch { return text; }
-  const structured = entriesOf(m).some((p) => asArray(p.produces).some((e) => e && typeof e === "object" && typeof e.signature === "string"));
-  if (!structured) return text;
-  const { contract_changes: _drop, ...rest } = m;
-  return JSON.stringify({ ...rest, plans: asArray(m.plans).map((p) => (p && typeof p === "object" && Array.isArray(p.produces) ? { ...p, produces: p.produces.map((e) => { if (!e || typeof e !== "object") return e; const { signature: _s, supersedes: _u, ...keep } = e; return keep; }) } : p)) });
+  const meta = entriesOf(m).some((p) => p.owns_outline || p.owns_extra || p.owns_held || asArray(p.produces).some((e) => e && typeof e === "object" && e.added));
+  const structured = entriesOf(m).some((p) => asArray(p.produces).some((e) => e && typeof e === "object" && typeof e.signature === "string" && !e.added));
+  if (!structured && !meta) return text;
+  const { contract_changes: _drop, owns_changes: _ownsLog, ...rest } = m;
+  return JSON.stringify({ ...rest, plans: asArray(m.plans).map(freezePlan) });
+}
+// One manifest plan as the freeze key hashes it: signatures, superseded text, added symbols and the owns-verb bookkeeping out.
+function freezePlan(p) {
+  if (!p || typeof p !== "object") return p;
+  const outline = Array.isArray(p.owns_outline) ? p.owns_outline : null;
+  if (!Array.isArray(p.produces) && !outline && !p.owns_extra && !p.owns_held) return p;
+  const { owns_outline: _a, owns_extra: _b, owns_held: _c, ...base } = p;
+  if (outline) base.owns = outline;
+  if (!Array.isArray(p.produces)) return base;
+  const produces = [];
+  for (const e of p.produces) {
+    if (!e || typeof e !== "object") { produces.push(e); continue; }
+    if (e.added) continue;
+    const { signature: _s, supersedes: _u, ...keep } = e;
+    produces.push(keep);
+  }
+  return { ...base, produces };
 }
 
 // Outline check's view (outline.mjs): problems and warnings of a manifest's produces, and the consumed-symbol resolution.
@@ -123,7 +142,7 @@ export function contractCheck(g, phase, { plans: only = null, complete = false }
   if (error && !onDisk.length) return { passed: true, errors, warnings, checked, skipped };
   const forms = g.cfg.adapter.ownership.owns_forms;
   const hasText = (id, sig) => squashed.get(id)?.includes(squash(sig));
-  const hint = "write it exactly as the manifest has it, or answer with CONTRACT_CHANGE {plan, symbol, old, new, reason} when the signature has to change (the flow then revises its consumers)";
+  const hint = "write it exactly as the manifest has it, or answer with CONTRACT_CHANGE {plan, symbol, old, new, reason} when the signature has to change (the flow then revises its consumers); a symbol the manifest does not produce yet is an addition (old empty, plus file and kind, the file inside the plan's owns)";
   for (const [id, entry] of entries) {
     const plan = plans.get(id);
     const produced = producesOf(entry);
@@ -132,7 +151,7 @@ export function contractCheck(g, phase, { plans: only = null, complete = false }
       for (const p of produced.filter((x) => x.structured)) {
         checked.produced++;
         if (!hasText(id, p.signature)) errors.push(err([id], "producer-signature", `${id} does not write the signature of ${p.symbol} as the manifest declares it: ${p.signature}`, { symbol: p.symbol, fix_hint: hint }));
-        if (owned.length && !owned.some((o) => covers(o, p.file))) errors.push(err([id], "file-outside-owns", `${id} produces ${p.symbol} at ${p.file}, which its owns do not cover`, { symbol: p.symbol, fix_hint: `add ${p.file} to the plan's owns, or answer with CONTRACT_CHANGE and ask the owner to move the symbol` }));
+        if (owned.length && !owned.some((o) => covers(o, p.file))) errors.push(err([id], "file-outside-owns", `${id} produces ${p.symbol} at ${p.file}, which its owns do not cover`, { symbol: p.symbol, fix_hint: `add ${p.file} with ph gsd owns add (or owns handover from the plan that owns it), or answer with CONTRACT_CHANGE and ask the owner to move the symbol` }));
       }
     }
     for (const c of asArray(entry.consumes)) {
@@ -224,19 +243,24 @@ export function contractsShow(g, phase, planId) {
   return done({ plan: id, produces, consumes, consumers, changes: asArray(manifest.contract_changes).filter((c) => c?.plan === id) });
 }
 
-// CONTRACT_CHANGE {plan, symbol, old, new, reason}: the one writer of a produced signature after the outline. Repeating a change
-// already applied (a resumed run replays the reviser's reply) is a no-op.
+// CONTRACT_CHANGE {plan, symbol, old, new, reason}: the one writer of a produced signature after the outline. An empty `old`
+// adds a symbol the manifest does not produce yet ({file, kind} too; the file inside the plan's owns) — kit feedback W15.
+// Repeating a change already applied (a resumed run replays the reviser's reply) is a no-op. `invalidate` is the plans whose
+// revision keys the caller drops (the producer and the plans that consume the new symbol); a signature change names none.
 export function contractsChange(g, phase, input) {
   const { file, manifest, error } = readManifest(phase);
   if (error) throw fail(`CONTRACT_CHANGE rejected: ${error}`);
   const plan = String(input?.plan ?? "");
   const symbol = str(input?.symbol);
-  const [old, next, reason] = [str(input?.old), str(input?.new), str(input?.reason)];
-  if (!plan || !symbol || !old || !next || !reason) throw fail("CONTRACT_CHANGE rejected: needs plan, symbol, old, new and reason");
+  const next = str(input?.new);
+  const reason = str(input?.reason);
+  if (!plan || !symbol || !next || !reason || typeof input?.old !== "string") throw fail("CONTRACT_CHANGE rejected: needs plan, symbol, old, new and reason");
+  const old = str(input.old);
   return withFileLock(`${file}.lock`, () => {
     const fresh = readManifest(phase).manifest;
     const entry = entriesOf(fresh).find((p) => String(p.id) === plan || normPlanId(String(p.id)) === normPlanId(plan));
     if (!entry) throw fail(`CONTRACT_CHANGE rejected: manifest has no entry for ${plan}`);
+    if (!old) return addProduced(g, file, fresh, entry, { symbol, next, reason, file: input.file, kind: input.kind });
     const idx = asArray(entry.produces).findIndex((e) => producedOf(e).structured && producedOf(e).symbol === symbol);
     if (idx < 0) throw fail(`CONTRACT_CHANGE rejected: ${entry.id} produces no structured symbol ${symbol} in the manifest`);
     const cur = entry.produces[idx];
@@ -250,6 +274,29 @@ export function contractsChange(g, phase, input) {
     writeJsonAtomic(file, fresh);
     return done({ changed: true, plan: entry.id, symbol, signature: next, old: cur.signature, consumers, manifest: rel(g.codeRoot, file) });
   });
+}
+// An addition: the symbol is new in the whole manifest, and its file is inside this plan's owns. Consumers are the plans
+// whose consumes edge names it. `added` keeps the symbol out of the freeze hash (manifestFreezeText).
+function addProduced(g, file, fresh, entry, { symbol, next, reason, file: rawFile, kind: rawKind }) {
+  const kind = str(rawKind);
+  const ownedFile = str(rawFile).replace(/\\/g, "/").replace(/^\.\//, "");
+  if (!kind || !ownedFile) throw fail("CONTRACT_CHANGE rejected: an addition (empty old) needs file and kind as well as plan, symbol, new and reason");
+  const forms = g.cfg.adapter.ownership.owns_forms;
+  const owned = asArray(entry.owns).map((o) => ownsPath(o, forms)).filter(Boolean);
+  if (!owned.some((o) => covers(o, ownedFile))) throw fail(`CONTRACT_CHANGE rejected: ${ownedFile} is outside ${entry.id}'s owns`);
+  const holder = entriesOf(fresh).find((e) => producesOf(e).some((p) => p.symbol === symbol));
+  const consumersOf = () => entriesOf(fresh).filter((e) => String(e.id) !== String(entry.id) && asArray(e.consumes).some((c) => c && (String(c.plan) === String(entry.id) || normPlanId(String(c.plan)) === normPlanId(String(entry.id))) && c.symbol === symbol)).map((e) => String(e.id));
+  if (holder) {
+    const cur = producesOf(holder).find((p) => p.symbol === symbol);
+    const same = String(holder.id) === String(entry.id) && cur?.structured && cur.kind === kind && cur.file === ownedFile && squash(cur.signature) === squash(next);
+    if (same) return done({ changed: false, already: true, addition: true, plan: entry.id, symbol, signature: cur.signature, file: cur.file, kind, consumers: consumersOf(), invalidate: [] });
+    throw fail(`CONTRACT_CHANGE rejected: ${symbol} is already produced by ${holder.id}${cur?.structured ? ` as ${cur.signature}` : ""}; pass old as that signature to change it`);
+  }
+  entry.produces = [...asArray(entry.produces), { symbol, kind, file: ownedFile, signature: next, supersedes: [], added: true }];
+  fresh.contract_changes = [...asArray(fresh.contract_changes), { plan: entry.id, symbol, old: "", new: next, file: ownedFile, kind, reason }];
+  writeJsonAtomic(file, fresh);
+  const consumers = consumersOf();
+  return done({ changed: true, addition: true, plan: entry.id, symbol, signature: next, old: "", file: ownedFile, kind, consumers, invalidate: [entry.id, ...consumers], manifest: rel(g.codeRoot, file) });
 }
 
 // --- kit feedback 98 F1: an outline revision that changed a symbol's shape in the prose but not in the manifest ---

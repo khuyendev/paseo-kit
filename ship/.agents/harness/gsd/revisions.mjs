@@ -10,7 +10,7 @@ import { done, fail, none, nowIso, readIf, rel, withFileLock } from "./common.mj
 import { loadAgentDef } from "../runtime/agents.mjs";
 import { isInside } from "../lib/paths.mjs";
 import { headOf } from "./git.mjs";
-import { phaseFile, planPath, planIds, readPlan } from "./planning.mjs";
+import { normPlanId, phaseFile, planPath, planIds, readPlan } from "./planning.mjs";
 import { manifestFreezeText } from "./contracts.mjs";
 import { loadRequirements } from "./requirements.mjs";
 import { loadRoadmap, roadmapPhase, sectionContent } from "./roadmap.mjs";
@@ -209,6 +209,34 @@ export function recordRevision(g, phase, key, settings = null) {
   });
   return { key, hash, files: files.length, skipped, head, settings: settings === null ? null : { digest: settings, source: explicit ? "argument" : inherited.source }, ...(warnings.length ? { warnings } : {}) };
 }
+
+// Kit feedback W15, W16: a manifest edit that is not an outline change (an added symbol, an owns add or hand-over).
+// Drop the named plans' keys so they are planned again. Re-record freeze and the other plan keys only when the edit
+// moved their hash (a legacy manifest, hashed as written), so the outline and the skeleton review stay either way.
+export function acceptManifestEdit(g, phase, planIds) {
+  const drop = new Set();
+  for (const id of asPlanIds(planIds)) { drop.add(`plan:${id}`); drop.add(`plan:${normPlanId(id)}`); }
+  let existed = [];
+  withFileLock(`${revisionsFile(phase)}.lock`, () => {
+    const data = readRevisions(phase);
+    existed = Object.keys(data.keys);
+    let changed = false;
+    for (const key of drop) if (data.keys[key]) { delete data.keys[key]; changed = true; }
+    if (!changed) return;
+    const used = new Set(Object.values(data.keys).map((k) => k.list));
+    for (const id of Object.keys(data.lists)) if (!used.has(id)) delete data.lists[id];
+    writeJsonAtomic(revisionsFile(phase), data);
+  });
+  const refresh = existed.filter((k) => !drop.has(k) && (k === "freeze" || k.startsWith("plan:")));
+  const rerecorded = [];
+  for (const key of refresh) {
+    if (checkRevision(g, phase, key).same) continue;
+    recordRevision(g, phase, key);
+    rerecorded.push(key);
+  }
+  return { dropped: existed.filter((k) => drop.has(k)), rerecorded };
+}
+const asPlanIds = (ids) => [...new Set((Array.isArray(ids) ? ids : []).map((id) => String(id ?? "").trim()).filter(Boolean))];
 
 export function checkRevision(g, phase, key, settings = null) {
   const recorded = readRevisions(phase).keys[key];

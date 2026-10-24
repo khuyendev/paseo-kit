@@ -6,12 +6,7 @@ export const meta = {
     { title: "Plans" }, { title: "Checker" }, { title: "Plan review" }, { title: "Dependencies" }, { title: "Handoff" }, { title: "Gaps" },
   ],
 };
-// The default planning composition (kit feedback 87, THIN.md): step order, agents and verbs, stops and their answers, retry counts.
-// Prompt texts are kit templates (prompts/plan-*.md, verb plan-prompt); bookkeeping is in flow verbs (lib/flow-plan.mjs, flow-plan-state.mjs).
-
-// Kit feedback 87 (B3): every needs-owner stop names its answer, the one owner action after which the next run goes on (`verb`,
-// with the `args` to set when the answer is an argument); `options` keep the alternatives. A rerun reads the run's args file. Kit feedback
-// 99 F1: an owner decision is `ph gsd decide` (scope: a plan id, "outline", its own flags or null), never a CONTEXT edit, so research stays approved.
+// The default planning composition (kit feedback 87, THIN.md): step order, agents, verbs, stops and their answers (each names its verb; an owner decision is `ph gsd decide`, never a CONTEXT edit). Prompt texts are kit templates; bookkeeping is in flow verbs.
 const RERUN = "node .agents/harness/ph.mjs workflow --name gsd-plan --args-file _workspace/args/gsd-plan.json";
 const answers = {
   rerun: (what) => ({ verb: "rerun", command: `${what ? `${what}, then ` : ""}${RERUN} (same args)` }),
@@ -21,7 +16,7 @@ const answers = {
   guidance: () => ({ verb: "reviewGuidance", args: { reviewGuidance: "<the owner's answer to the issues>" }, command: `set reviewGuidance (the owner's answer) in the args file, then ${RERUN}` }),
   fix: (what) => ({ verb: "fix-and-rerun", command: `${what}, then ${RERUN} (same args)` }),
   workflow: (name, what) => ({ verb: "workflow", command: `${what}: run ${name}, then ${RERUN} (same args)` }),
-  contracts: (changes) => ({ verb: "contracts-change", changes, command: `if the owner accepts the planner's contract changes, apply each with node .agents/harness/ph.mjs gsd contracts change ${N} (stdin JSON {plan, symbol, old, new, reason}; the next contract gate revises the consumers), then ${RERUN} (same args)` }),
+  contracts: (changes) => ({ verb: "contracts-change", changes, command: `if the owner accepts the planner's contract changes, apply each with node .agents/harness/ph.mjs gsd contracts change ${N} (stdin JSON {plan, symbol, old, new, reason}; old is "" and file and kind are set when the symbol is not produced yet, and the file is inside the plan's owns; that plan and its consumers are planned again). A new plan, wave or requirement stays ph gsd decide --outline. Then ${RERUN} (same args)` }),
 };
 const GUIDE = ["give guidance and rerun", "record an owner decision (ph gsd decide --outline) and rerun", "abandon"];
 const REVIEW_OPTIONS = ["give reviewGuidance and rerun", "record the decision in CONTEXT and rerun", "disable plan review (planReview false) and rerun"];
@@ -75,8 +70,7 @@ let [flowReport, streamed, handEdits, validationReport, recheckReport, manifestF
 const result = (status, extra = {}) => ({ status, phaseDir, mode, warnings, advisories, ...(mapDrift?.advisory ? { mapDrift } : {}), ...(flowReport ?? {}), ...(handEdits ? { handEdits } : {}), ...(validationReport ? { validation: validationReport } : {}), ...(reallocated.length ? { reallocated } : {}), ...(recheckReport ? { recheck: recheckReport } : {}), ...(contractReport.checks ? { contracts: contractReport } : {}), ...extra });
 const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reason, ...extra });
 const failedCall = (what, reason) => result("failed", { reason: `${what}${reason ? `: ${reason}` : " returned nothing"}` });
-// Kit feedback 98 F3, 99 F1, 101 F3: a conflict with the planner's contract_changes answers `contracts change`; any other marker answers
-// `ph gsd decide` (scope: "outline", a plan id or plan ids), and a conflict about plans adds replanPlans to the rerun's args.
+// Kit feedback 98 F3, 99 F1, 101 F3: a conflict with contract_changes answers `contracts change`; any other marker answers `ph gsd decide`, and a conflict about plans adds replanPlans.
 const ownerStop = (stage, r, scope = null, ids = Array.isArray(scope) ? scope : scope && scope !== "outline" ? [scope] : null) => owner(stage, `planner returned ${ownerMarker(r)}`, { marker: ownerMarker(r), question: r?.question ?? r?.summary ?? null, summary: r?.summary ?? null, plans: r?.plans ?? null, conflict: r?.conflict ?? null, options: ["record the owner's decision (ph gsd decide) and rerun with the same args", "change CONTEXT with gsd-discuss and rerun", "abandon"], answer: isConflict(r) && !r.conflict?.rejected && r.contract_changes?.length ? answers.contracts(r.contract_changes.map((c) => ({ plan: ids?.[0], ...c }))) : { ...answers.decide(`the planner's ${ownerMarker(r)} (its question, conflict or proposal)`, ids ? ids.join(",") : scope), ...(isConflict(r) && ids?.length && inputsAt ? { args: { replanPlans: { plans: ids, inputs: inputsAt } } } : {}) } });
 // G017: the settings each revision key hashes (plan-args): a changed lane, role or limit reruns the judgments it decides.
 const settingsDigest = {};
@@ -210,7 +204,7 @@ async function applyContractChanges(r, session, callId) {
   if (!list.length) return markerOf(r.result).includes("CONTRACT_CHANGE") ? conflict("marker CONTRACT_CHANGE without a contract_changes entry") : r;
   const own = /^planner:(\d+(?:\.\d+)?-\d+)$/.exec(session)?.[1] ?? null;
   for (const c of list) {
-    const w = await gsd(["contracts", "change", N], { plan: c.plan ?? own, symbol: c.symbol, old: c.old, new: c.new, reason: c.reason });
+    const w = await gsd(["contracts", "change", N], { plan: c.plan ?? own, symbol: c.symbol, old: c.old, new: c.new, reason: c.reason, ...(c.file ? { file: c.file } : {}), ...(c.kind ? { kind: c.kind } : {}) });
     if (w.code !== 0) return conflict(`CONTRACT_CHANGE of ${c.symbol} rejected: ${w.json?.error ?? `exit ${w.code}`}`, c);
     const [d] = await planStep("plan-contracts", "contracts", `${callId}:${c.symbol}`, [{ op: "change", plan: c.plan ?? own, symbol: c.symbol, old: c.old, new: c.new, reason: c.reason, outcome: { changed: Boolean(w.json?.changed), already: Boolean(w.json?.already), plan: w.json?.plan ?? null, old: w.json?.old ?? null, signature: w.json?.signature ?? null, consumers: w.json?.consumers ?? [] } }]);
     if (!d.changed) continue;
@@ -499,7 +493,7 @@ async function eachWave(wave) {
   }
   return null;
 }
-// The plans of a wave without a valid record go to `plan`, all at once; a kept plan's review stream starts (`onKept`). failedOf: the first stop.
+// The plans of a wave without a valid record go to `plan`, all at once; a kept plan's review stream starts (`onKept`). waveStop: the wave's stops.
 async function waveOf(ids, plan, onKept = null) {
   const todo = [];
   for (const id of ids) {
@@ -510,12 +504,18 @@ async function waveOf(ids, plan, onKept = null) {
   }
   return { todo, outcomes: await parallel(todo.map((id) => () => plan(id))) };
 }
-function failedOf({ todo, outcomes }) { const i = outcomes.findIndex((o) => !o || o.stop); return i >= 0 ? outcomes[i]?.stop ?? failedCall(`planner ${todo[i]}`, null) : null; }
+async function waveStop(w) {
+  const bad = w.todo.flatMap((id, i) => (w.outcomes[i]?.ok ? [] : [{ id, o: w.outcomes[i] }]));
+  if (!bad.length) return null;
+  const m = (await flow(["plan-wave-stops"], { phase: N, stops: bad.map(({ id, o }) => ({ id, failed: !o, marker: markerOf(o?.reply), summary: o?.reply?.summary ?? null, plans: o?.reply?.plans ?? null, owns: o?.reply?.owns_changes ?? null })) })).json ?? {};
+  const row = bad[m.index] ?? bad[0];
+  return m.act === "owns" ? owner("Plan", m.reason, { plans: m.plans, owns: m.owns, options: m.options, answer: { verb: "owns-add", owns: m.owns, command: `${m.command}; then ${RERUN} (same args)` } }) : (row.o?.stop ?? failedCall(`planner ${row.id}`, null));
+}
 // The staged flow: wave by wave; returns the stop, or null. The checker's reallocation runs it again. G015: the plans that finished are recorded before the batch stops, so a failed sibling does not drop them.
 const stagedWaves = () => eachWave(async (ids) => {
   const w = await waveOf(ids, planOne);
   const recorded = await recordEach(w.todo.filter((_, i) => w.outcomes[i]?.ok), false);
-  return failedOf(w) ?? recorded ?? (await contractGate("Plans"));
+  return (await waveStop(w)) ?? recorded ?? (await contractGate("Plans"));
 });
 if (!streamed) {
   const stop = await stagedWaves();
@@ -535,7 +535,7 @@ async function planStreams() {
   };
   if (planReview) await flow(["remove", notesPath]);
   const stop = await eachWave(async (ids) => {
-    const failed = failedOf(await waveOf(ids, async (id) => {
+    const failed = await waveStop(await waveOf(ids, async (id) => {
       const o = await planOne(id);
       const s = o?.ok ? await structureFix(id, `planner:${id}`) : null;
       if (!o?.ok || s) return o?.ok ? { stop: s } : o;
@@ -629,7 +629,7 @@ async function planOne(id) {
   const contract = contractsOn ? { show: (await gsd(["contracts", "show", N, "--plan", id])).json } : null;
   const { result: r, reason } = await plannerCall(`planner:${id}`, `plan-${id}`, "write", { id, entry, wiringText, carried, contract, digest: freezeHash }, { judges: await plansJudges([id]) });
   if (fatal(reason)) return { stop: failedCall(`planner ${id}`, reason) };
-  if (ownerMarker(r)) return { stop: ownerStop("Plan", r, [id]) };
+  if (ownerMarker(r)) return { stop: ownerStop("Plan", r, [id]), reply: r };
   const known = A.knownMarkers.some((m) => markerOf(r).includes(m));
   if (!known && !(await flow(["exists", planPath(id)])).json?.exists?.[planPath(id)]) return { stop: owner("Plan", `planner for ${id} returned no recognised marker and wrote no plan (inconclusive)`, { options: ["rerun", "adjust CONTEXT", "abandon"], answer: answers.rerun("") }) };
   if (!known) log(`planner ${id}: no recognised marker; the structure check decides`);

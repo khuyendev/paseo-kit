@@ -12,6 +12,7 @@
 //   plan-contract-drift a symbol an outline revision reshaped in the prose but not in the manifest (98)
 //   plan-replan-keep   what the owner's answer to a conflict about some plans keeps on the rerun (101 F3)
 //   plan-streams-end, plan-checker-reply, plan-dependents: the streams flow's end, a checker reply's issues, the dependent plans (O65, O67)
+//   plan-wave-stops  the planner stops of one wave: ownership audits collected, anything else the first stop (kit feedback W16)
 import fs from "node:fs";
 import path from "node:path";
 import { read } from "./flow-files.mjs";
@@ -35,7 +36,7 @@ export const OWNER_MARKERS = ["REVISION_CONFLICT", "PHASE SPLIT RECOMMENDED", "S
 export const KNOWN_MARKERS = [...OWNER_MARKERS, "OUTLINE COMPLETE", "PLANNING COMPLETE", "REVISION COMPLETE", "WIRING COMPLETE", "CONTRACT_CHANGE"];
 const PLANNER_SCHEMA = {
   type: "object",
-  properties: { marker: { type: "string" }, summary: { type: "string" }, question: { type: "string" }, plans: { type: "array", items: { type: "string" }, description: "with an owner marker: the proposal, one string per proposed split group (PHASE SPLIT RECOMMENDED) or per audit option (SOURCE AUDIT)" }, conflict: { type: "object" }, changes: { type: "array" }, contract_changes: { type: "array", items: { type: "object", properties: { plan: { type: "string" }, symbol: { type: "string" }, old: { type: "string" }, new: { type: "string" }, reason: { type: "string" } }, required: ["symbol", "old", "new", "reason"] }, description: "CONTRACT_CHANGE: a produced signature that has to change, one entry per symbol" }, plan_changes: { type: "array", items: { type: "object", properties: { plan: { type: "string" }, change: { type: "string" } }, required: ["plan", "change"] }, description: "a change another plan of this phase needs because of your work, which you may not edit (one entry per plan, its id NN-MM): the flow has that plan planned again with this change; never leave such a follow-up only in the summary" } },
+  properties: { marker: { type: "string" }, summary: { type: "string" }, question: { type: "string" }, plans: { type: "array", items: { type: "string" }, description: "with an owner marker: the proposal, one string per proposed split group (PHASE SPLIT RECOMMENDED) or per audit option (SOURCE AUDIT)" }, conflict: { type: "object" }, changes: { type: "array" }, contract_changes: { type: "array", items: { type: "object", properties: { plan: { type: "string" }, symbol: { type: "string" }, old: { type: "string" }, new: { type: "string" }, file: { type: "string" }, kind: { type: "string" }, reason: { type: "string" } }, required: ["symbol", "old", "new", "reason"] }, description: "CONTRACT_CHANGE: a produced signature that has to change, one entry per symbol; old empty adds a symbol the manifest does not produce yet (file and kind required, file inside this plan's owns)" }, owns_changes: { type: "array", items: { type: "object", properties: { path: { type: "string" }, from: { type: "string" }, reason: { type: "string" } }, required: ["path"] }, description: "SOURCE AUDIT that only adds owns paths, or hands a path over from another plan of another wave (from). Not an outline decision." }, plan_changes: { type: "array", items: { type: "object", properties: { plan: { type: "string" }, change: { type: "string" } }, required: ["plan", "change"] }, description: "a change another plan of this phase needs because of your work, which you may not edit (one entry per plan, its id NN-MM): the flow has that plan planned again with this change; never leave such a follow-up only in the summary" } },
   required: ["marker"],
 };
 const ISSUE = { type: "object", properties: { plan: { type: ["string", "null"] }, dimension: { type: "string" }, severity: { type: "string" }, required_property: { type: "string" }, description: { type: "string" }, evidence: { type: "string" }, fix_hint: { type: "string" }, target: { type: "string" } }, required: ["severity", "required_property", "description"] };
@@ -547,4 +548,36 @@ export function planDependents(root, { index = [], changed = [], planIds = [] } 
   return { list, log: list.length ? `plan interfaces changed: ${changed.join(", ")}; checking ${list.map(([id]) => id).join(", ")}` : null };
 }
 
-export const PLAN_VERBS = Object.freeze(["plan-args", "plan-prompt", "plan-skeleton", "plan-probes", "plan-linked", "plan-realloc-diff", "plan-validation", "plan-contract-route", "plan-contract-drift", "plan-replan-keep", "plan-streams-end", "plan-checker-reply", "plan-dependents"]);
+// Kit feedback W16: every planner of the wave has already returned. Ownership-only SOURCE AUDITs (owns_changes, each a path,
+// `from` when another plan owns it) become one stop answered by `ph gsd owns add` / `owns handover`. Any other stop, or a
+// failed call, stays the first of those, as the wave used to stop.
+export function planWaveStops(_root, { stops = [], phase = "" } = {}) {
+  const ownsOnly = (s) => !s?.failed && String(s?.marker ?? "").includes("SOURCE AUDIT") && Array.isArray(s.owns) && s.owns.length > 0 && s.owns.every((o) => o && typeof o.path === "string" && o.path.trim());
+  if (stops.length && stops.every(ownsOnly)) {
+    const owns = [];
+    const commands = [];
+    const q = (s) => String(s ?? "").replace(/"/g, "'");
+    for (const s of stops) for (const o of s.owns) {
+      const path = q(String(o.path).trim());
+      const reason = q(String(o.reason ?? s.summary ?? "ownership audit").trim() || "ownership audit");
+      const from = String(o.from ?? "").trim();
+      if (from) {
+        owns.push({ op: "handover", from, to: s.id, path: String(o.path).trim(), reason: String(o.reason ?? s.summary ?? "ownership audit").trim() });
+        commands.push(`node .agents/harness/ph.mjs gsd owns handover ${phase} --from ${from} --to ${s.id} --path ${path} --reason "${reason}"`);
+      } else {
+        owns.push({ op: "add", plan: s.id, path: String(o.path).trim(), reason: String(o.reason ?? s.summary ?? "ownership audit").trim() });
+        commands.push(`node .agents/harness/ph.mjs gsd owns add ${phase} --plan ${s.id} --path ${path} --reason "${reason}"`);
+      }
+    }
+    const plans = [...new Set(stops.map((s) => s.id))];
+    return {
+      act: "owns", reason: `ownership audit of ${plans.join(", ")}: owns only (no outline change)`,
+      plans: stops.map((s) => s.summary ?? s.id), owns, command: commands.join("; "),
+      options: ["apply each owns change (ph gsd owns add, or owns handover across waves) and rerun", "record an outline decision (ph gsd decide --outline) when the audit is not only ownership", "abandon"],
+    };
+  }
+  const index = stops.findIndex((s) => s?.failed || s?.marker);
+  return { act: "first", index: index < 0 ? 0 : index };
+}
+
+export const PLAN_VERBS = Object.freeze(["plan-args", "plan-prompt", "plan-skeleton", "plan-probes", "plan-linked", "plan-realloc-diff", "plan-validation", "plan-contract-route", "plan-contract-drift", "plan-replan-keep", "plan-streams-end", "plan-checker-reply", "plan-dependents", "plan-wave-stops"]);

@@ -699,6 +699,7 @@ error, `{status: "error", error}`); `ph gsd` verbs exit 0, 1, 66 (nothing matche
 | `plan-streams-end` | `{planIds, ids, done, planned, planReview}` | `{logs, flowReport, bad, notes, structure, advisories}` (O65) | none |
 | `plan-checker-reply` | `{issues}` | `{advisories, findings}` | none |
 | `plan-dependents` | `{index, changed, planIds}` | `{list: [[plan, providers]], log}` (O67) | none |
+| `plan-wave-stops` | `{stops: [{id, failed?, marker?, summary?, plans?, owns?}], phase}` | `{act: "owns", reason, plans, owns, command, options}` when every stop is an ownership-only SOURCE AUDIT (`owns` entries `{path, from?, reason}`), else `{act: "first", index}` (kit feedback W16) | none |
 | `prompt` | `<name>` (`<kit name>` or `project/<name>`), `{<var>: string\|number\|boolean}` | `{name, path, text, unused}`; exit 1 on a bad name, a missing template, a missing variable or a bad value | none (reads the template) |
 | `exec-args` | `{args}` (the gsd-execute arguments) | `{status: ok, phaseDir, plans, wave, stopAfterWave, gapsOnly, files?}`; exit 1 `{status: failed, reason}` (GSDF-93) | none |
 | `exec-setup` | `{cfg, args, pending}` | `{N, nn, prefix, mode, worktreeMode, metricsOn, stackSkill, generated, schemas: {exec, fixer, findings, verdict, resolution, shared}}`: the settings of an execute run and the agent reply schemas | none |
@@ -746,7 +747,9 @@ error, `{status: "error", error}`); `ph gsd` verbs exit 0, 1, 66 (nothing matche
 | `verify.plan-structure`, `verify.artifacts`, `verify.key-links` | `<phase or NN-MM-PLAN.md> [--plans]` | `{valid, ...}` per plan | none |
 | `verify.contracts` | `<phase> [--plans] [--complete]` | contract errors of the plans against the outline manifest | none |
 | `contracts.show` | `<phase> --plan` | the plan's produced and consumed contracts | none |
-| `contracts.change` | `<phase>`, `{plan, symbol, old, new, reason}` | `{status, change}` | `<NN>-PLAN-OUTLINE.manifest.json` (its one writer after the outline) |
+| `contracts.change` | `<phase>`, `{plan, symbol, old, new, reason, file?, kind?}` | `{changed, plan, symbol, signature, consumers, addition?, invalidate?, invalidated?}` | `<NN>-PLAN-OUTLINE.manifest.json` (its one writer after the outline). `old` empty adds a symbol the manifest does not produce yet (`file` and `kind` required, `file` inside the plan's owns) and drops the revision keys of that plan and the plans that consume it, not the outline or the skeleton (kit feedback W15) |
+| `owns.add` | `<phase> --plan <NN-MM> --path <p> [--path <p>...] --reason <text>` | `{changed, op: "add", plan, paths, answered?, invalidated?}` | the manifest `owns` of that plan, and `<phase>/owner-answers.json` (`kind: "owns"`). Refuses a path another plan owns. Drops only that plan's revision key (kit feedback W16) |
+| `owns.handover` | `<phase> --from <NN-MM> --to <NN-MM> --path <p> [--path <p>...] --reason <text>` | `{changed, op: "handover", from, to, paths, answered?, invalidated?}` | moves an exact owns entry from one plan to the other. The plans must be different waves; a same-wave move, or a path another plan also owns, is refused (`ph gsd decide --outline`). Drops only those two plans' revision keys (kit feedback W16) |
 | `verification.status`, `verification.fingerprint` | `<phase> [files...]` | report status and path; `{covered_files, covered_digest}` | none |
 | `verification.parts` | `<phase>`, `{attemptKey, parts}` | each part's problems | none |
 | `verification.merge` | `<phase>`, `{attemptKey, parts}` | the merged report, or each part's problems | `<NN>-VERIFICATION.md` |
