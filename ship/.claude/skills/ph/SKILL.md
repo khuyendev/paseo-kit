@@ -20,7 +20,10 @@ A bare `--` ends the options, so a value such as `-h` can still be passed as dat
   agents (`fanout --collect`).
 - Wait with Monitor, never with polling loops: after `spawn`, `send` and `fanout` (without `--collect`) run the
   printed `next:` line, `ph watch <names>`, under the Monitor tool; it prints one line per idle agent and exits when
-  all are idle. Do not write sleep/grep loops and do not poll `ph team`.
+  all are idle. Also run `ph watch-agents` under Monitor for those agents (and leave it running): one line when an
+  agent emits no stream event for `agent_silent_s`, and one when it resumes. It does not stop or resend; the line
+  offers `ph stop` or a resend. `ph fanout --collect` names a silent agent in its own output. Do not write sleep/grep
+  loops and do not poll `ph team`.
 - Batch follow-ups: collect what you want to tell an agent and send it in one `ph send` when the agent is idle. A
   message to a running agent waits until its turn ends; `--now` interrupts the turn and should be rare.
 - Run builds, tests and other long commands in the foreground: a Paseo agent that ends its turn to wait for a
@@ -47,6 +50,7 @@ or config error (nothing done), 2 done with failed items or problems.
 | `ph fanout --file F --collect DIR [--keep]` | one-shot agents, at most `max_subagents` running; waits up to `wait_timeout_s` for a running slot another agent of this caller frees. Writes `DIR/<name>.md` (final reply) and `DIR/<name>.json` (the `result --json` object), archives each agent unless `--keep`. Run it in the foreground; do not poll its output. |
 | `ph send (--prompt T \| --prompt-file F) [--now] NAME...` | delivers a message between turns (`--now` interrupts), prints `sent <name>` and the wait line. |
 | `ph watch NAME...` | under Monitor: `idle <name> <id8> out_tokens= context_tokens= duration_s=` per agent, then `watch done: k idle, m failed`. |
+| `ph watch-agents [--until-idle] [--caller ID] [--run RUNID] [--label KEY=VALUE]` | under Monitor: one line when an agent emits nothing for `agent_silent_s` (`stall <name> <id8> silent <n> s ...; ph stop <id8> or resend the prompt`), and `resumed <name> <id8>` when events return. An open tool call is named with how long it has been open, so a long test is not an API hang. Never stops or resends. Exits only with `--until-idle` (no matching agent still running). Default filter is this caller's subagents; `--run` / `--label key=value` select by label (`--caller` restricts those too). |
 | `ph result [--json] NAME...` | final replies; `--json` adds status, model, usage, tokens (only for agents this process created), `costUsd` from `.agents/model-prices.json`, `reportedCostUsd`, durations and the skills the agent called in its newest 1000 timeline entries (`skills` is `null` when the timeline could not be read; `skillsWarning` says which). |
 | `ph team` | your live subagents: `<id8> <status> <context%> <provider/model> <name>`. |
 | `ph context [--self] [--rotate-pct N] [NAME...]` | context-window use, highest first; `ROTATE` at or above N (default `context_guard.start_pct`) marks the agent and changes nothing. With `--self`, a last line `compact reminder at N% (next in T tokens)` gives the context guard's threshold and the tokens left before its next reminder. To rotate it, start a fresh agent with a handoff, then `ph archive` the old one. |
@@ -209,8 +213,9 @@ not hold lines back, and match both forms: `ph watch-run RUNID --all | grep --li
 | `workflow failed <runId>: runner exited with code <n> ...` / `uncaught error: ...` / `signal <SIG>` | the runner ended by itself with the run still running; its reason is also in run.json `error` |
 | `` next: resume with `ph workflow --resume <runId> --detach`; ... `` | printed after a failed or interrupted run; resume it with that command (the journal keeps the agents that finished) |
 
-Watchdog of workflow agents (config keys, shipped values; 0 disables a limit, `watchdog_enabled: false` arms none).
-Time counts model time since the last prompt, tool time excluded. Teammates get no automatic stop.
+Watchdog of workflow agents (config keys, shipped values; 0 disables a limit, `watchdog_enabled: false` arms no steering).
+Time counts model time since the last prompt, tool time excluded. Teammates get no automatic stop. Silence
+(`agent_silent_s`) is only a report: it does not nudge, interrupt, stop or archive, including for spawn and fanout.
 
 | key | shipped | effect |
 | --- | --- | --- |
@@ -218,6 +223,7 @@ Time counts model time since the last prompt, tool time excluded. Teammates get 
 | `agent_stop_s` | 5400 | the agent is stopped and the call returns `null` |
 | `agent_tool_stuck_s` | 900 | a tool call open this long is interrupted once with a retry message |
 | `agent_file_tool_stuck_s` | 180 | the same for the file tools |
+| `agent_silent_s` | 300 | no stream event for this long is a stall line (workflow log, `ph fanout --collect`, `ph watch-agents`); not a stop |
 | `watchdog_repeat_calls` | 3 | identical tool calls since the last prompt (not necessarily in a row; a write resets the count) before a loop warning |
 | `watchdog_same_file_reads` | 6 | reads of one file before a reread warning |
 | `watchdog_reads_without_write` | 40 | reads without a write before a piecemeal warning |

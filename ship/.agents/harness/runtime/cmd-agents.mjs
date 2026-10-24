@@ -11,6 +11,7 @@ import { resolveModel } from "./models.mjs";
 import { resultJson } from "./result.mjs";
 import { RUN_FILES, readJournal } from "../workflow/journal.mjs";
 import { appendRecords, readLedger, runRecord } from "../workflow/metrics.mjs";
+import { runWatchAgents } from "./stall.mjs";
 import { readPrompt, waitHint } from "./start.mjs";
 
 export const RUNS_DIR = "_workspace/_runs";
@@ -299,6 +300,21 @@ async function model(ctx) {
   return 0;
 }
 
+// Kit feedback 127: foreground stall report for agents ph spawn / fanout already returned from. Prints one line per stall
+// and one when the stream resumes. It never stops an agent and never resends a prompt (the line names those commands).
+async function watchAgents(ctx) {
+  const session = await ctx.paseo();
+  if (!ctx.opts.caller && !ctx.opts.run && !ctx.opts.label) session.requireCaller();
+  const filter = {
+    caller: ctx.opts.caller ?? (ctx.opts.run || ctx.opts.label ? null : session.caller),
+    run: ctx.opts.run ?? null,
+    label: ctx.opts.label ?? null,
+  };
+  return runWatchAgents({
+    session, cfg: ctx.cfg, clock: ctx.clock, out: ctx.out, filter, untilIdle: Boolean(ctx.opts["until-idle"]),
+  });
+}
+
 export const agentCommands = [
   {
     name: "send",
@@ -315,6 +331,14 @@ export const agentCommands = [
     options: {},
     config: "required",
     run: watch,
+  },
+  {
+    name: "watch-agents",
+    summary: "report agents with no stream event for agent_silent_s; never stops or resends (run under Monitor)",
+    usage: "ph watch-agents [--until-idle] [--caller ID] [--run RUNID] [--label KEY=VALUE]",
+    options: { "until-idle": "bool", caller: "string", run: "string", label: "string" },
+    config: "required",
+    run: watchAgents,
   },
   {
     name: "result",

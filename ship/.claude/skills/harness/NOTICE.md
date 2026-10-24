@@ -123,7 +123,7 @@ Region inventory (source line ranges of the carried file; each region is replace
 - `references/team-examples.md` lines 132-133 -> 2 line(s): (c)
 - `references/team-examples.md` lines 135-135 -> 1 line(s): (c)
 - `references/team-examples.md` lines 146-147 -> 2 line(s): (a)
-- `references/paseo-runtime.md` lines 1-432 -> 436 line(s): (c) (d) (f)
+- `references/paseo-runtime.md` lines 1-432 -> 439 line(s): (c) (d) (f)
 
 `references/paseo-runtime.md` is rewritten as a whole for the new `ph` (category c, with d and f); it keeps the section
 numbering the method text refers to. Kit-authored update (2026-10-23, bug-hunt fix G145, FIX1-BRIEF): section 6-6 and

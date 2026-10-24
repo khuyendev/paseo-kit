@@ -19,7 +19,7 @@ test("FLOW-22 the ph skill lists every log line type", { skip }, () => {
 test("FLOW-38 every watchdog number in the ph skill equals the shipped default", { skip }, () => {
   const t = text();
   const d = defaults();
-  for (const key of ["agent_nudge_s", "agent_stop_s", "agent_tool_stuck_s", "agent_file_tool_stuck_s", "watchdog_repeat_calls", "watchdog_same_file_reads", "watchdog_reads_without_write"]) {
+  for (const key of ["agent_nudge_s", "agent_stop_s", "agent_tool_stuck_s", "agent_file_tool_stuck_s", "watchdog_repeat_calls", "watchdog_same_file_reads", "watchdog_reads_without_write", "agent_silent_s"]) {
     const m = new RegExp(`${key}\\W+?(\\d+)`).exec(t);
     assert.ok(m, `${key} not in the skill`);
     assert.equal(Number(m[1]), d[key], key);
