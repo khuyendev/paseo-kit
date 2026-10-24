@@ -6,6 +6,33 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Kit feedback 102 F4, 103, 105-109 and WildEraV6 1-3 (owner 2026-10-24: "Lấy feedback từ wilderav6 và paseo kit về
+  kiểm tra rồi fix", then "Bỏ opus dùng grok đi": six Grok 4.7 agents, notes kit-bughunt/fb9/design/<ID>.md, verification
+  kit-bughunt/fb9/VERIFY.md). 104 was already fixed by 91. Fix rounds (102 F4, 108): the gate log's failing files include
+  a Flutter `[E]` block's test path, bare paths and `path line:col` stack lines, and every next round dispatches the
+  owner of each; a request a fixer routes to a same-wave plan dispatches that plan's fixer in the same round (once);
+  identical requests from several fixers merge (`requesters`); a failing test file no wave plan owns, whose breaking
+  change a shared change or owner answer of the phase names, stops at Gate before the fix rounds with `ph gsd grant`
+  (`unownedTests`). Fixer test runs (109, 107 F1/F3): new verb `ph gsd test-run <files>` (module gsd/test-run.mjs) runs
+  owned failing files one at a time under a project test lock (adapter.mutex, else one per git common dir), with the
+  per-test timeout arg, kills the runner tree at a whole-file bound and writes the full log to a file; the fixer
+  prompts use it and read failures from that file; the run allowance is `max(gsd.fixer attempts, failing files + 2)`;
+  an unverified last edit goes to the next gate instead of an owner decision (an explicit owner ask still stops); new
+  optional `adapter.commands.test_file_timeout_s` (absent = test_timeout_s). Shared changes (105, 107 F2): a
+  `<shared_changes>` block reading None/n/a (prose after it) is no change, and `check owns` flags a pathless entry
+  (`shared-path`); `ph gsd shared clear` without `--path` clears only fileless entries and refuses while a wave entry
+  with a file is unapplied; a fixer request for a build output or a check rerun is a gate kit note, not a shared
+  change. Transfers (106): a status-modified file with an empty `--ignore-cr-at-eol` diff is unchanged (dropped and
+  reported); a fix-round transfer refusal records the fixer worktree with `finished: true` so `halt clear --resume`
+  takes it; the adapter writer seeds Flutter's plugin registrants in `adapter.ownership.regenerated` (never over a
+  project value). Checks (103): an adapter command that keeps its old argv and only adds strictness flags (timeout,
+  fail-fast, reporter/output, verbosity; optional `adapter.commands.non_weakening_flags`) is a note, not a weakening
+  (the baseline also stores `gateConfigBody`); a manifest signature on a JSON catalog (or `adapter.catalogs` globs) is
+  checked by key path. WildEraV6: `ph fanout --collect` re-reads the running count under the cap lock at each
+  admission and waits (polling, up to wait_timeout_s) for a freed slot instead of fixing the pool size at start; a C++
+  /UE check-weakening stack (UE Test* macros, AddExpectedError, UTEST_*, gtest, Catch2; narrowed automation-test flags
+  and a wider TestNearlyEqual tolerance are weakenings); a name clash names the agent ids and `ph result` / `ph
+  archive`. No behaviour switch: each old behaviour was the bug.
 - Kit feedback 102 (owner 2026-10-24: "Check feed back"; one Opus agent, note kit-bughunt/fb8/design/W102.md): hung
   tests and gate fixers. A gate step that times out names its hung test files (from its argv, else its last output
   line naming one); later steps of the same gate run that would run them are failed `blocked by hang` without running,
