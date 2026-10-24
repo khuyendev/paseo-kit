@@ -8,6 +8,7 @@ import { sha256 } from "../../harness/lib/hash.mjs";
 import { isInside, resolveInside, samePath, toSlash } from "../../harness/lib/paths.mjs";
 import { git, gitLines, head, status } from "./flow-git.mjs";
 import { contentHash, keyFiles, owned, ownsPath, ownsPrefixes, specificOwners } from "./flow-owns.mjs";
+import { frontmatter } from "../../harness/gsd/yaml.mjs";
 import { overlaps } from "../../harness/gsd/adapter-hooks.mjs";
 import { gateConfig, gateConfigHash } from "../../harness/gsd/allow.mjs";
 import { asGlob, matchesGlob } from "../../harness/adapter/contract.mjs";
@@ -257,6 +258,11 @@ export function resumeGate(root, phaseDir, { plans, integration = readState(root
   }
   const baseDirty = new Map(base.dirty.map((d) => [d.path, d.sha256]));
   const baseUntracked = new Set(base.untracked);
+  // Kit feedback 123 F5: a path an attached hand edit names waits for that plan's commit. It is not an unauthorized
+  // change, an ambiguous owner or an incomplete plan's edit.
+  const attached = attachedTo(root, phaseDir);
+  const namedEdit = new Map();
+  for (const e of handEdits(root, phaseDir)) if (typeof e.digest === "string" && e.files[0] && !namedEdit.has(e.files[0])) namedEdit.set(e.files[0], e);
   const changed = [];
   for (const e of [...now.dirty, ...now.untracked.map((p) => ({ path: p, sha256: contentHash(path.join(root, p)) }))]) {
     if (baseDirty.get(e.path) === e.sha256) continue;
@@ -266,12 +272,16 @@ export function resumeGate(root, phaseDir, { plans, integration = readState(root
   }
   for (const p of changed) {
     if (ignored(p)) continue;
+    if (attached.has(p)) continue;
     const owners = breakTie(specificOwners(p, plans, prefixes, ownsOf), holders[p]);
+    const hit = namedEdit.get(p);
+    const handEdit = hit && contentHash(path.join(root, p)) === hit.digest ? hit.id : null;
+    const note = handEdit ? { handEdit } : {};
     if (!owners.length && (bookkeeping(p) || integration.includes(p))) continue;
     if (!owners.length && (outside(p) || eolOnly(root, "HEAD", p))) continue;
-    if (!owners.length) problems.push({ kind: "unauthorized path", path: p });
-    else if (owners.length > 1) problems.push({ kind: "ambiguous owner", path: p, plans: owners.map((o) => o.id) });
-    else if (!owners[0].complete && !integration.includes(p)) problems.push({ kind: "incomplete plan changed", path: p, plan: owners[0].id });
+    if (!owners.length) problems.push({ kind: "unauthorized path", path: p, ...note });
+    else if (owners.length > 1) problems.push({ kind: "ambiguous owner", path: p, plans: owners.map((o) => o.id), ...note });
+    else if (!owners[0].complete && !integration.includes(p)) problems.push({ kind: "incomplete plan changed", path: p, plan: owners[0].id, ...note });
   }
   return { ok: problems.length === 0, problems, head: now.head, reconciled, accepted, ...(problems.length ? gateStop(phaseDir, problems) : {}), code: problems.length ? 1 : 0 };
 }
@@ -280,6 +290,131 @@ export function resumeGate(root, phaseDir, { plans, integration = readState(root
 export function committedPlans(root, phaseDir, commits) {
   const st = readState(root, phaseDir);
   return new Set([...Object.keys(st.plans ?? {}).filter((id) => st.plans[id]?.commit !== undefined), ...commits.flatMap((c) => Object.keys(c.plans ?? {}))]);
+}
+
+// Hand-edit records of the phase (kit feedback 123). An unreadable log is none: the execute run must not die on it.
+function handEdits(root, phaseDir) {
+  try {
+    const data = readJsonIf(path.join(resolveInside(root, phaseDir), "hand-edits.json"), null);
+    const list = Array.isArray(data?.edits) ? data.edits : [];
+    return list.filter((e) => e && typeof e.id === "string" && Array.isArray(e.files) && typeof e.files[0] === "string");
+  } catch {
+    return [];
+  }
+}
+
+// A plan id is committed when execute-progress.json or commits.json (a plan entry, or an owner adopt) says so.
+function committedIds(root, phaseDir) {
+  let commits = [];
+  try {
+    const raw = readJsonIf(path.join(resolveInside(root, phaseDir), "commits.json"), []) ?? [];
+    commits = Array.isArray(raw) ? raw : [];
+  } catch { commits = []; }
+  let fromState = [];
+  try {
+    const st = readState(root, phaseDir);
+    fromState = Object.keys(st.plans ?? {}).filter((id) => st.plans[id]?.commit !== undefined);
+  } catch { fromState = []; }
+  return new Set([...fromState, ...commits.flatMap((c) => [...Object.keys(c?.plans ?? {}), ...Object.keys(c?.owner?.plans ?? {})])]);
+}
+
+const dirtyPaths = (root) => new Set(status(root).map((e) => e.path));
+
+// exec-hand-follow (kit feedback 123 F1): dirty files a recorded owned hand edit still describes, whose owners are all
+// committed. {plans: [{id, owns, wave?}]} -> {follow: [{plans, wave, files: [{path, id}]}], held: [{path, id, committed, open}]}.
+// `held` is also owned by a plan that is not committed: the resume gate names hand-edit.attach, and this verb does not commit it.
+// An `attached` record is that plan's to take (F5), never a follow-up.
+export function handFollow(root, phaseDir, { plans = [] } = {}) {
+  const edits = handEdits(root, phaseDir).filter((e) => e.kind === "owned" && !e.attached && typeof e.digest === "string");
+  if (!edits.length) return { follow: [], held: [] };
+  const committed = committedIds(root, phaseDir);
+  const prefixes = ownsPrefixes(root);
+  const dirty = dirtyPaths(root);
+  const ownsOf = (p) => p.owns ?? [];
+  const follow = new Map();
+  const held = [];
+  for (const e of edits) {
+    const file = e.files[0];
+    if (!dirty.has(file) || contentHash(path.join(root, file)) !== e.digest || e.digest === "deleted") continue;
+    const owners = specificOwners(file, plans, prefixes, ownsOf).map((p) => p.id);
+    const keyPlan = /^owned:(.+)$/.exec(e.key ?? "")?.[1];
+    const ids = owners.length ? owners : (keyPlan && plans.some((p) => p.id === keyPlan) ? [keyPlan] : []);
+    if (!ids.length) continue;
+    const open = ids.filter((id) => !committed.has(id));
+    const done = ids.filter((id) => committed.has(id));
+    if (!done.length || open.length) {
+      if (done.length && open.length) held.push({ path: file, id: e.id, committed: done, open });
+      continue;
+    }
+    const group = done.includes(keyPlan) ? [keyPlan] : [...done].sort();
+    const key = group.join(",");
+    if (!follow.has(key)) follow.set(key, { plans: group, wave: plans.find((p) => p.id === group[0])?.wave ?? null, files: [] });
+    follow.get(key).files.push({ path: file, id: e.id });
+  }
+  return { follow: [...follow.values()], held };
+}
+
+// exec-hand-names (kit feedback 123 F2): unowned dirty paths a hand-edit record still describes. {paths} -> {named: [{path, id}]}.
+export function handNames(root, phaseDir, { paths = [] } = {}) {
+  const edits = handEdits(root, phaseDir).filter((e) => typeof e.digest === "string");
+  const named = [];
+  for (const p of paths) {
+    const digest = contentHash(path.join(root, p));
+    const hit = edits.find((e) => e.files[0] === p && e.digest === digest);
+    if (hit) named.push({ path: p, id: hit.id });
+  }
+  return { named };
+}
+
+// The path an attached hand edit names, -> the plan the owner said takes it (kit feedback 123 F5).
+function attachedTo(root, phaseDir) {
+  const out = new Map();
+  for (const e of handEdits(root, phaseDir)) if (typeof e.attached === "string" && e.attached && typeof e.files[0] === "string") out.set(e.files[0], e.attached);
+  return out;
+}
+
+// exec-hand-seed (kit feedback 123 F5): files attached to the plans, dirty against HEAD, for that plan's worktree seed.
+// {plans: [id]} -> {byPlan: {id: [{path, sha256}]}}.
+export function handSeed(root, phaseDir, { plans = [] } = {}) {
+  const want = new Set(plans);
+  const dirty = dirtyPaths(root);
+  const byPlan = {};
+  for (const [file, id] of attachedTo(root, phaseDir)) {
+    if (!want.has(id) || !dirty.has(file)) continue;
+    const hash = contentHash(path.join(root, file));
+    if (hash === "deleted") continue;
+    (byPlan[id] ??= []).push({ path: file, sha256: hash });
+  }
+  for (const id of Object.keys(byPlan)) byPlan[id].sort((a, b) => a.path.localeCompare(b.path));
+  return { byPlan };
+}
+
+// exec-summary-result: a SUMMARY left by a halt that was cleared without --resume is the previous attempt,
+// not a result. {plans: [id]} -> {prior: [id]}. The last halt answer of the plan decides. `resume` keeps today's transfer.
+// status `halted`, or a SUMMARY older than that answer, is prior; a SUMMARY written after the answer whose status is not
+// `halted` is a result (the rerun's executor already wrote it).
+export function summaryResult(root, phaseDir, { plans = [] } = {}) {
+  let answers = [];
+  try {
+    const raw = readJsonIf(path.join(resolveInside(root, phaseDir), "halt-answers.json"), []) ?? [];
+    answers = Array.isArray(raw) ? raw : [];
+  } catch { answers = []; }
+  const prior = [];
+  for (const id of plans) {
+    if (typeof id !== "string" || !/^[\w.-]+$/.test(id)) continue;
+    const last = answers.filter((h) => h?.plan === id).at(-1);
+    if (!last || last.resume) continue;
+    const abs = path.join(resolveInside(root, phaseDir), `${id}-SUMMARY.md`);
+    if (!fs.existsSync(abs)) continue;
+    let text = "";
+    try { text = fs.readFileSync(abs, "utf8"); } catch { continue; }
+    const statusFm = frontmatter(text).fm?.status;
+    const at = Date.parse(last.at);
+    let older = false;
+    try { older = Number.isFinite(at) && fs.statSync(abs).mtimeMs < at; } catch { older = false; }
+    if (statusFm === "halted" || older) prior.push(id);
+  }
+  return { prior };
 }
 
 // Kit feedback 94 F3: the resume gate's stop, {reason, answer: {verb, command}, options}: commit.adopt when every problem is an
@@ -292,14 +427,17 @@ function gateStop(phaseDir, problems) {
     if (p.kind === "head-moved" && p.commits) return p.commits.map((c) => (c.adoptable ? adopt(c.sha) : `git revert ${c.sha.slice(0, 12)} (it changes files of plans not committed yet; commit those files apart from the rest), ${rerun}`));
     if (p.kind === "head-moved") return [`HEAD ${p.head?.slice(0, 12)} does not descend from the execute baseline ${String(p.base ?? "").slice(0, 12)}: check out the branch that holds it, ${rerun}`];
     if (p.kind === "unauthorized path") return [`ph gsd grant ${N} --path ${p.path} (the run takes it as its own output), or commit it alone (a commit of files no plan owns is accepted), ${rerun}`];
-    if (p.kind === "incomplete plan changed") return [`restore ${p.path} (git checkout -- ${p.path}, or delete it when new): plan ${p.plan} has no SUMMARY yet and its executor writes it, ${rerun}`];
-    if (p.kind === "ambiguous owner") return [`make one plan own ${p.path} (owns of ${p.plans.join(", ")}), ${rerun}`];
+    const attach = p.handEdit ? [`ph gsd hand-edit.attach ${N} ${p.handEdit} --plan <id>, ${rerun}`] : [];
+    if (p.kind === "incomplete plan changed") return [...attach, `restore ${p.path} (git checkout -- ${p.path}, or delete it when new): plan ${p.plan} has no SUMMARY yet and its executor writes it, ${rerun}`];
+    if (p.kind === "ambiguous owner") return [...attach, `make one plan own ${p.path} (owns of ${p.plans.join(", ")}), ${rerun}`];
     return [`run from the code root the execute baseline names (${p.detail}), ${rerun}`];
   };
   const options = [...new Set(problems.flatMap(actions))];
   const owned = problems.every((p) => p.kind === "head-moved" && p.commits?.length && p.commits.every((c) => c.adoptable));
   const reason = problems.map((p) => `${p.kind}${p.path ? ` ${p.path}` : ""}${p.plan ? ` (plan ${p.plan})` : ""}${p.detail ? ` ${p.detail}` : ""}`).join("; ");
-  return { reason, answer: owned ? { verb: "commit.adopt", command: options[0] } : { verb: "fix-and-rerun", command: options.find((o) => !o.startsWith("ph gsd commit adopt")) ?? options[0] }, options };
+  const command = owned ? options[0] : options.find((o) => !o.startsWith("ph gsd commit adopt")) ?? options[0];
+  const verb = owned ? "commit.adopt" : command.startsWith("ph gsd hand-edit.attach") ? "hand-edit.attach" : "fix-and-rerun";
+  return { reason, answer: { verb, command }, options };
 }
 
 // Every change of the main tree since the baseline, assigned for the commit manifest (GSDF-53, CR-GSF-07):
@@ -329,9 +467,18 @@ export function ownedChanges(root, phaseDir, { plans: given, pending = [], integ
   const ownsOf = (p) => [...(p.owns ?? []), p.summary].filter(Boolean);
   const byConfig = ignoredBy(root);
   const ignored = (p) => byConfig(p) || ignore.some((pre) => p.startsWith(`${toSlash(pre).replace(/\/$/, "")}/`));
+  // Kit feedback 123 F5: a path attached to a plan of this commit is that plan's, even when another plan owns it. Attached
+  // to a plan that is not in this commit, it stays dirty for that plan and is not unowned.
+  const attached = attachedTo(root, phaseDir);
   for (const e of [...now.dirty, ...now.untracked.map((p) => ({ path: p, sha256: contentHash(path.join(root, p)) }))]) {
     if (baseDirty.get(e.path) === e.sha256 || (base.untracked.includes(e.path) && now.untracked.includes(e.path))) continue;
     if (ignored(e.path)) continue;
+    if (attached.has(e.path)) {
+      const id = attached.get(e.path);
+      const gone = e.sha256 === "deleted";
+      if (files[id]) (gone ? removed : files)[id].push(e.path);
+      continue;
+    }
     const claimants = plans.filter((p) => (p.claimed ?? []).includes(e.path));
     // A nested file goes to the plan owning it most specifically, not to every plan owning a parent directory.
     const owners = claimants.length ? claimants : specificOwners(e.path, [...plans, ...pending], prefixes, ownsOf).filter((p) => plans.includes(p));
@@ -448,7 +595,9 @@ export function transfer(root, phaseDir, { plan, worktree, owns = [], summary, f
   const changes = delta.changes.filter((c) => !seeded.has(c.path) || contentHash(resolveInside(wt, c.path)) !== seeded.get(c.path));
   // A worker restoring a seed to HEAD is still a change, even though git status is clean for it.
   for (const [p, hash] of seeded) if (!delta.changes.some((c) => c.path === p) && contentHash(resolveInside(wt, p)) !== hash) changes.push({ path: p, kind: fs.existsSync(resolveInside(wt, p)) ? "modified" : "deleted" });
-  const allowed = [...owns, summary].filter(Boolean);
+  // Kit feedback 123 F5: a file attached to this plan is carried even when it is not in the plan's owns.
+  const attachedHere = new Set([...attachedTo(root, phaseDir)].filter(([, id]) => id === plan).map(([file]) => file));
+  const allowed = [...owns, summary, ...attachedHere].filter(Boolean);
   const regenerated = ownershipGlobs(root, "regenerated");
   const refused = [];
   const dropped = [];
@@ -468,8 +617,11 @@ export function transfer(root, phaseDir, { plan, worktree, owns = [], summary, f
   const baseDirty = new Map((baseline?.dirty ?? []).map((d) => [d.path, d.sha256]));
   const { transfers } = accounted(root, phaseDir);
   const baseUntracked = new Set(baseline?.untracked ?? []);
+  // A path attached to this plan may already differ on the main tree (the hand edit). Copying the worktree's copy,
+  // seeded with that edit, is the transfer taking it.
   for (const c of kept) {
     if (refused.some((r) => r.path === c.path)) continue;
+    if (attachedHere.has(c.path)) continue;
     // CR-GSF-03: the worktree started from HEAD without the owner's pre-baseline edit; copying would drop that edit.
     if ((baseDirty.has(c.path) || baseUntracked.has(c.path)) && transfers[c.path] === undefined) {
       refused.push({ path: c.path, reason: "owner edit from before the execute baseline is not in the worktree" });

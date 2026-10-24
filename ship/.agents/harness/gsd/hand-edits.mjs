@@ -1,7 +1,8 @@
 // Hand edits (kit feedback 68): what the orchestrator or the owner changed outside the flow, which the revisions only notice
 // as a moved hash (and not at all after a hand `revisions record`). Each is listed with its cause category once, answered by
 // `ph gsd hand-edit record`, and counted by `ph review-stats`. The log is `<phase dir>/hand-edits.json`, written only here.
-// Measurement only: the run result lists the edits and the categories seen twice; no flow decision reads them.
+// The run result lists the edits and the categories seen twice. Kit feedback 123: execute also reads this log (a matching
+// owned edit of a committed plan is committed at the resume gate; `attached` names the plan whose commit takes the file).
 // Kit feedback 93, 99: what the flow itself made is never listed (flowEvidence); the first scan of a log the previous kit wrote
 // (`v: 1`) drops its open entries the flow made.
 import { spawnSync } from "node:child_process";
@@ -15,7 +16,10 @@ import { DEFAULT_RUNS_DIR, RUN_FILES } from "../workflow/journal.mjs";
 import { done, fail, isFile, nowIso, rel, withFileLock } from "./common.mjs";
 import { GIT_TIMEOUT_MS, git } from "./git.mjs";
 import { CATEGORIES, HAND_EDITS_FILE, candidateLine, projectEdits, readEdits, summarize } from "../lib/hand-edit-log.mjs";
-import { planPath } from "./planning.mjs";
+import { normPlanId, planPath, readPlans } from "./planning.mjs";
+import { ownsDepth } from "./adapter-hooks.mjs";
+import { STATE_FILE, readStateFile } from "../lib/execute-state.mjs";
+import { guardWriter } from "./state.mjs";
 import { FIXED_KEYS, changedParts, keyParts, readRevisions } from "./revisions.mjs";
 
 const NOTE_MAX = 300;
@@ -364,7 +368,8 @@ export function recordHandEdit(g, phase, ref, { category, note, amend = false } 
     writeStore(phase, edits, dropped);
   });
   const count = summarize(projectEdits(g.codeRoot).edits).byCategory.find((c) => c.category === category)?.count ?? 0;
-  return done({ phase: phase.padded, logged: answered, category, note: line, count, candidates: candidatesOf(g) });
+  const warning = commitWarning(g, phase, readStore(phase).filter((e) => answered.includes(e.id)));
+  return done({ phase: phase.padded, logged: answered, category, note: line, count, candidates: candidatesOf(g), ...(warning ?? {}) });
 }
 
 // Kit feedback 113 F1: replace the note of a record that is already logged. The note it had (and each note replaced since)
@@ -389,7 +394,90 @@ function amendHandEdit(g, phase, ref, { category, note }) {
     writeStore(phase, edits);
   });
   const count = summarize(projectEdits(g.codeRoot).edits).byCategory.find((c) => c.category === kept.category)?.count ?? 0;
-  return done({ phase: phase.padded, logged: answered, amended: true, category: kept.category, note, history: kept.history ?? [], count, candidates: candidatesOf(g) });
+  const warning = commitWarning(g, phase, readStore(phase).filter((e) => answered.includes(e.id)));
+  return done({ phase: phase.padded, logged: answered, amended: true, category: kept.category, note, history: kept.history ?? [], count, candidates: candidatesOf(g), ...(warning ?? {}) });
+}
+
+// The plans that already have a commit (execute-progress.json, or a plan entry of commits.json including an owner adopt).
+function committedPlanIds(g, phase) {
+  let commits = [];
+  try {
+    const raw = readJsonIf(path.join(phase.dir, "commits.json"), []) ?? [];
+    commits = Array.isArray(raw) ? raw : [];
+  } catch { commits = []; }
+  let fromState = [];
+  try {
+    const st = readStateFile(path.join(phase.dir, STATE_FILE)).state;
+    fromState = Object.keys(st.plans ?? {}).filter((id) => st.plans[id]?.commit !== undefined);
+  } catch { fromState = []; }
+  return new Set([...fromState, ...commits.flatMap((c) => [...Object.keys(c?.plans ?? {}), ...Object.keys(c?.owner?.plans ?? {})])]);
+}
+
+// Most specific owners of a repo path among the phase's plans, the same measure the resume gate uses.
+function fileOwners(g, phase, file) {
+  const prefixes = (g.cfg.adapter?.ownership?.owns_forms ?? [{ prefix: "Path:" }]).map((f) => f.prefix).filter(Boolean);
+  const bare = (entry) => {
+    let p = String(entry).trim().replace(/^`|`$/g, "");
+    for (const pre of prefixes) if (p.startsWith(pre)) { p = p.slice(pre.length).trim(); break; }
+    return p.replace(/\\/g, "/").replace(/^\.\//, "");
+  };
+  let best = -1;
+  let out = [];
+  for (const pl of readPlans(phase)) {
+    const d = Math.max(-1, ...pl.owns.map(bare).filter(Boolean).map((o) => ownsDepth(o, file)));
+    if (d < 0 || d < best) continue;
+    if (d > best) { best = d; out = []; }
+    out.push(pl.id);
+  }
+  return out;
+}
+
+// Kit feedback 123 F3: recording an owned edit whose plan is already committed says what the next execute run will do.
+function commitWarning(g, phase, edits) {
+  const owned = (edits ?? []).filter((e) => e.kind === "owned" && typeof e.files?.[0] === "string");
+  if (!owned.length) return null;
+  let committed;
+  try { committed = committedPlanIds(g, phase); } catch { return null; }
+  const lines = [];
+  for (const e of owned) {
+    let owners = [];
+    try { owners = fileOwners(g, phase, e.files[0]); } catch { owners = []; }
+    const keyPlan = /^owned:(.+)$/.exec(e.key ?? "")?.[1];
+    const ids = owners.length ? owners : (keyPlan ? [keyPlan] : []);
+    const doneIds = ids.filter((id) => committed.has(id));
+    const open = ids.filter((id) => !committed.has(id));
+    if (!doneIds.length) continue;
+    if (open.length) lines.push(`${e.id}: ${e.files[0]} belongs to committed plan ${doneIds.join(", ")} and to ${open.join(", ")}, which is not committed. The next execute run will not commit it. Attach it to the plan of the wave that should take it: ph gsd hand-edit.attach ${phase.number} ${e.id} --plan <id>`);
+    else lines.push(`${e.id}: ${e.files[0]} belongs to committed plan ${doneIds.join(", ")}. The next execute run commits it as a follow-up of ${doneIds.join(", ")} before any agent, and records that commit in commits.json.`);
+  }
+  if (!lines.length) return null;
+  return { warning: lines.join(" "), next: lines[0] };
+}
+
+// Kit feedback 123 F5: attach a recorded hand edit to a plan that is not committed yet. That plan's transfer and commit
+// take the file (a file a committed plan also owns has no other verb that will).
+export function attachHandEdit(g, phase, ref, planRef) {
+  guardWriter(g.env);
+  if (!ref) throw fail("hand-edit attach needs a hand edit: ph gsd hand-edit.attach <phase> <HE-n|file> --plan <id>");
+  if (!planRef) throw fail("hand-edit attach needs --plan <id>, a plan of the wave being gated");
+  const id = /^\d+$/.test(planRef) ? `${phase.padded}-${String(planRef).padStart(2, "0")}` : normPlanId(planRef);
+  if (!readPlans(phase).some((p) => p.id === id)) throw fail(`hand-edit attach: no plan ${id} in ${rel(g.codeRoot, phase.dir)}`);
+  if (committedPlanIds(g, phase).has(id)) throw fail(`hand-edit attach: ${id} is committed. A hand edit of its files is committed as a follow-up at the next execute run's start; or commit the file and ph gsd commit adopt ${phase.number} <sha> --reason "<why the commit stands>"`);
+  const attached = [];
+  let file = null;
+  withFileLock(`${handEditsFile(phase)}.lock`, () => {
+    const edits = readStore(phase);
+    const hits = edits.filter((e) => e.id === ref || e.files.includes(ref) || e.key === ref);
+    if (!hits.length) throw fail(`no hand edit ${ref} (ph gsd hand-edit list ${phase.number}); record it first with ph gsd hand-edit record`);
+    for (const e of hits) {
+      if (typeof e.files[0] !== "string") throw fail(`${e.id} names no file, so no plan's commit can take it`);
+      Object.assign(e, { attached: id, attachedAt: nowIso() });
+      attached.push(e.id);
+      file = e.files[0];
+    }
+    writeStore(phase, edits);
+  });
+  return done({ phase: phase.padded, attached, plan: id, file, next: `the commit of ${id} takes ${file}` });
 }
 
 export function listHandEdits(g, phase) {
