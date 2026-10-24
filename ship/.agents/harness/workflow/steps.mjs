@@ -139,7 +139,25 @@ export function executeSteps(kit, run) {
   let waves = [];
   let wanted = [];
   let idx = { plans: [] };
-  const index = async () => (idx = (await gsd(["phase-plan-index", N])).json ?? { plans: [] });
+  // A SUMMARY a halt clear without --resume left (status halted, or older than that answer) is the previous
+  // attempt. `summary_file` keeps the resume gate from calling the plan incomplete; `has_summary` is cleared so the
+  // executor runs again. A SUMMARY written after the answer, status not halted, still counts.
+  const index = async () => {
+    idx = (await gsd(["phase-plan-index", N])).json ?? { plans: [] };
+    const ids = (idx.plans ?? []).filter((p) => p.has_summary).map((p) => p.id);
+    if (!ids.length) return idx;
+    const r = await flow(["exec-summary-result", phaseDir], { plans: ids });
+    const prior = new Set(r.code === 0 ? r.json?.prior ?? [] : []);
+    if (r.code !== 0) log(`warning: summary check failed: ${r.json?.error ?? `exit ${r.code}`}`);
+    if (!prior.size) return idx;
+    for (const p of idx.plans) if (prior.has(p.id)) { p.summary_file = true; p.has_summary = false; }
+    const byId = new Map(idx.plans.map((p) => [p.id, p]));
+    for (const p of idx.plans) {
+      p.blocked_by = (p.depends_on ?? []).filter((d) => { const q = byId.get(d); return q && (q.halted || !q.has_summary); });
+      p.ready = !p.has_summary && !p.halted && !p.error && p.blocked_by.length === 0;
+    }
+    return idx;
+  };
   const planInfo = (id) => idx.plans.find((p) => p.id === id) ?? {};
   // CR-GSF-02: a SUMMARY ends only the coding stage; a plan is done when its commit is tracked in execute-progress.json. Kit
   // feedback 83 F1, 87: the record is typed and has one writer, the state-* flow verbs, each checking its completion contract; the
@@ -224,7 +242,7 @@ export function executeSteps(kit, run) {
   const asPlan = (t) => ({ id: t.plan, owns: t.owns ?? [], summary: t.summary });
   // kit-feedback 66: plans this run has dispatched and not committed yet (graph schedule); their changes are the run's own.
   const inFlight = new Set();
-  const gatePlans = () => allTasks.map((t) => ({ ...asPlan(t), complete: Boolean(planInfo(t.plan).has_summary) || inFlight.has(t.plan) }));
+  const gatePlans = () => allTasks.map((t) => ({ ...asPlan(t), complete: Boolean(planInfo(t.plan).summary_file ?? planInfo(t.plan).has_summary) || inFlight.has(t.plan) }));
   let base = null;
   async function baseline() {
     base = await flow(["baseline", phaseDir]);
@@ -232,8 +250,35 @@ export function executeSteps(kit, run) {
     return null;
   }
   const resumeGate = () => aloneOnTree(resumeGateNow);
+  // Kit feedback 123 F1: a dirty file a hand-edit record still describes, owned only by plans already committed, is committed
+  // here, before the gate looks and before any agent of the wave is paid. The answer when that commit cannot be made names
+  // both the commit and `ph gsd commit adopt` (F4). A file a later plan also owns is left; the gate names hand-edit.attach.
+  async function followHandEdits() {
+    const waveOf = new Map(handoff.flatMap((w) => w.tasks.map((t) => [t.plan, w.k])));
+    const r = await flow(["exec-hand-follow", phaseDir], { plans: allTasks.map((t) => ({ id: t.plan, owns: [...(t.owns ?? []), t.summary].filter(Boolean), wave: waveOf.get(t.plan) ?? null })) });
+    if (r.code !== 0 || !r.json) return result("failed", { reason: `hand-edit follow-up could not be checked: ${r.json?.error ?? `exit ${r.code}`}` });
+    for (const h of r.json.held ?? []) log(`hand edit ${h.id}: ${h.path} belongs to committed plan ${h.committed.join(", ")} and to ${h.open.join(", ")}, which is not committed; not a follow-up (ph gsd hand-edit.attach ${N} ${h.id} --plan <id>)`);
+    for (const group of r.json.follow ?? []) {
+      const ids = group.plans;
+      const paths = group.files.map((f) => f.path);
+      const he = [...new Set(group.files.map((f) => f.id))];
+      const subject = `fix(${ids[0]}): hand edit ${he.join(", ")}`;
+      const both = `commit ${paths.join(" ")} (git add and git commit of those paths only), then ph gsd commit adopt ${N} <sha> --reason "<why the commit stands>", then rerun with the same args`;
+      const c = await gsd(["commit", `${subject}\n\nPlans: ${ids.join(",")}`, "--files", ...paths]);
+      if (!c.json?.committed) return owner("Execute", `hand edit ${he.join(", ")} of committed plan ${ids.join(", ")} (${paths.join(", ")}) could not be committed: ${c.json?.error ?? c.json?.reason ?? `exit ${c.code}`}`, { answer: ANSWER.tree(both), paths, options: [both, "move or revert them, then rerun with the same args", `ph gsd hand-edit.attach ${N} ${he[0]} --plan <id>, then rerun with the same args`] });
+      ownCommits.add(c.json.hash);
+      const entry = { sha: c.json.hash, phase: N, wave: group.wave ?? null, plans: Object.fromEntries(ids.map((id) => [id, paths])), handEdit: he };
+      const jp = await flow(["json-push", `${phaseDir}/commits.json`], entry);
+      if (jp.code !== 0) return owner("Execute", `commit ${c.json.hash} of hand edit ${he.join(", ")} made but ${phaseDir}/commits.json was not updated: ${jp.json?.error ?? `exit ${jp.code}`}`, { answer: ANSWER.rerun("rerun with the same args; the resume gate reconciles the commit"), recovery: { plans: ids, files: paths, entry } });
+      for (const f of group.files) log(`hand edit ${f.id}: ${f.path} committed as a follow-up of ${ids.join(", ")} (${c.json.hash.slice(0, 7)})`);
+      ev(`hand-edit ${he.join(",")} ${c.json.hash.slice(0, 7)}`);
+    }
+    return null;
+  }
   async function resumeGateNow() {
     await index();
+    const followed = await followHandEdits();
+    if (followed) return followed;
     const rg = await flow(["resume-gate", phaseDir], { plans: gatePlans() });
     if (rg.json?.status === "error") return result("failed", { reason: `safe-resume gate could not look: ${rg.json.error}` });
     if (rg.code !== 0) return owner("Execute", `safe-resume gate: ${rg.json.reason}`, { answer: ANSWER.gate(rg.json.answer), recovery: { problems: rg.json.problems, head: rg.json.head }, options: rg.json.options });
@@ -390,6 +435,7 @@ export function executeSteps(kit, run) {
     }
     await flow(["remove", haltPath(t.plan)]);
     await state("plan", { plan: t.plan, stage: "dispatched" });
+    if (planInfo(t.plan).summary_file) log(`plan ${t.plan}: SUMMARY is a previous attempt (status halted, or older than the halt answer); the executor runs again with the answer`);
     const before = await headNow();
     const reqs = pendingRequests[t.plan] ?? [];
     const prompt = await renderPrompt("executor", { plan: fromMain(planPath(t.plan)), snapshot: mainRoot ?? "", summary: String(t.summary), owns: JSON.stringify(t.owns ?? []), stackSkill: S.stackSkill ? fromMain(S.stackSkill) : "none", generated: S.generated, pending: pendingOn, metrics: metricsOn, answers: rec.answers?.length ? JSON.stringify(rec.answers) : "", notes: rec.notes?.length ? JSON.stringify(rec.notes) : "", accepted: rec.accepted?.length ? JSON.stringify(rec.accepted) : "", requests: reqs.length ? JSON.stringify(reqs) : "", digest: digestLine(`plan:${t.plan}`, t.planHash ?? "none") });
@@ -465,8 +511,17 @@ export function executeSteps(kit, run) {
   // the applied shared changes that differ from HEAD (dependency-seed); without earlier plans a seed is set only when it holds files.
   async function seedTrees(tasks, earlier = []) {
     const seed = await flow(["dependency-seed", phaseDir], { plans: earlier, shared: true });
-    for (const t of seed.code === 0 && (earlier.length || seed.json.files.length) ? tasks : []) seeds[t.plan] = seed.json;
-    return seed.code === 0 ? null : result("refused", { reason: `dependency seed unavailable: ${seed.json?.error}` });
+    if (seed.code !== 0) return result("refused", { reason: `dependency seed unavailable: ${seed.json?.error}` });
+    // Kit feedback 123 F5: a hand edit attached to a plan is in that plan's worktree, not in every plan's.
+    const extra = await flow(["exec-hand-seed", phaseDir], { plans: tasks.map((t) => t.plan) });
+    if (extra.code !== 0) return result("refused", { reason: `hand-edit seed unavailable: ${extra.json?.error}` });
+    const byPlan = extra.json?.byPlan ?? {};
+    for (const t of tasks) {
+      const files = [...(seed.json.files ?? [])];
+      for (const f of byPlan[t.plan] ?? []) if (!files.some((x) => x.path === f.path)) files.push(f);
+      if (earlier.length || files.length) seeds[t.plan] = { head: seed.json.head, files };
+    }
+    return null;
   }
   // Kit feedback 89: a checker issue forceProceed accepted at planning, neither confirmed nor resolved, stops the run before the executors
   // of the plans it affects (exec-records names it and the stop); the waves before them run and commit.
@@ -534,8 +589,13 @@ export function executeSteps(kit, run) {
   const fixerOpts = (label, extra = {}) => ({ label, agentType: agentFor("fixer", "gsd-code-fixer"), role: "fixer", ...(cfg.gsd.roles?.fixer?.effort ? {} : { effort: FIXER_EFFORT }), schema: schemas.fixer, ...extra });
   // Main-tree edits outside every plan's owns stop the run before the gate and the review are paid for, not at Commit (G070,
   // kit-feedback 35). Kit feedback 77: committing the paths on their own is the first answer (the resume gate accepts it).
-  const UNOWNED_OPTIONS = ["commit them separately (git add and git commit of those paths only), then rerun with the same args", "move or revert them, then rerun with the same args", "add them to a plan's owns and replan"];
-  const unownedStop = (stage, pf) => owner(stage, `changes outside every plan's owns: ${pf.unowned.slice(0, 10).join(", ")}`, { answer: ANSWER.tree(UNOWNED_OPTIONS[0]), paths: pf.unowned, options: UNOWNED_OPTIONS });
+  // Kit feedback 123 F4: the commit the owner is told to make is foreign on the rerun until `ph gsd commit adopt` records it.
+  const UNOWNED_OPTIONS = [`commit them separately (git add and git commit of those paths only), then ph gsd commit adopt ${N} <sha> --reason "<why the commit stands>", then rerun with the same args`, "move or revert them, then rerun with the same args", "add them to a plan's owns and replan"];
+  const unownedStop = (stage, pf) => {
+    const named = pf.unownedEdits ?? [];
+    const why = named.length ? `; recorded hand edit ${named.map((n) => `${n.id} (${n.path})`).join(", ")}` : "";
+    return owner(stage, `changes outside every plan's owns: ${pf.unowned.slice(0, 10).join(", ")}${why}`, { answer: ANSWER.tree(UNOWNED_OPTIONS[0]), paths: pf.unowned, ...(named.length ? { unownedEdits: named } : {}), options: UNOWNED_OPTIONS });
+  };
   const strayStop = (tasks, stage) => aloneOnTree(async () => {
     const pf = await planFiles(tasks);
     return pf.stop ?? (pf.unowned.length ? unownedStop(stage, pf) : null);
@@ -982,7 +1042,13 @@ export function executeSteps(kit, run) {
     }
     const files = oc.json.files;
     for (const t of tasks) if (t.summary && !(files[t.plan] ??= []).includes(t.summary)) files[t.plan].push(t.summary);
-    return { files, removed: oc.json.removed, integration: oc.json.integration, unowned: oc.json.unowned };
+    // Kit feedback 123 F2: an unowned path a hand-edit record still describes is named, not only "outside every plan's owns".
+    let unownedEdits = [];
+    if ((oc.json.unowned ?? []).length) {
+      const hn = await flow(["exec-hand-names", phaseDir], { paths: oc.json.unowned });
+      if (hn.code === 0) unownedEdits = hn.json?.named ?? [];
+    }
+    return { files, removed: oc.json.removed, integration: oc.json.integration, unowned: oc.json.unowned, unownedEdits };
   }
   // CR-GSF-06: a code commit that fails, or whose commits.json record fails, stops the run; nothing is tracked.
   async function commitOne(subject, ids, wave, pf, withIntegration, gaps = null) {

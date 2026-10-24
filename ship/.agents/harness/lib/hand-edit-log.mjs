@@ -1,6 +1,7 @@
 // The hand-edit log of a phase (kit feedback 68): `<phase dir>/hand-edits.json` lists what the orchestrator or the owner
 // changed outside the flow, with the cause category once someone answered. Written only by gsd/hand-edits.mjs; this
-// module reads it, for `ph gsd hand-edit` and `ph review-stats`, and counts it. Measurement only: no decision reads it.
+// module reads it, for `ph gsd hand-edit` and `ph review-stats`, and counts it. Execute reads the same file for a recorded
+// owned edit of a committed plan and for an edit `attached` to a plan (kit feedback 123).
 import fs from "node:fs";
 import path from "node:path";
 import { readJsonIf } from "./io.mjs";

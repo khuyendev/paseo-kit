@@ -58,6 +58,12 @@ const COMMANDS = {
   "cwd-guard": (root, [worktreeDir]) => execute.cwdGuard(root, worktreeDir, process.cwd()),
   baseline: (root, [phaseDir]) => execute.recordBaseline(root, phaseDir),
   "resume-gate": (root, [phaseDir], input) => execute.resumeGate(root, phaseDir, JSON.parse(input)),
+  // Kit feedback 123: a recorded hand edit of a committed plan, the record an unowned path matches, and the worktree seed of an attached one.
+  "exec-hand-follow": (root, [phaseDir], input) => execute.handFollow(root, phaseDir, JSON.parse(input || "{}")),
+  "exec-hand-names": (root, [phaseDir], input) => execute.handNames(root, phaseDir, JSON.parse(input || "{}")),
+  "exec-hand-seed": (root, [phaseDir], input) => execute.handSeed(root, phaseDir, JSON.parse(input || "{}")),
+  // A SUMMARY a halt clear without --resume left behind is the previous attempt.
+  "exec-summary-result": (root, [phaseDir], input) => execute.summaryResult(root, phaseDir, JSON.parse(input || "{}")),
   transfer: (root, [phaseDir], input) => execute.transfer(root, phaseDir, JSON.parse(input)),
   "discard-worktree": (root, _args, input) => execute.discardWorktree(root, JSON.parse(input)),
   "leftover-worktrees": (root) => execute.leftoverTrees(root),
@@ -153,7 +159,7 @@ export const COMMAND_NAMES = Object.keys(COMMANDS);
 
 // Verbs whose handler reads JSON or text from stdin; every other verb never touches stdin, so a person running
 // `gsd-flow.mjs remove <path>` from a shell whose stdin is an open pipe is not left waiting (G088).
-const STDIN = new Set(["write", "append", "append-new", "json-push", "summary-heal", "resume-gate", "transfer", "discard-worktree", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "test-command", "evidence-check", "check-weakening", "review-scope", "review-record", "prereview-record", "changed-lines", "forensics-path", "plan-run", "plan-mark", "plan-end", "plan-outline", "plan-checker", "plan-contracts", "plan-realloc", "plan-recheck", "state-plan", "state-shared", "state-request", "state-integration", "state-answer", "state-smoke", "prompt", "exec-args", "exec-setup", "exec-defect", "exec-handoff", "exec-records", "exec-select", "exec-route", "exec-verdict", "exec-fix-allowance", "exec-fix-reply", "exec-fixers", "exec-round-end", "exec-verdicts", "exec-review", "exec-findings", "exec-pause", "exec-groups", "exec-shared-before", "exec-shared-reply", "plan-args", "plan-prompt", "plan-skeleton", "plan-probes", "plan-linked", "plan-realloc-diff", "plan-validation", "accepted-record", "plan-contract-route", "plan-contract-drift", "plan-replan-keep", "plan-replan", "plan-replan-drain", "plan-streams-end", "plan-checker-reply", "plan-dependents"]);
+const STDIN = new Set(["write", "append", "append-new", "json-push", "summary-heal", "resume-gate", "exec-hand-follow", "exec-hand-names", "exec-hand-seed", "exec-summary-result", "transfer", "discard-worktree", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "test-command", "evidence-check", "check-weakening", "review-scope", "review-record", "prereview-record", "changed-lines", "forensics-path", "plan-run", "plan-mark", "plan-end", "plan-outline", "plan-checker", "plan-contracts", "plan-realloc", "plan-recheck", "state-plan", "state-shared", "state-request", "state-integration", "state-answer", "state-smoke", "prompt", "exec-args", "exec-setup", "exec-defect", "exec-handoff", "exec-records", "exec-select", "exec-route", "exec-verdict", "exec-fix-allowance", "exec-fix-reply", "exec-fixers", "exec-round-end", "exec-verdicts", "exec-review", "exec-findings", "exec-pause", "exec-groups", "exec-shared-before", "exec-shared-reply", "plan-args", "plan-prompt", "plan-skeleton", "plan-probes", "plan-linked", "plan-realloc-diff", "plan-validation", "accepted-record", "plan-contract-route", "plan-contract-drift", "plan-replan-keep", "plan-replan", "plan-replan-drain", "plan-streams-end", "plan-checker-reply", "plan-dependents"]);
 export const readsStdin = (cmd) => STDIN.has(cmd);
 
 export async function main(argv, { root = configRoot(), input = "", out = (l) => process.stdout.write(`${l}\n`), env = process.env } = {}) {

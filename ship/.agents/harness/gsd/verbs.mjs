@@ -20,7 +20,7 @@ import { checkDependencies, checkOwns, checkSmokeBuilds, coverage, decisionCover
 import { findPhaseVerb, phaseAdd, phaseComplete, phaseInsert, phaseRemove, planIndex, requirementsVerb, roadmapVerb, uatPassed } from "./phases.mjs";
 import { normPlanId, planIds, readPlan, readPlans, requirePhase } from "./planning.mjs";
 import { ATTEMPT_KINDS, readAttempt, recordAttempt, revisionsVerb } from "./revisions.mjs";
-import { captureBeforeRecord, listHandEdits, recordHandEdit, scanHandEdits } from "./hand-edits.mjs";
+import { attachHandEdit, captureBeforeRecord, listHandEdits, recordHandEdit, scanHandEdits } from "./hand-edits.mjs";
 import { stateVerb } from "./state.mjs";
 import { fingerprint, researchStatus, verificationParts, verificationStatusVerb } from "./status.mjs";
 import { health, normalizeTestCommand, runWithTimeout } from "./tools.mjs";
@@ -226,6 +226,11 @@ export const verbHandlers = {
     run: (g, a, o) => recordHandEdit(g, phaseOf(g, a), a[1], { category: o.category, note: o.note, amend: o.amend === true }),
   },
   "hand-edit.list": { usage: "ph gsd hand-edit.list <phase>", options: {}, run: (g, a) => listHandEdits(g, phaseOf(g, a)) },
+  "hand-edit.attach": {
+    usage: "ph gsd hand-edit.attach <phase> <HE-n|file> --plan <id>",
+    options: { plan: "string" },
+    run: (g, a, o) => attachHandEdit(g, phaseOf(g, a), a[1], o.plan),
+  },
   "revisions.record": revisions("record"),
   "revisions.check": revisions("check"),
   "revisions.hash": revisions("hash"),
