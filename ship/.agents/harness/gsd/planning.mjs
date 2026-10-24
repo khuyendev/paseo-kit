@@ -158,7 +158,28 @@ export function parseTasks(body) {
   return tasks;
 }
 
-export const sharedChanges = (body) => [...String(body ?? "").matchAll(/<shared_changes>([\s\S]*?)<\/shared_changes>/g)].map((m) => m[1].trim());
+// The file a <shared_changes> line changes: its leading `path:` (`lib/main.dart: import x`). One rule for the parser, the
+// handoff (`outline.mjs` sharedChangePaths) and the checker. A URL (`https://…`) is not a path.
+const SHARED_LINE_PATH = /^\s*(?:[-*]\s+)?`?([^\s:`]+\.[A-Za-z0-9]+|[^\s:`]*\/[^\s:`]+)`?\s*:/;
+export function sharedLinePath(line) {
+  const text = String(line ?? "");
+  const m = SHARED_LINE_PATH.exec(text);
+  if (!m || /^[a-z]+:\/\//i.test(text.trim())) return null;
+  return m[1].replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
+// Kit feedback 105 F1: a block whose text is none / n/a / empty (any case), optionally followed by prose, and that names no
+// file, is no shared change. `None. Catalog, primitives, route files remain with their owners.` is dropped; a block that also
+// has a `path:` line is kept.
+const ABSENT_SHARED = /^(?:none|n\/a|empty)\b/i;
+export function absentSharedChange(text) {
+  const t = String(text ?? "").trim();
+  if (!t) return true;
+  if (!ABSENT_SHARED.test(t)) return false;
+  return !t.split(/\r?\n/).some((line) => sharedLinePath(line));
+}
+
+export const sharedChanges = (body) => [...String(body ?? "").matchAll(/<shared_changes>([\s\S]*?)<\/shared_changes>/g)].map((m) => m[1].trim()).filter((text) => !absentSharedChange(text));
 
 // G022: a `<path>: dependency <name> [<constraint>] [dev]` line of a <shared_changes> body declares a package the plan adds or
 // changes. The line stays a file change of its path (gsd-execute applies it), and the dependency probe checks the declared set.

@@ -41,6 +41,12 @@ const untaken = (phase, kind) => {
   return readAnswers(answersFile(phase)).answers.filter((x) => x.kind === kind && !taken.has(x.id));
 };
 
+// What one cleared entry looks like in the verb result (kit feedback 105 F2): the entry and the applied state it has now.
+const clearedEntry = (s) => ({ id: s.id ?? null, from: s.from ?? null, path: s.path ?? null, change: s.change ?? null, applied: s.applied === true });
+// An answer with no path text clears entries that name no file (a new answer stores path: null). An answer a kit before this one
+// wrote has no path key at all and still clears every open entry; state-answer tells them apart.
+const filelessAnswer = (x) => !String(x.path ?? "").trim();
+
 export function sharedClear(g, phase, waveRef, { path: filePath, reason }) {
   guardWriter(g.env);
   if (!waveRef) throw fail("shared clear needs a wave: ph gsd shared clear <phase> <wave> [--path <file>] --reason <text>");
@@ -48,14 +54,22 @@ export function sharedClear(g, phase, waveRef, { path: filePath, reason }) {
   const want = filePath === undefined ? null : slash(filePath);
   if (filePath !== undefined && !want) throw fail("shared clear --path needs a file");
   const open = (progressOf(phase).shared ?? []).filter((s) => s && !s.applied);
-  const mine = open.filter((s) => (s.wave === undefined || waveMatches(s.wave, waveRef)) && (want === null || slash(s.path) === want));
-  const pending = untaken(phase, "shared").filter((x) => waveMatches(x.wave, waveRef) && (want === null || x.path === want));
+  const waveOpen = open.filter((s) => s.wave === undefined || waveMatches(s.wave, waveRef));
+  // Kit feedback 105 F2: without --path only a change that names no file is cleared. Unapplied changes that name a file stay, and
+  // the verb refuses rather than drop them; it names each file and the --path form.
+  if (want === null) {
+    const named = [...new Set(waveOpen.filter((s) => s.path).map((s) => slash(s.path)))];
+    if (named.length) throw fail(`shared clear without --path clears only a change that names no file; wave ${waveRef} still has unapplied changes with a file: ${named.join(", ")}. Clear each with ph gsd shared clear <phase> ${waveRef} --path <file> --reason <text>`);
+  }
+  const mine = waveOpen.filter((s) => (want === null ? !s.path : slash(s.path) === want));
+  const pending = untaken(phase, "shared").filter((x) => waveMatches(x.wave, waveRef) && (want === null ? filelessAnswer(x) : x.path === want));
   if (!mine.length) {
     const left = open.map((s) => `${s.wave ?? "?"}: ${s.path ?? "(no file)"}`);
     throw none(`no open shared change${want ? ` for ${want}` : ""} in wave ${waveRef} of ${rel(g.codeRoot, phase.dir)}${left.length ? ` (open: ${left.join("; ")})` : ""}${pending.length ? `; ${pending.map((x) => x.id).join(", ")} already answers it and the next run takes it` : ""}`);
   }
-  const entry = appendAnswer(phase, { kind: "shared", wave: String(waveRef).trim(), ...(want ? { path: want } : {}), reason: why });
-  return done({ answered: entry.id, kind: "shared", wave: entry.wave, ...(want ? { path: want } : {}), clears: mine.map((s) => s.path ?? null), reason: why, answers: rel(g.codeRoot, answersFile(phase)), next: "rerun gsd-execute with the same args; the run takes this answer first" });
+  // path: null (not an omitted key) so a record already written without path keeps meaning "every open entry of the wave".
+  const entry = appendAnswer(phase, { kind: "shared", wave: String(waveRef).trim(), ...(want ? { path: want } : { path: null }), reason: why });
+  return done({ answered: entry.id, kind: "shared", wave: entry.wave, ...(want ? { path: want } : { path: null }), clears: mine.map(clearedEntry), reason: why, answers: rel(g.codeRoot, answersFile(phase)), next: "rerun gsd-execute with the same args; the run takes this answer first" });
 }
 
 export function requestClear(g, phase, planRef, { path: filePath, reason }) {

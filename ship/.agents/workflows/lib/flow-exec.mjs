@@ -7,6 +7,8 @@ import { digest } from "./flow-gate.mjs";
 import { ownersOf } from "./flow-execute.mjs";
 import { readState } from "./flow-state.mjs";
 import { changedLines, reviewScope, writePrereview } from "./flow-review.mjs";
+import { matchesGlob } from "../../harness/adapter/contract.mjs";
+import { loadConfig } from "../../harness/config.mjs";
 import { acceptedStatus } from "../../harness/gsd/accepted.mjs";
 import { waitsForCode } from "../../harness/gsd/shared-changes.mjs";
 import { errText } from "../../harness/lib/cli.mjs";
@@ -19,6 +21,52 @@ export const PLAN_DEFECT_KINDS = ["wrong-api", "owns-reach", "missing-dependency
 const slashPath = (p) => String(p).trim().replace(/\\/g, "/").replace(/^\.\//, "");
 // Kit feedback 79: the project's kit-feedback document is the orchestrator's; a request against it is an observation about the kit.
 export const isKitDoc = (p) => /(^|\/)kit-feedback\.md$/i.test(String(p).trim().replace(/\\/g, "/"));
+
+// Kit feedback 107 F2: build output. A path segment of a tool's output directory, any case (UE writes Intermediate/ and Binaries/).
+const BUILD_SEGMENTS = new Set(["build", ".dart_tool", "node_modules", "target", "dist", "out", "intermediate", "binaries"]);
+// A native link product. A generated source file (a registrant, a *.g.dart) is not one: that stays a shared change (item 86).
+const ARTIFACT_EXT = new Set(["dll", "so", "dylib", "exe", "obj", "o", "pdb", "lib", "a", "ilk", "exp"]);
+const EDIT_VERB = /\b(?:add|adds|adding|remove|removes|removing|delete|deletes|deleting|rename|renames|renaming|replace|replaces|replacing|update|updates|updating|insert|inserts|inserting|export|exports|exporting|import|imports|importing|implement|implements|implementing|refactor|refactors|move|moves|moving|write|writes|writing|set|sets|setting|fix|fixes|fixing|change|changes|changing|modify|modifies|modifying|create|creates|creating|append|appends|appending|introduce|introduces|wire|wires|wiring)\b/i;
+const RERUN_WORD = /\b(?:re-?runs?|re-?running|retr(?:y|ies|ying))\b/i;
+const RUN_AGAIN = /\brun\b[^.]{0,40}\bagain\b/i;
+
+function adapterBuild(root) {
+  if (!root) return { regenerated: [], sourceRoots: [] };
+  try {
+    const o = loadConfig(root).adapter?.ownership ?? {};
+    return { regenerated: o.regenerated ?? [], sourceRoots: o.source_roots ?? [] };
+  } catch {
+    return { regenerated: [], sourceRoots: [] };
+  }
+}
+
+// A path is build output when a segment is a tool output directory, or (what the adapter names) it is a native artifact matching
+// adapter.ownership.regenerated or lying outside adapter.ownership.source_roots. Generated source is not build output.
+export function isBuildOutput(filePath, { regenerated = [], sourceRoots = [] } = {}) {
+  const p = slashPath(filePath);
+  if (!p || p.split("/").includes("..")) return false;
+  const parts = p.split("/").filter(Boolean);
+  if (parts.some((s) => BUILD_SEGMENTS.has(s.toLowerCase()))) return true;
+  const ext = /\.([A-Za-z0-9]+)$/.exec(parts.at(-1) ?? "")?.[1]?.toLowerCase() ?? "";
+  if (!ARTIFACT_EXT.has(ext)) return false;
+  const roots = sourceRoots.map((r) => slashPath(r).replace(/\/+$/, "")).filter(Boolean);
+  const outside = roots.length > 0 && !roots.some((r) => p === r || p.startsWith(`${r}/`) || (/[*?[]/.test(r) && matchesGlob(p, r)));
+  const generated = regenerated.some((g) => matchesGlob(p, g));
+  return generated || outside;
+}
+
+// The change asks only to rerun a check ("rerun the suite serially"), not to edit code.
+export function onlyCheckRerun(change) {
+  const t = String(change ?? "").replace(/\s+/g, " ").trim();
+  return Boolean(t) && !EDIT_VERB.test(t) && (RERUN_WORD.test(t) || RUN_AGAIN.test(t));
+}
+
+// A fixer (or executor) request the gate should see and a shared change must not: build output, or a check rerun.
+export function isGateRequest(root, rq) {
+  if (!rq || typeof rq !== "object") return false;
+  if (onlyCheckRerun(rq.change)) return true;
+  return typeof rq.path === "string" && rq.path.trim() && isBuildOutput(rq.path, adapterBuild(root));
+}
 
 // ---- agent reply schemas ----
 const EXEC_SCHEMA = {
@@ -92,9 +140,9 @@ export function execSetup({ cfg, args, pending = true }) {
 }
 
 // The plan defects a reply names, plus one owns-reach defect per request for a file outside the agent's owns (kit feedback 64).
-export const defectsOf = (res) => [
+export const defectsOf = (res, root = null) => [
   ...(Array.isArray(res?.plan_defects) ? res.plan_defects : []).filter((d) => PLAN_DEFECT_KINDS.includes(d?.kind)).map((d) => ({ kind: d.kind, evidence: String(d.evidence ?? "").slice(0, 300) })),
-  ...(Array.isArray(res?.requests) ? res.requests : []).filter((rq) => typeof rq?.path === "string" && rq.path.trim() && !isKitDoc(rq.path)).map((rq) => ({ kind: "owns-reach", evidence: `request for ${rq.path.trim().replace(/\\/g, "/")}` })),
+  ...(Array.isArray(res?.requests) ? res.requests : []).filter((rq) => typeof rq?.path === "string" && rq.path.trim() && !isKitDoc(rq.path) && !isGateRequest(root, rq)).map((rq) => ({ kind: "owns-reach", evidence: `request for ${rq.path.trim().replace(/\\/g, "/")}` })),
 ];
 // A resumed run keeps the first run's id and starts from that run's record: the events of skipped work stay, and a replayed event
 // replaces its earlier copy. An event is known by its kind, wave, round, plan, label, fixer and reason, plus `occ`, its count
@@ -111,7 +159,7 @@ export function execDefect(root, phaseDir, { runId, log = null, kind = null, ext
     try { if (prior.exists) state.events.push(...(JSON.parse(prior.text).events ?? [])); } catch { warning = "the plan-defect record of this run is unreadable; it is written again"; }
   }
   if (!kind) return { log: state, defects: [], ...(warning ? { warning } : {}) };
-  const found = [...defectsOf(reply), ...defects];
+  const found = [...defectsOf(reply, root), ...defects];
   const event = { kind, ...extra, cause: found.length ? "plan" : "other", defects: found };
   const base = eventBase(event);
   event.occ = (state.occ[base] ?? 0) + 1;
@@ -271,15 +319,19 @@ export function execBranch(root, phaseDir) {
 }
 
 // exec-route: the requests and kit notes of an agent reply. {from, reply, plans: [{id, owns, summary}], known (the run's notes)} ->
-// {notes (kit feedback 79: kitNotes and requests for the kit-feedback document, none twice), routes: [{plan (the plan owning the path most specifically, G072,
+// {notes (kit feedback 79: kitNotes and requests for the kit-feedback document; kit feedback 107 F2: a build-output path or a change
+// that only asks to rerun a check, `for: "gate"`, none twice), routes: [{plan (the plan owning the path most specifically, G072,
 // or null), q (the request as state-request and state-shared take it)}], asked: [{...request, path, plan}]}.
 export function execRoute(root, { from = null, reply = null, plans = [], known = [] }) {
   const res = reply ?? {};
+  const noteOf = (rq, extra = {}) => ({ plan: from, note: String(rq.change ?? rq.reason ?? "").trim(), from: "request", path: slashPath(rq.path), ...extra });
   const kitAsks = (res.requests ?? []).filter((rq) => rq && typeof rq.path === "string" && isKitDoc(rq.path));
-  const all = [...(Array.isArray(res.kitNotes) ? res.kitNotes.filter((n) => typeof n === "string" && n.trim()).map((n) => ({ plan: from, note: n.trim() })) : []), ...kitAsks.map((rq) => ({ plan: from, note: String(rq.change ?? rq.reason ?? "").trim(), from: "request", path: slashPath(rq.path) }))];
-  // A note the run already has (`known`, the same plan and text) is not repeated.
-  const notes = all.filter((n, i) => ![...known, ...all.slice(0, i)].some((k) => k.plan === n.plan && k.note === n.note));
-  const list = (res.requests ?? []).filter((rq) => rq && typeof rq.path === "string" && rq.path.trim() && !isKitDoc(rq.path)).map((rq) => ({ ...rq, path: slashPath(rq.path) }));
+  const gateAsks = (res.requests ?? []).filter((rq) => rq && typeof rq.path === "string" && rq.path.trim() && !isKitDoc(rq.path) && isGateRequest(root, rq));
+  const all = [...(Array.isArray(res.kitNotes) ? res.kitNotes.filter((n) => typeof n === "string" && n.trim()).map((n) => ({ plan: from, note: n.trim() })) : []), ...kitAsks.map((rq) => noteOf(rq)), ...gateAsks.map((rq) => noteOf(rq, { for: "gate" }))];
+  // A note the run already has (`known`, the same plan, text and path) is not repeated.
+  const sameNote = (a, b) => a.plan === b.plan && a.note === b.note && (a.path ?? null) === (b.path ?? null);
+  const notes = all.filter((n, i) => ![...known, ...all.slice(0, i)].some((k) => sameNote(k, n)));
+  const list = (res.requests ?? []).filter((rq) => rq && typeof rq.path === "string" && rq.path.trim() && !isKitDoc(rq.path) && !isGateRequest(root, rq)).map((rq) => ({ ...rq, path: slashPath(rq.path) }));
   let owners = {};
   if (list.length) try { owners = ownersOf(root, { paths: list.map((rq) => rq.path), plans }).owners; } catch { owners = {}; }
   const ownerOf = (rq) => (owners[rq.path] ?? [])[0] ?? null;

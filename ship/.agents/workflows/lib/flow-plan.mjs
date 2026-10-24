@@ -371,7 +371,8 @@ export function planProbes(root, { runs = {}, filesPerPlan = false, tracerExtraF
     for (const it of items) {
       const sev = String(probe === "owns" ? "blocker" : it.severity ?? defaultSev).toLowerCase();
       if (["none", "ok", "info", ""].includes(sev)) continue;
-      found.push({ probe, plan: it.plan ?? null, severity: sev === "warning" ? "warning" : "blocker", description: typeof it === "string" ? it : it.detail ?? it.message ?? it.description ?? JSON.stringify(it) });
+      const description = typeof it === "string" ? it : it.detail ?? it.message ?? it.description ?? JSON.stringify(it);
+      found.push({ probe, plan: it.plan ?? null, severity: sev === "warning" ? "warning" : "blocker", description, ...(it.fix ? { fix: it.fix } : {}) });
     }
   }
   if (filesPerPlan) found.push(...filesPerPlanProbes(runs.owns?.json, tracerExtraFiles));

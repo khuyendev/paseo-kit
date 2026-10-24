@@ -3,7 +3,7 @@
 // own code (AFTER_CODE): that one is made after the code, before the gate, as every shared change was before. The plan checker
 // (the `check owns` probe) refuses a wave timing the runtime cannot honour, and the shared step marks a change applied without a
 // fixer when the tree holds it at HEAD (presence, used by state-shared op present).
-import { sharedDependencies } from "./planning.mjs";
+import { absentSharedChange, sharedDependencies, sharedLinePath } from "./planning.mjs";
 
 const slash = (p) => String(p ?? "").trim().replace(/\\/g, "/").replace(/^\.\//, "");
 // A timing that waits for the plan's own code: "when AppBootstrap exists", "once the router file exists", "after the plan's code",
@@ -11,12 +11,8 @@ const slash = (p) => String(p ?? "").trim().replace(/\\/g, "/").replace(/^\.\//,
 export const AFTER_CODE = /\b(?:when\s+\S+\s+exists?|once\s+.{1,60}?\s+exists?|after\s+(?:the\s+|this\s+|its\s+)?(?:plan'?s?\s+)?(?:own\s+)?(?:code|implementation|executor|tasks?(?:\s+\d+)?)\b|with\s+the\s+tracer\s+segment)/i;
 const WAVE_REF = /\b(before|after|in|during)\s+(?:plan\s+)?wave\s+(\d+)\b/gi;
 
-// The file a <shared_changes> line changes: its leading `path:` (the rule of outline.mjs sharedChangePaths; outline.mjs imports
-// this module's importer plan-checks.mjs, so it is not imported here).
-function leadingPath(line) {
-  const m = /^\s*(?:[-*]\s+)?`?([^\s:`]+\.[A-Za-z0-9]+|[^\s:`]*\/[^\s:`]+)`?\s*:/.exec(line);
-  return m && !/^[a-z]+:\/\//i.test(line.trim()) ? slash(m[1]) : null;
-}
+// The file a <shared_changes> line changes (planning.mjs sharedLinePath, the same rule as outline.mjs sharedChangePaths).
+const leadingPath = (line) => sharedLinePath(line);
 
 /** The lines of a <shared_changes> text that change `path` (their leading `path:`), trimmed. */
 export const linesFor = (text, path) => String(text ?? "").split(/\r?\n/).map((l) => l.trim()).filter((l) => l && leadingPath(l) === slash(path));
@@ -36,6 +32,21 @@ export function timingIssues(plan) {
           : ["in", "during"].includes(kind) && n !== w ? `gsd-execute makes a plan's shared changes with its own wave ${w}, not wave ${n}; the plan of wave ${n} declares it`
             : null;
       if (why) out.push({ plan: plan.id, kind: "shared-timing", severity: "blocker", line, message: `${plan.id}: <shared_changes> "${line.slice(0, 160)}" asks for "${m[0]}": ${why}` });
+    }
+  }
+  return out;
+}
+
+// Kit feedback 105 F1: a <shared_changes> entry that is not a none/n/a/empty block and names no file. An issue for the plan
+// checker (check owns, with timingIssues), with the fix the reviser applies. A sentinel line beside a real path is not one.
+export function pathlessIssues(plan) {
+  const out = [];
+  for (const text of plan.sharedChanges ?? []) {
+    for (const line of String(text).split(/\r?\n/).map((l) => l.trim()).filter(Boolean)) {
+      if (leadingPath(line) || absentSharedChange(line)) continue;
+      const shown = line.slice(0, 160);
+      const fix = `name the file as \`<path>: ${shown.slice(0, 80)}\`, or replace the <shared_changes> block with None when it is no shared change`;
+      out.push({ plan: plan.id, kind: "shared-path", severity: "blocker", line, fix, message: `${plan.id}: <shared_changes> entry names no file: "${shown}". Fix: ${fix}` });
     }
   }
   return out;

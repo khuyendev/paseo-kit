@@ -233,7 +233,7 @@ test("Q82 83 F3 halt clear, shared clear and request clear append one shape to o
   w.write(`${PD}/01-01-HALT.json`, JSON.stringify({ plan: "01-01", reason: "pick", runId: "wf_x" }));
   assert.equal((await runGsdIn(w, ["halt", "clear", "1", "--plan", "01-01", "--reason", "use v1"])).code, 0);
   w.write(`${PD}/execute-progress.json`, JSON.stringify({ plans: {}, shared: [{ from: "01-01", path: "a.json", change: "c", applied: false, wave: "w1" }], requests: { "01-01": [{ from: "01-02", path: "src/01-01/x.js", change: "c" }] } }));
-  assert.equal((await runGsdIn(w, ["shared", "clear", "1", "w1", "--reason", "done"])).code, 0);
+  assert.equal((await runGsdIn(w, ["shared", "clear", "1", "w1", "--path", "a.json", "--reason", "done"])).code, 0);
   assert.equal((await runGsdIn(w, ["request", "clear", "1", "--plan", "01-01", "--path", "src/01-01/x.js", "--reason", "present"])).code, 0);
   const list = JSON.parse(w.read(`${PD}/owner-answers.json`));
   assert.deepEqual(list.map((x) => [x.id, x.kind, x.plan ?? null]), [["OA-1", "halt", "01-01"], ["OA-2", "shared", null], ["OA-3", "request", "01-01"]]);
