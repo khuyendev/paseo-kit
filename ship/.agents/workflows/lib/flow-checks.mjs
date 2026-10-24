@@ -1,15 +1,19 @@
 // Kit feedback 87 C1: checks may not be weakened silently. `check-weakening <phaseDir>` {base?, files?} compares the test and gate
 // files changed since the base (HEAD by default) with their base content and reports a deleted test file, removed tests, fewer
 // assertions, added skip markers, a changed gate file, and a gate configuration (adapter.commands, verify_vocabulary, checks)
-// that differs from the hash the phase baseline recorded. A weakening stands only when a plan of the phase declares its path in
-// a <check_changes> block or the owner answered `ph gsd allow`. flow-gate.mjs runs it in every gate, so no composition skips it.
+// that differs from the hash the phase baseline recorded. Kit feedback 103: an argv that keeps the old argv and only adds a
+// strictness flag (a timeout, fail-fast, a reporter or output flag, verbosity, or a flag the baseline's
+// adapter.commands.non_weakening_flags already names) is a note, not a weakening; a removed argument, a narrowed filter or
+// path, an added skip, a changed executable, and any verify_vocabulary or checks change still stop. A weakening stands only
+// when a plan of the phase declares its path in a <check_changes> block or the owner answered `ph gsd allow`. flow-gate.mjs
+// runs it in every gate, so no composition skips it.
 // Kit feedback 92: skip markers count only against a base the files had, a marker on a line holding one of
 // adapter.checks.skip_guards (an environment guard) is no skip, and an added-skips weakening names the line of each new marker.
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig, loadKitConfig, mergeOverlay, OVERLAY_REL } from "../../harness/config.mjs";
 import { matchesGlob } from "../../harness/adapter/contract.mjs";
-import { DEBUG_DIR, gateConfigHash } from "../../harness/gsd/allow.mjs";
+import { DEBUG_DIR, gateConfig, gateConfigHash } from "../../harness/gsd/allow.mjs";
 import { checkChanges } from "../../harness/gsd/planning.mjs";
 import { readJsonIf } from "../../harness/lib/io.mjs";
 import { OWNER_ANSWERS_FILE, readAnswers } from "../../harness/lib/owner-answers.mjs";
@@ -427,27 +431,236 @@ function weakenings(entries) {
   return found;
 }
 
+// Same canonical form as harness/gsd/allow.mjs, so a reordered object is no difference.
+const canonical = (v) => (Array.isArray(v) ? `[${v.map(canonical).join(",")}]` : v && typeof v === "object" ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}` : JSON.stringify(v ?? null));
+
+// Kit feedback 103. A command argv that still contains the old argv, in order, and only adds flags from this set is stricter
+// (a hang fails sooner, a failure stops the run, a reporter or a verbosity flag changes no result), so it is a note, not a
+// weakening. `value` is required, optional or none. adapter.commands.non_weakening_flags on the baseline extends the set.
+const STRICTNESS = new Map([
+  ["--timeout", "required"], ["--test-timeout", "required"], ["--timeout-ms", "required"],
+  ["--fail-fast", "none"], ["--bail", "optional"], ["--maxfail", "required"], ["--max-failures", "required"], ["--exitfirst", "none"],
+  ["--reporter", "required"], ["--reporters", "required"], ["--format", "required"], ["--output", "required"], ["--output-file", "required"], ["--out", "required"],
+  ["--verbose", "none"], ["--quiet", "none"], ["-v", "none"], ["-vv", "none"], ["-vvv", "none"],
+]);
+const SKIP_FLAGS = new Set(["--exclude", "--exclude-tags", "--exclude-tag", "--skip", "--skip-test", "--ignore", "--ignore-pattern", "--ignore-glob", "--testPathIgnorePatterns"]);
+const FILTER_FLAGS = new Set(["--name", "--plain-name", "--filter", "--testNamePattern", "--test-name-pattern", "--testPathPattern", "-k"]);
+const COMMAND_KEYS = new Set(["build", "test", "build_timeout_s", "test_timeout_s", "gates", "verify", "smoke_builds", "test_case_timeout_s", "test_case_timeout_arg", "non_weakening_flags"]);
+
+const flagOf = (tok) => { const s = String(tok); const eq = s.indexOf("="); return eq === -1 ? s : s.slice(0, eq); };
+const isObj = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v);
+
+// Tokens of `extra` that are only strictness flags (and their values). Anything else is a weakening, named.
+function parseAdded(extra, declared) {
+  const decl = new Set(declared.filter((f) => typeof f === "string" && f.startsWith("-")));
+  const shown = [];
+  for (let i = 0; i < extra.length; i++) {
+    const tok = String(extra[i]);
+    const name = flagOf(tok);
+    const inline = tok.includes("=");
+    const kit = STRICTNESS.get(name);
+    if (kit === undefined && !decl.has(name)) {
+      if (SKIP_FLAGS.has(name)) return { ok: false, why: `added a skip/exclude flag (${name})` };
+      if (FILTER_FLAGS.has(name)) return { ok: false, why: `narrowed a test filter (${name})` };
+      return { ok: false, why: `added an argument (${tok})` };
+    }
+    const mode = kit ?? "optional";
+    if (inline || mode === "none") { shown.push(inline ? tok : name); continue; }
+    const next = extra[i + 1];
+    const take = next !== undefined && !String(next).startsWith("-");
+    if (mode === "required" && !take) return { ok: false, why: `added an argument (${tok})` };
+    if (take) { shown.push(`${name} ${next}`); i++; }
+    else shown.push(name);
+  }
+  return { ok: true, shown };
+}
+
+// The old argv kept, in order, with the tokens the new argv added around it; null when an old token was dropped or changed.
+function addedAround(oldArgv, newArgv) {
+  const extra = [];
+  let i = 0;
+  for (const tok of newArgv) {
+    if (i < oldArgv.length && tok === oldArgv[i]) i++;
+    else extra.push(tok);
+  }
+  return i === oldArgv.length ? extra : null;
+}
+
+const multisetMinus = (a, b) => {
+  const left = new Map();
+  for (const t of b) left.set(t, (left.get(t) ?? 0) + 1);
+  const out = [];
+  for (const t of a) {
+    if (left.get(t)) left.set(t, left.get(t) - 1);
+    else out.push(t);
+  }
+  return out;
+};
+
+const looksPath = (t) => typeof t === "string" && !t.startsWith("-") && (t.includes("/") || t.includes("\\") || /\.[A-Za-z0-9]+$/.test(t));
+const normPath = (t) => String(t).replace(/\\/g, "/").replace(/\/+$/, "");
+
+// One command argv against the one the baseline ran. `strict` is a note; `weak` names why it still stops.
+function classifyArgv(oldArgv, newArgv, declared) {
+  if (canonical(oldArgv ?? null) === canonical(newArgv ?? null)) return { kind: "same" };
+  if (!Array.isArray(oldArgv) || !Array.isArray(newArgv)) {
+    if (Array.isArray(oldArgv) && newArgv == null) return { kind: "weak", why: "removed the command" };
+    if (oldArgv == null && Array.isArray(newArgv)) return { kind: "weak", why: "set where it was unset" };
+    return { kind: "weak", why: "changed the command" };
+  }
+  if (oldArgv[0] !== newArgv[0]) return { kind: "weak", why: "changed the executable" };
+  const extra = addedAround(oldArgv, newArgv);
+  if (extra) {
+    if (!extra.length) return { kind: "same" };
+    const parsed = parseAdded(extra, declared);
+    return parsed.ok ? { kind: "strict", shown: parsed.shown } : { kind: "weak", why: parsed.why };
+  }
+  const missing = multisetMinus(oldArgv, newArgv);
+  const added = multisetMinus(newArgv, oldArgv);
+  const skip = added.map(flagOf).find((n) => SKIP_FLAGS.has(n));
+  if (skip) return { kind: "weak", why: `added a skip/exclude flag (${skip})` };
+  const filter = added.map(flagOf).find((n) => FILTER_FLAGS.has(n));
+  if (filter) return { kind: "weak", why: `narrowed a test filter (${filter})` };
+  if (missing.length && added.length && missing.every(looksPath) && added.every(looksPath) && added.every((a) => missing.some((m) => { const A = normPath(a); const M = normPath(m); return A !== M && A.startsWith(`${M}/`); }))) {
+    return { kind: "weak", why: `narrowed a test path (${missing.join(" ")} -> ${added.join(" ")})` };
+  }
+  if (missing.length) return { kind: "weak", why: `removed an argument (${missing.join(" ")})` };
+  if (added.length) return { kind: "weak", why: `added an argument (${added.join(" ")})` };
+  return { kind: "weak", why: "changed an argument" };
+}
+
+function judgeArgv(label, oldArgv, newArgv, declared, weakenings, notes) {
+  const judged = classifyArgv(oldArgv, newArgv, declared);
+  if (judged.kind === "weak") weakenings.push(`${label} ${judged.why}`);
+  else if (judged.kind === "strict") notes.push(`${label} keeps its argv and adds strictness (${judged.shown.join(", ")}); not a weakening`);
+}
+
+// Gates pair by name (a pure reorder is a note). A verify runner and a smoke argv pair by key and by index.
+function judgeSlots(oldC, newC, declared, weakenings, notes) {
+  judgeArgv("adapter.commands.build", oldC.build ?? null, newC.build ?? null, declared, weakenings, notes);
+  judgeArgv("adapter.commands.test", oldC.test ?? null, newC.test ?? null, declared, weakenings, notes);
+  judgeArgv("adapter.commands.test_case_timeout_arg", oldC.test_case_timeout_arg ?? null, newC.test_case_timeout_arg ?? null, declared, weakenings, notes);
+  for (const k of ["build_timeout_s", "test_timeout_s", "test_case_timeout_s"]) {
+    if ((oldC[k] ?? null) !== (newC[k] ?? null)) weakenings.push(`adapter.commands.${k} differs`);
+  }
+  if (canonical(oldC.gates ?? null) !== canonical(newC.gates ?? null)) {
+    if (!Array.isArray(oldC.gates) || !Array.isArray(newC.gates)) weakenings.push("adapter.commands.gates differs");
+    else {
+      const used = new Set();
+      let reorder = false;
+      const before = weakenings.length;
+      oldC.gates.forEach((g, i) => {
+        const at = newC.gates.findIndex((n, idx) => !used.has(idx) && n?.name === g?.name);
+        if (at < 0) { weakenings.push(`adapter.commands.gates.${g?.name ?? i} removed`); return; }
+        used.add(at);
+        if (at !== i) reorder = true;
+        judgeArgv(`adapter.commands.gates.${g?.name ?? i}`, g?.argv ?? null, newC.gates[at]?.argv ?? null, declared, weakenings, notes);
+      });
+      newC.gates.forEach((n, i) => { if (!used.has(i)) weakenings.push(`adapter.commands.gates.${n?.name ?? i} added`); });
+      if (reorder && weakenings.length === before && used.size === oldC.gates.length && used.size === newC.gates.length) notes.push("adapter.commands.gates reordered; not a weakening");
+    }
+  }
+  if (canonical(oldC.verify ?? null) !== canonical(newC.verify ?? null)) {
+    if (!isObj(oldC.verify) || !isObj(newC.verify)) weakenings.push("adapter.commands.verify differs");
+    else {
+      for (const k of Object.keys(oldC.verify)) {
+        if (!Object.hasOwn(newC.verify, k)) { weakenings.push(`adapter.commands.verify.${k} removed`); continue; }
+        judgeArgv(`adapter.commands.verify.${k}`, oldC.verify[k]?.argv ?? null, newC.verify[k]?.argv ?? null, declared, weakenings, notes);
+        if ((oldC.verify[k]?.timeout_s ?? null) !== (newC.verify[k]?.timeout_s ?? null)) weakenings.push(`adapter.commands.verify.${k} timeout_s differs`);
+      }
+      for (const k of Object.keys(newC.verify)) if (!Object.hasOwn(oldC.verify, k)) weakenings.push(`adapter.commands.verify.${k} added`);
+    }
+  }
+  const oldSmoke = Array.isArray(oldC.smoke_builds) ? oldC.smoke_builds : [];
+  const newSmoke = Array.isArray(newC.smoke_builds) ? newC.smoke_builds : [];
+  if (canonical(oldSmoke) !== canonical(newSmoke)) {
+    const n = Math.max(oldSmoke.length, newSmoke.length);
+    for (let i = 0; i < n; i++) {
+      if (i >= oldSmoke.length) weakenings.push(`adapter.commands.smoke_builds[${i}] added`);
+      else if (i >= newSmoke.length) weakenings.push(`adapter.commands.smoke_builds[${i}] removed`);
+      else judgeArgv(`adapter.commands.smoke_builds[${i}]`, oldSmoke[i], newSmoke[i], declared, weakenings, notes);
+    }
+  }
+  for (const k of [...new Set([...Object.keys(oldC), ...Object.keys(newC)])].sort()) {
+    if (COMMAND_KEYS.has(k)) continue;
+    if (canonical(oldC[k] ?? null) !== canonical(newC[k] ?? null)) weakenings.push(`adapter.commands.${k} differs`);
+  }
+}
+
+/** How a gate-configuration object changed since the baseline one. verify_vocabulary and checks are never reclassified;
+ * a command argv is a note only when it kept the old argv and added strictness flags. An empty weakening with no note
+ * means the difference was not recognised (the caller stops, fail closed). */
+export function judgeGateConfig(was, now) {
+  const weakenings = [];
+  const notes = [];
+  const oldC = isObj(was?.commands) ? was.commands : {};
+  const newC = isObj(now?.commands) ? now.commands : {};
+  if (!isObj(was?.commands) || !isObj(now?.commands)) weakenings.push("adapter.commands differs");
+  else {
+    const oldFlags = Array.isArray(oldC.non_weakening_flags) ? oldC.non_weakening_flags : [];
+    const newFlags = Array.isArray(newC.non_weakening_flags) ? newC.non_weakening_flags : [];
+    if (canonical(oldFlags) !== canonical(newFlags)) notes.push("adapter.commands.non_weakening_flags changed; a flag newly named there does not cover a command change in the same comparison");
+    judgeSlots(oldC, newC, oldFlags, weakenings, notes);
+  }
+  if (canonical(was?.verify_vocabulary ?? null) !== canonical(now?.verify_vocabulary ?? null)) weakenings.push("adapter.verify_vocabulary differs");
+  if (canonical(was?.checks ?? null) !== canonical(now?.checks ?? null)) weakenings.push("adapter.checks differs");
+  return { weakenings, notes };
+}
+
+// The object whose hash the baseline recorded: the stored body when it still hashes to gateConfig, else the overlay of
+// the baseline commit merged with the current kit defaults when that merge does. A dirty overlay an older kit recorded
+// only as a hash cannot be classified.
+function priorBody(root, baseline, wasHash) {
+  const stored = baseline?.gateConfigBody;
+  if (isObj(stored) && gateConfigHash({ adapter: stored }) === wasHash) return stored;
+  const rev = typeof baseline?.head === "string" ? baseline.head : null;
+  if (!rev) return null;
+  const at = git(root, ["show", `${rev}:${OVERLAY_REL}`], { allowFail: true });
+  if (at.code !== 0) return null;
+  try {
+    const merged = gateConfig(mergeOverlay(loadKitConfig(), JSON.parse(at.out)));
+    return gateConfigHash({ adapter: merged }) === wasHash ? merged : null;
+  } catch {
+    return null;
+  }
+}
+
 // The gate configuration against the hash execute-baseline.json recorded before the phase's first agent; a baseline without one
 // (written by an older kit) and the debug flow compare with the overlay of the base commit, merged with the current kit defaults.
+// Kit feedback 103: a difference is classified per command. An argv that only adds strictness flags is a note; a removed
+// argument, a narrowed filter or path, an added skip, a changed executable, and any verify_vocabulary or checks change, stop.
 function configChange(root, dir, cfg, base, baseline, notes) {
+  const nowBody = gateConfig(cfg);
   const now = gateConfigHash(cfg);
-  let was = typeof baseline?.gateConfig === "string" ? baseline.gateConfig : null;
+  let wasHash = typeof baseline?.gateConfig === "string" ? baseline.gateConfig : null;
+  let wasBody = null;
   let source = "the phase baseline (execute-baseline.json)";
-  if (!was) {
+  if (wasHash) wasBody = priorBody(root, baseline, wasHash);
+  else {
     const at = base ? git(root, ["show", `${base}:${OVERLAY_REL}`], { allowFail: true }) : { code: 1 };
     if (at.code !== 0 && fs.existsSync(path.join(root, OVERLAY_REL))) {
       notes.push(`gate configuration not compared: ${OVERLAY_REL} is not in the base commit and the phase baseline records no gateConfig`);
       return null;
     }
     try {
-      was = gateConfigHash(mergeOverlay(loadKitConfig(), at.code === 0 ? JSON.parse(at.out) : {}));
+      wasBody = gateConfig(mergeOverlay(loadKitConfig(), at.code === 0 ? JSON.parse(at.out) : {}));
+      wasHash = gateConfigHash({ adapter: wasBody });
     } catch (e) {
       notes.push(`gate configuration not compared: ${OVERLAY_REL} of the base does not load (${e.message})`);
       return null;
     }
     source = `${OVERLAY_REL} at ${base.slice(0, 7)}`;
   }
-  return was === now ? null : { path: OVERLAY_REL, kind: "config-changed", detail: `adapter.commands, adapter.verify_vocabulary or adapter.checks differ from ${source}`, config: now };
+  if (wasHash === now) return null;
+  const stop = (detail) => ({ path: OVERLAY_REL, kind: "config-changed", detail, config: now });
+  if (!wasBody) return stop(`adapter.commands, adapter.verify_vocabulary or adapter.checks differ from ${source}`);
+  const judged = judgeGateConfig(wasBody, nowBody);
+  for (const n of judged.notes) notes.push(n);
+  if (!judged.weakenings.length) {
+    if (judged.notes.length) return null;
+    return stop(`adapter.commands, adapter.verify_vocabulary or adapter.checks differ from ${source}`);
+  }
+  return stop(`${judged.weakenings.join("; ")}; differ from ${source}`);
 }
 
 // What may weaken: <check_changes> lines of the phase's plans, and the owner's `allow` answers of the phase.

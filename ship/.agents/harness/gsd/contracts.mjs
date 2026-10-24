@@ -4,6 +4,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { readJsonIf, writeJsonAtomic } from "../lib/io.mjs";
+import { loadConfig } from "../config.mjs";
+import { matchesGlob } from "../adapter/contract.mjs";
 import { asArray, done, escapeRe, fail, none, readIf, rel, withFileLock } from "./common.mjs";
 import { covers, ownsPath } from "./adapter-hooks.mjs";
 import { normPlanId, phaseFile, readPlans } from "./planning.mjs";
@@ -292,9 +294,117 @@ export function contractDrift(before = {}, after = {}) {
 
 // --- F5: the produced symbols after execute (called by the wave gate) ---
 
+// A catalog signature is one key path, optionally with a `{ ... }` body of the same form. `name({{token}})` (and
+// `name({{a}}, {{b}})`) is the key `name`: the placeholder marks the string, it is not a child. `a.b { c, d }` means the keys
+// `a.b.c` and `a.b.d`; a plain `a.b.c` is that one path. Null when the signature is not this form (a code signature).
+export function signatureKeyPaths(signature) {
+  const s = String(signature ?? "").replace(/`/g, "").trim();
+  if (!s) return null;
+  let tokens;
+  try { tokens = tokenizeSignature(s); } catch { return null; }
+  try {
+    const p = { tokens, i: 0 };
+    const paths = parseMember(p).map((segs) => segs.join("."));
+    if (p.i !== p.tokens.length || !paths.length) return null;
+    return paths;
+  } catch { return null; }
+}
+
+function tokenizeSignature(s) {
+  const out = [];
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (/\s/.test(c)) { i++; continue; }
+    if (s.startsWith("{{", i)) {
+      const end = s.indexOf("}}", i + 2);
+      if (end < 0) throw new Error("placeholder");
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(s.slice(i + 2, end).trim())) throw new Error("placeholder");
+      out.push({ t: "ph" });
+      i = end + 2;
+      continue;
+    }
+    if ("{}(),.".includes(c)) { out.push({ t: c }); i++; continue; }
+    const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(s.slice(i));
+    if (!m) throw new Error("token");
+    out.push({ t: "id", v: m[0] });
+    i += m[0].length;
+  }
+  return out;
+}
+
+function parseSegment(p) {
+  const tok = p.tokens[p.i];
+  if (tok?.t !== "id") throw new Error("id");
+  p.i++;
+  if (p.tokens[p.i]?.t !== "(") return tok.v;
+  p.i++;
+  if (p.tokens[p.i]?.t !== "ph") throw new Error("ph");
+  p.i++;
+  while (p.tokens[p.i]?.t === ",") {
+    p.i++;
+    if (p.tokens[p.i]?.t !== "ph") throw new Error("ph");
+    p.i++;
+  }
+  if (p.tokens[p.i]?.t !== ")") throw new Error(")");
+  p.i++;
+  return tok.v;
+}
+
+function parsePath(p) {
+  const segs = [parseSegment(p)];
+  while (p.tokens[p.i]?.t === ".") { p.i++; segs.push(parseSegment(p)); }
+  return segs;
+}
+
+function parseMember(p) {
+  const segs = parsePath(p);
+  if (p.tokens[p.i]?.t !== "{") return [segs];
+  p.i++;
+  const kids = [];
+  if (p.tokens[p.i]?.t !== "}") {
+    kids.push(parseMember(p));
+    while (p.tokens[p.i]?.t === ",") {
+      p.i++;
+      if (p.tokens[p.i]?.t === "}") break;
+      kids.push(parseMember(p));
+    }
+  }
+  if (p.tokens[p.i]?.t !== "}") throw new Error("brace");
+  p.i++;
+  return kids.flatMap((k) => k.map((path) => [...segs, ...path]));
+}
+
+const catalogGlobs = (root) => {
+  try {
+    const list = loadConfig(root).adapter.catalogs;
+    return Array.isArray(list) ? list : [];
+  } catch { return []; }
+};
+
+// `.json`, or a file the adapter names with adapter.catalogs. A bad glob matches nothing rather than failing the gate.
+function isCatalog(file, globs) {
+  const rel = String(file ?? "").replace(/\\/g, "/");
+  if (path.posix.extname(rel).toLowerCase() === ".json") return true;
+  return globs.some((g) => { try { return matchesGlob(rel, g); } catch { return false; } });
+}
+
+const parseJson = (text) => { try { return JSON.parse(String(text).replace(/^﻿/, "")); } catch { return undefined; } };
+
+function hasKeyPath(value, keyPath) {
+  let cur = value;
+  for (const seg of keyPath.split(".")) {
+    if (!cur || typeof cur !== "object" || Array.isArray(cur) || !Object.hasOwn(cur, seg)) return false;
+    cur = cur[seg];
+  }
+  return true;
+}
+
 // For each plan of `planIds` the manifest says produces structured symbols: the declared file exists and holds the symbol's last
 // identifier segment as a word. The signature text is compared too, but a code form differs by language, so a textual mismatch
-// is a note, not a failure. Returns [{plan, ok, problems, notes, symbols}] for the plans that produce something.
+// is a note, not a failure. A catalog file (`.json`, or a file matching `adapter.catalogs`) whose signature is a key path is
+// checked by those keys instead (kit feedback 103): a missing key is a note naming the path, and a file that holds them has no
+// note. A signature that is not a key path keeps the text comparison. Returns [{plan, ok, problems, notes, symbols}].
 export function producedCheck(root, phaseDir, planIdList) {
   const dir = path.resolve(root, phaseDir);
   const nn = /^(\d+(?:\.\d+)*)/.exec(path.basename(dir))?.[1];
@@ -303,6 +413,7 @@ export function producedCheck(root, phaseDir, planIdList) {
   let manifest;
   try { manifest = readJsonIf(path.join(dir, `${padded}-PLAN-OUTLINE.manifest.json`), null); } catch { return []; }
   if (!manifest) return [];
+  const globs = catalogGlobs(root);
   const out = [];
   for (const entry of entriesOf(manifest)) {
     if (!planIdList.includes(String(entry.id))) continue;
@@ -315,7 +426,14 @@ export function producedCheck(root, phaseDir, planIdList) {
       try { text = fs.readFileSync(path.resolve(root, p.file), "utf8"); } catch { text = null; }
       if (text === null) { problems.push(`${p.symbol}: declared file ${p.file} does not exist`); continue; }
       if (!wordIn(text, lastSegment(p.symbol))) { problems.push(`${p.symbol}: ${lastSegment(p.symbol)} is not in ${p.file}`); continue; }
-      if (!squash(text).includes(squash(p.signature))) notes.push(`${p.symbol}: ${p.file} does not hold the manifest signature text (${p.signature})`);
+      const paths = isCatalog(p.file, globs) ? signatureKeyPaths(p.signature) : null;
+      if (!paths) {
+        if (!squash(text).includes(squash(p.signature))) notes.push(`${p.symbol}: ${p.file} does not hold the manifest signature text (${p.signature})`);
+        continue;
+      }
+      const json = parseJson(text);
+      if (json === undefined) { notes.push(`${p.symbol}: ${p.file} is not JSON, so its key paths were not checked`); continue; }
+      for (const keyPath of paths) if (!hasKeyPath(json, keyPath)) notes.push(`${p.symbol}: ${p.file} missing key path ${keyPath}`);
     }
     out.push({ plan: String(entry.id), ok: problems.length === 0, problems, notes, symbols: symbols.length });
   }
