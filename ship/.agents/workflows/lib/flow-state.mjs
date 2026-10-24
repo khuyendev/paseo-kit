@@ -7,7 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../../harness/config.mjs";
-import { matchesGlob } from "../../harness/adapter/contract.mjs";
+import { asGlob, matchesGlob } from "../../harness/adapter/contract.mjs";
 import { withFileLock } from "../../harness/gsd/common.mjs";
 import { presence } from "../../harness/gsd/shared-changes.mjs";
 import { textDigest } from "../../harness/lib/hash.mjs";
@@ -66,7 +66,7 @@ function update(root, phaseDir, fn) {
 function generatedTest(root) {
   let globs = [];
   try { globs = loadConfig(root).adapter.ownership.regenerated ?? []; } catch { globs = []; }
-  return (p) => globs.some((g) => matchesGlob(p, g));
+  return (p) => globs.some((g) => { const glob = asGlob(g); return Boolean(glob) && matchesGlob(p, glob); });
 }
 const relPath = (p, what) => {
   const s = slash(p);

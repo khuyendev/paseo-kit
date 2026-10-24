@@ -69,7 +69,9 @@ export function renderPrompt(root, name, vars = {}) {
     const raw = templateText(readText(file));
     // The stack-skill line is optional. A composition written before the line existed does not pass stackSkill;
     // omitting it is the same as empty, so the line stays out and a resumed run still matches the old prompt.
-    const varsIn = raw.includes("{{#stackSkill}}") && !given(vars, "stackSkill") ? { ...vars, stackSkill: "" } : vars;
+    const varsIn = { ...vars };
+    if (raw.includes("{{#stackSkill}}") && !given(vars, "stackSkill")) varsIn.stackSkill = "";
+    if (raw.includes("{{#generated}}") && !given(vars, "generated")) varsIn.generated = "";
     const { text, unused } = fillTemplate(raw, varsIn);
     return { name, path: rel, text, unused };
   } catch (e) {

@@ -10,7 +10,7 @@ import { git, gitLines, head, status } from "./flow-git.mjs";
 import { contentHash, keyFiles, owned, ownsPath, ownsPrefixes, specificOwners } from "./flow-owns.mjs";
 import { overlaps } from "../../harness/gsd/adapter-hooks.mjs";
 import { gateConfig, gateConfigHash } from "../../harness/gsd/allow.mjs";
-import { matchesGlob } from "../../harness/adapter/contract.mjs";
+import { asGlob, matchesGlob } from "../../harness/adapter/contract.mjs";
 import { readWorktreeSeed } from "../../harness/runtime/worktree-seed.mjs";
 import { leftoverWorktrees, retireWorktree, runGit } from "../../harness/runtime/worktrees.mjs";
 import { DEFAULT_RUNS_DIR } from "../../harness/workflow/journal.mjs";
@@ -78,7 +78,7 @@ export function regeneratedSeed(stack, own) {
 const ownershipGlobs = (root, key) => {
   let globs = [];
   try { globs = loadConfig(root).adapter.ownership[key] ?? []; } catch { globs = []; }
-  return (p) => globs.some((g) => matchesGlob(p, g));
+  return (p) => globs.some((g) => { const glob = asGlob(g); return Boolean(glob) && matchesGlob(p, glob); });
 };
 // adapter.ownership.ignore: paths the orchestrator or the owner edits during a run (notes, feedback logs, kit-feedback
 // 23); neither the resume gate nor the commit check treats them as plan output.

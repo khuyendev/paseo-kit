@@ -172,6 +172,42 @@ export function matchesGlob(relPath, glob) {
   return path.posix.matchesGlob(rel, glob) || (glob.endsWith("/**") && rel === glob.slice(0, -3));
 }
 
+// A regenerated or generated entry: a glob string, or {glob, source?} (kit feedback 120). A string has no source.
+export function asGlob(entry) {
+  if (typeof entry === "string") return entry;
+  if (entry && typeof entry === "object" && typeof entry.glob === "string") return entry.glob;
+  return "";
+}
+
+export function entrySource(entry) {
+  return entry && typeof entry === "object" && typeof entry.source === "string" && entry.source.trim() ? entry.source.trim() : null;
+}
+
+// adapter.ownership.regenerated, then optional adapter.generated. An unreadable shape contributes nothing.
+export function generatedRules(cfg) {
+  const own = cfg?.adapter?.ownership?.regenerated ?? [];
+  const extra = cfg?.adapter?.generated ?? [];
+  const out = [];
+  for (const e of [...own, ...extra]) {
+    const glob = asGlob(e);
+    if (glob) out.push({ glob, source: entrySource(e) });
+  }
+  return out;
+}
+
+// The first matching rule; a later rule replaces it when only the later one names a source.
+export function generatedMatch(rules, rel) {
+  let hit = null;
+  for (const r of rules ?? []) {
+    if (!r?.glob) continue;
+    let ok = false;
+    try { ok = matchesGlob(rel, r.glob); } catch { ok = false; }
+    if (!ok) continue;
+    if (!hit || (!hit.source && r.source)) hit = r;
+  }
+  return hit;
+}
+
 // ADPT-04: shared by the adapter's globs (the predicate script is asked through hooks.mjs `shared`).
 export const isSharedByGlobs = (cfg, relPath) => cfg.adapter.ownership.shared.globs.some((g) => matchesGlob(relPath, g));
 

@@ -34,6 +34,8 @@ export function executeSteps(kit, run) {
   // without a reply and the owner's answers taken (85, 83); hand edits (68); paths reported, never committed (77, 80); refused
   // state writes (91 F3).
   const [waveResults, warnings, skipped, events, pendingTasks, kitNotes, discarded, requestsClosed, ownerAnswers] = [[], [], [], [], [], [], [], [], []];
+  // Kit feedback 121: set in lock() from map-drift. Execute does not stop; the result names remap when the map is stale.
+  let mapDrift = null;
   const [worktrees, keptTrees, seeds] = [{}, {}, {}];
   let sharedChanges = [];
   let pendingRequests = {};
@@ -46,7 +48,7 @@ export function executeSteps(kit, run) {
     // Kit feedback 126 F3: the run's last log line names the worktrees this run kept and the command that removes them
     // once the phase's waves are committed. The success path logs the leftover-worktrees note first, then this.
     if (trees?.kept?.length) log(`kept ${trees.kept.length} executor worktree(s): ${trees.kept.map((k) => `${k.plan} ${k.path}`).join("; ")}; ph worktrees --prune --committed-phase ${N} removes them once this phase's waves are committed`);
-    return { status, phaseDir, mode: execMode, isolation: cfg.gsd.isolation, waves: waveResults, sharedChanges, ...(Object.keys(pendingRequests).length ? { requests: pendingRequests } : {}), ...(skipped.length ? { skipped } : {}), ...(trees ? { worktrees: trees } : {}), ...(handEdits ? { handEdits } : {}), ...(reported.outsideRoots.size ? { outsideRoots: [...reported.outsideRoots] } : {}), ...(reported.eolOnly.size ? { eolOnly: [...reported.eolOnly] } : {}), ...(pendingTasks.some((p) => !p.commit) ? { pendingRequestTasks: pendingTasks.filter((p) => !p.commit) } : {}), ...(pendingTasks.some((p) => p.commit) ? { pendingSettled: pendingTasks.filter((p) => p.commit) } : {}), ...(kitNotes.length ? { kitNotes } : {}), ...(ownerAnswers.length ? { ownerAnswers } : {}), ...(requestsClosed.length ? { requestsClosed } : {}), ...(warnings.length ? { warnings } : {}), events, ...extra };
+    return { status, phaseDir, mode: execMode, isolation: cfg.gsd.isolation, waves: waveResults, sharedChanges, ...(Object.keys(pendingRequests).length ? { requests: pendingRequests } : {}), ...(skipped.length ? { skipped } : {}), ...(trees ? { worktrees: trees } : {}), ...(handEdits ? { handEdits } : {}), ...(reported.outsideRoots.size ? { outsideRoots: [...reported.outsideRoots] } : {}), ...(reported.eolOnly.size ? { eolOnly: [...reported.eolOnly] } : {}), ...(pendingTasks.some((p) => !p.commit) ? { pendingRequestTasks: pendingTasks.filter((p) => !p.commit) } : {}), ...(pendingTasks.some((p) => p.commit) ? { pendingSettled: pendingTasks.filter((p) => p.commit) } : {}), ...(kitNotes.length ? { kitNotes } : {}), ...(ownerAnswers.length ? { ownerAnswers } : {}), ...(requestsClosed.length ? { requestsClosed } : {}), ...(warnings.length ? { warnings } : {}), ...(mapDrift?.advisory ? { advisories: [mapDrift.advisory], mapDrift, remap: mapDrift.paths ?? [] } : {}), events, ...extra };
   };
   // Kit feedback 87 C1: a red gate whose failures hold the gate's check-weakening step stops at stage Checks with its answers (ph gsd allow).
   const owner = (stage, reason, extra = {}) => {
@@ -105,6 +107,11 @@ export function executeSteps(kit, run) {
   let phaseLease = null;
   let lease = null;
   async function lock() {
+    if (!mapDrift) {
+      mapDrift = (await flow(["map-drift"], { reason: a.staleMapReason ?? null })).json ?? {};
+      // A missing map is not news on execute (the plan and research runs already say so). Drift is.
+      for (const l of mapDrift.logs ?? []) if (!l.startsWith("drift check skipped:")) log(l);
+    }
     const guard = await flow(["cwd-guard", cfg.worktree_dir]);
     if (guard.code !== 0) return result("refused", { reason: (guard.json?.problems ?? ["cwd guard failed"]).join("; "), stranded: guard.json?.stranded ?? [], dirty: guard.json?.dirty ?? [] });
     phaseLease = await flow(["lock", `phase-${nn}`, runId, "gsd-execute"]);
@@ -831,7 +838,7 @@ export function executeSteps(kit, run) {
     }
     const record = p.record;
     if (record.scope.length) {
-      const prompt = await renderPrompt("code-review", { plan: t.plan, planPath: planPath(t.plan), depth: String(P.reviewDepth), scope: record.scope.join(", "), lines: p.changedText, codeOnly, built, lenses: p.lensText, stackSkill: stackSkillArg(), digest: digestLine(`review:${t.plan}`, record.stamp) });
+      const prompt = await renderPrompt("code-review", { plan: t.plan, planPath: planPath(t.plan), depth: String(P.reviewDepth), scope: record.scope.join(", "), lines: p.changedText, codeOnly, built, lenses: p.lensText, stackSkill: stackSkillArg(), generated: p.generatedText ?? "", digest: digestLine(`review:${t.plan}`, record.stamp) });
       // Each reviewer reviews the plan on its own; their findings are kept apart (ids R2-, R3-, ...), not merged.
       const replies = await parallel(P.reviewers.map((rv, k) => async () => {
         const opts = { label: `review-${t.plan}${k ? `-r${k + 1}` : ""}`, agentType: agentFor("reviewer", "gsd-code-reviewer"), role: "reviewer", readOnly: true, schema: schemas.findings, ...(rv.model ? { model: rv.model } : {}), ...(rv.effort ? { effort: rv.effort } : {}) };

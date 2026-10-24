@@ -7,7 +7,7 @@ import { digest } from "./flow-gate.mjs";
 import { ownersOf } from "./flow-execute.mjs";
 import { readState } from "./flow-state.mjs";
 import { changedLines, reviewScope, writePrereview } from "./flow-review.mjs";
-import { matchesGlob } from "../../harness/adapter/contract.mjs";
+import { asGlob, matchesGlob } from "../../harness/adapter/contract.mjs";
 import { loadConfig } from "../../harness/config.mjs";
 import { acceptedStatus } from "../../harness/gsd/accepted.mjs";
 import { waitsForCode } from "../../harness/gsd/shared-changes.mjs";
@@ -51,7 +51,7 @@ export function isBuildOutput(filePath, { regenerated = [], sourceRoots = [] } =
   if (!ARTIFACT_EXT.has(ext)) return false;
   const roots = sourceRoots.map((r) => slashPath(r).replace(/\/+$/, "")).filter(Boolean);
   const outside = roots.length > 0 && !roots.some((r) => p === r || p.startsWith(`${r}/`) || (/[*?[]/.test(r) && matchesGlob(p, r)));
-  const generated = regenerated.some((g) => matchesGlob(p, g));
+  const generated = regenerated.some((g) => { const glob = asGlob(g); return Boolean(glob) && matchesGlob(p, glob); });
   return generated || outside;
 }
 
@@ -497,11 +497,11 @@ export function execReview(root, phaseDir, { waveId, plan, planHash = null, summ
   const scope = sc.scope ?? [];
   const lensList = lensesFor(lenses, scope);
   const key = { plan: planHash, summary: summarySha, lenses: lensList.map((l) => l.name), reviewers };
-  const record = { plan, scope, excluded: sc.excluded ?? [], lenses: lensList.map((l) => l.name), codeOnly, findings: [], resolution: [], key, stamp: null, fixPass: 0 };
+  const record = { plan, scope, excluded: sc.excluded ?? [], generated: sc.generated ?? [], lenses: lensList.map((l) => l.name), codeOnly, findings: [], resolution: [], key, stamp: null, fixPass: 0 };
   if (scope.length) try { record.stamp = digest(root, { files: scope }).hash ?? "none"; } catch { record.stamp = "none"; }
   let prior = null;
   try { const r = files.read(root, `${phaseDir}/review/${waveId}-${plan}.json`); prior = r.exists ? JSON.parse(r.text) : null; } catch { prior = null; }
-  const out = { status: "ok", log: sc.log ?? [], record };
+  const out = { status: "ok", log: sc.log ?? [], record, generatedText: sc.generatedText ?? "" };
   if (prior && JSON.stringify(prior.key) === JSON.stringify(key) && JSON.stringify(prior.scope) === JSON.stringify(record.scope)) {
     const openAt = prior.findings.map((f, i) => (f.status === "gated" && !["confirmed", "refuted"].includes(f.verdict) ? i : -1)).filter((i) => i >= 0);
     if (!openAt.length && (prior.fixPass ?? 0) >= 1) return { ...out, replay: "resolution", prior };

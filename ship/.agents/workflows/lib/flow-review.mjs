@@ -7,6 +7,8 @@ import { isInside, resolveInside, toSlash } from "../../harness/lib/paths.mjs";
 import { git } from "./flow-git.mjs";
 import { keyFiles } from "./flow-owns.mjs";
 import { physicalPath } from "../../harness/gsd/adapter-hooks.mjs";
+import { loadConfig } from "../../harness/config.mjs";
+import { generatedMatch, generatedRules } from "../../harness/adapter/contract.mjs";
 
 const LOCKFILES = /(^|\/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|Cargo\.lock|poetry\.lock|Pipfile\.lock|uv\.lock|Gemfile\.lock|composer\.lock|go\.sum|[^/]+\.lock)$/;
 const SEVERITIES = ["critical", "high", "medium", "low", "info"];
@@ -35,6 +37,29 @@ function actualChanges(root, phaseDir, plan) {
   return { source: null, files: [] };
 }
 
+function generatedIndex(root) {
+  try { return generatedRules(loadConfig(root)); } catch { return []; }
+}
+
+// Kit feedback 120: generated output has no authored logic. Drop it from the scope and list it by name.
+// `generated from <source>` when the matching regenerated or generated entry names a source.
+function dropGenerated(root, scope, excluded) {
+  const rules = generatedIndex(root);
+  const generated = [];
+  if (!rules.length) return { scope, generated };
+  const kept = [];
+  for (const p of scope) {
+    const hit = generatedMatch(rules, p);
+    if (!hit) { kept.push(p); continue; }
+    const row = { path: p, ...(hit.source ? { source: hit.source } : {}) };
+    generated.push(row);
+    excluded.push({ path: p, reason: "generated", ...(hit.source ? { source: hit.source } : {}) });
+  }
+  return { scope: kept, generated };
+}
+
+const generatedTextOf = (generated) => (generated ?? []).map((g) => (g.source ? `${g.path} (generated from ${g.source})` : g.path)).join(", ");
+
 // Planning artifacts, lockfiles and deleted paths are no review scope.
 function excludeNonCode(root, scope, excluded) {
   return scope.filter((p) => {
@@ -58,7 +83,10 @@ export function reviewScope(root, phaseDir, { plan, files, filterExplicit = fals
       if (n) listed.push(n);
       else excluded.push({ path: f, reason: "outside the code root" });
     }
-    return { plan, source: "explicit", scope: filterExplicit ? excludeNonCode(root, listed, excluded) : listed, excluded, log };
+    const listedScope = filterExplicit ? excludeNonCode(root, listed, excluded) : listed;
+    const dropped = dropGenerated(root, listedScope, excluded);
+    for (const g of dropped.generated) log.push(`dropped ${g.path}: generated${g.source ? ` from ${g.source}` : ""}`);
+    return { plan, source: "explicit", scope: dropped.scope, excluded, generated: dropped.generated, generatedText: generatedTextOf(dropped.generated), log };
   }
   let source = "summary";
   let listed = [];
@@ -82,7 +110,9 @@ export function reviewScope(root, phaseDir, { plan, files, filterExplicit = fals
     for (const f of actual.files) if (f.deleted) { excluded.push({ path: f.path, reason: "deleted" }); scope = scope.filter((p) => p !== f.path); }
   }
   scope = excludeNonCode(root, scope, excluded);
-  return { plan, source, scope, excluded, log };
+  const dropped = dropGenerated(root, scope, excluded);
+  for (const g of dropped.generated) log.push(`dropped ${g.path}: generated${g.source ? ` from ${g.source}` : ""}`);
+  return { plan, source, scope: dropped.scope, excluded, generated: dropped.generated, generatedText: generatedTextOf(dropped.generated), log };
 }
 
 // New-side line ranges [start, end] of a `git diff -U0` text; a pure deletion marks the line it sits before.
@@ -108,10 +138,11 @@ export function changedLines(root, phaseDir, { plan, files }) {
     const r = git(root, ["diff", "-U0", "--no-color", "--no-ext-diff", ...args], { allowFail: true });
     return r.code === 0 ? diffHunks(r.out) : [];
   };
+  const rules = generatedIndex(root);
   const out = {};
   for (const f of files ?? []) {
     const p = normalize(root, f);
-    if (!p) continue;
+    if (!p || generatedMatch(rules, p)) continue;
     if (git(root, ["rev-parse", "--is-inside-work-tree"], { allowFail: true }).code !== 0) {
       out[p] = null;
       continue;
@@ -149,7 +180,9 @@ const cut = (s, n = 300) => String(s ?? "").replace(/\s+/g, " ").slice(0, n);
 function renderReview(nn, records) {
   const lines = [`# Phase ${nn} code review`, "", "Rendered from `review/*.json` (one record per wave and plan).", ""];
   for (const { file, rec } of records) {
+    const generated = rec.generated ?? [];
     lines.push(`## ${file.replace(/\.json$/, "")}${rec.codeOnly ? " (code-only)" : ""}`, "", `Scope: ${rec.scope.join(", ") || "(empty)"}`, `Lenses: ${rec.lenses.join(", ")}`, "");
+    if (generated.length) lines.push(`Generated (not reviewed): ${generatedTextOf(generated)}`, "");
     if (rec.findings.length) {
       lines.push("| id | severity | status | verdict | file | trigger |", "| --- | --- | --- | --- | --- | --- |");
       for (const f of rec.findings) lines.push(`| ${f.id} | ${f.severity} | ${f.status} | ${f.verdict ?? "-"} | ${f.file ?? ""}${f.line ? `:${f.line}` : ""} | ${cut(f.trigger, 120).replace(/\|/g, "/")} |`);

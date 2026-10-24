@@ -191,6 +191,13 @@ async function detach(ctx, p, deps) {
 
 const fmtCost = (usd) => (typeof usd === "number" ? `$${Math.round(usd * 10000) / 10000}` : "$?");
 
+// Kit feedback 121: the run's last line names codebase-map drift when the result carries it. Empty when it does not,
+// so a run with no drift keeps the line it had.
+export function resultTail(result) {
+  const line = result?.mapDrift?.line;
+  return typeof line === "string" && line ? `; ${line}` : "";
+}
+
 // The ended run's line in the metrics ledger; a failure to write it never fails the run.
 function recordMetrics(ctx, p, info, journalPath, result, out) {
   try {
@@ -284,10 +291,11 @@ async function runForeground(ctx, p) {
     writeJsonAtomic(runFile, info);
     recordMetrics(ctx, p, info, journalPath, r.result, out);
     const stats = `ok ${r.stats.ok}, null ${r.stats.null}, cached ${r.stats.cached}, tokens ${r.stats.tokens}, cost ${fmtCost(r.stats.costUsd)}`;
+    const tail = resultTail(r.result);
     if (paused) {
-      out(`workflow paused ${p.runId}: ${resultFile} (${typeof r.result.reason === "string" ? `${r.result.reason}; ` : ""}${stats})`);
+      out(`workflow paused ${p.runId}: ${resultFile} (${typeof r.result.reason === "string" ? `${r.result.reason}; ` : ""}${stats}${tail})`);
       out(`next: ${typeof r.result.answer?.command === "string" ? r.result.answer.command : `continue with \`${ctx.ph} workflow --resume ${p.runId} --detach${runsDirSuffix(ctx.root, p.runsDir)}\``}`);
-    } else out(`workflow done ${p.runId}: ${resultFile} (${stats})`);
+    } else out(`workflow done ${p.runId}: ${resultFile} (${stats}${tail})`);
     return 0;
   } catch (e) {
     await host?.finish().catch(() => {});

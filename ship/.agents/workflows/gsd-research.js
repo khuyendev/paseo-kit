@@ -15,6 +15,11 @@ const agentFor = (role, fallback) => cfg.adapter.agents?.[role] ?? fallback;
 // ## Code APIs, which `refresh: "code"` re-verifies alone once those phases are complete.
 const ahead = cfg.gsd.research_ahead === true;
 const codeRefresh = a.refresh === "code";
+// Kit feedback 121: map drift is an advisory on every result; over the block threshold it stops before any agent (a view still returns).
+let mapDrift = {};
+const finish = (out) => (out && !out.mapDrift && mapDrift?.advisory ? { ...out, advisories: [...(out.advisories ?? []), mapDrift.advisory], mapDrift } : out);
+const needsOwnerPlain = needsOwner;
+needsOwner = (...xs) => finish(needsOwnerPlain(...xs));
 if (codeRefresh && !ahead) return { status: "failed", reason: `refresh "code" needs gsd.research_ahead; rerun with refresh true` };
 const CODE_SECTION = /^##\s+Code APIs\b/m;
 const MARKER = /^<!-- gsd:research-complete\b[^\r\n]*-->\s*$/;
@@ -46,22 +51,25 @@ const phaseOrder = (x, y) => {
 };
 
 phase("Preconditions");
+mapDrift = (await flow(["map-drift"], { reason: a.staleMapReason ?? null })).json ?? {};
+for (const l of mapDrift.logs ?? []) log(l);
+if (mapDrift.stop && !a.view) return finish(needsOwnerPlain("Preconditions", mapDrift.stop.reason, { answer: mapDrift.stop.answer, paths: mapDrift.paths, options: mapDrift.stop.options }));
 if (a.view) {
   const status = await gsd(["research", "status", phaseDir]);
-  if (status.code === 66) return { status: "failed", reason: `no research report at ${report}`, path: report };
-  return { status: "view", report: status.json, valid: status.code === 0, path: report };
+  if (status.code === 66) return finish({ status: "failed", reason: `no research report at ${report}`, path: report });
+  return finish({ status: "view", report: status.json, valid: status.code === 0, path: report });
 }
 // G046 (per phase): one research run of a phase at a time, from its status check through readback. The lock is per phase,
 // not the root writer lock: a research of one phase must not block plan or execute of the root. A second run would share
 // this run's report and attempt file.
 const lease = await flow(["lock", `research-${nn}`, runId, "gsd-research"]);
-if (lease.code !== 0) return { status: "refused", reason: `another research run holds phase ${nn} (${lease.json?.holder ?? "unknown run"}); research it after that run ends` };
+if (lease.code !== 0) return finish({ status: "refused", reason: `another research run holds phase ${nn} (${lease.json?.holder ?? "unknown run"}); research it after that run ends` });
 try {
 // read again under the lock: a run that held it before may have written the report meanwhile
 const status = await gsd(["research", "status", phaseDir]);
 const open = await discussOpen(phaseDir, nn);
 if (open) return needsOwner("Discuss", open);
-if (status.code === 0 && !a.refresh) return { status: "reused", path: report, headChanged: Boolean(status.json?.headChanged) };
+if (status.code === 0 && !a.refresh) return finish({ status: "reused", path: report, headChanged: Boolean(status.json?.headChanged) });
 if (codeRefresh && status.code === 66) return needsOwner("Research", `no research report at ${report}; a code refresh needs one, research the phase first`, { path: report, reportStatus: "missing", options: ["research (without refresh)"] });
 // GSDF-13 (CR-GSF-20): without refresh only a missing report is researched; an invalid, blocked, incomplete, stale or changed
 // one is reported with the refresh option, unless this run's own attempt is being resumed. O66D: a code refresh likewise
@@ -73,7 +81,7 @@ if (status.code !== 66 && (!a.refresh || codeRefresh)) {
     const reportStatus = status.json?.status ?? "invalid";
     const problems = status.json?.problems ?? status.json?.blockers ?? [];
     const pendingPhases = status.json?.pending_phases ?? [];
-    if (reportStatus === "provisional" && !a.refresh) return { status: "provisional", path: report, pendingPhases, reason: `research ${report} was written ahead of phase ${pendingPhases.join(", ")}, not complete yet; once complete, rerun with refresh "code"` };
+    if (reportStatus === "provisional" && !a.refresh) return finish({ status: "provisional", path: report, pendingPhases, reason: `research ${report} was written ahead of phase ${pendingPhases.join(", ")}, not complete yet; once complete, rerun with refresh "code"` });
     if (!a.refresh) return needsOwner("Research", `research report ${report} is ${reportStatus}; rerun with refresh${reportStatus === "code-stale" && ahead ? ` "code" to re-verify its ## Code APIs, or refresh` : ""} to research it again`, { path: report, reportStatus, problems, ...(status.json?.changed ? { changed: status.json.changed } : {}), options: reportStatus === "code-stale" && ahead ? ["refresh code", "refresh", "keep the report as it is"] : ["refresh", "keep the report as it is"] });
     if (reportStatus === "provisional") return needsOwner("Research", `research ${report} was written ahead of phase ${pendingPhases.join(", ")}, not complete yet; refresh its code part once complete`, { path: report, reportStatus, pendingPhases, options: ["wait for those phases, then refresh code", "refresh"] });
     if (!["code-stale", "complete"].includes(reportStatus)) return needsOwner("Research", `research report ${report} is ${reportStatus}; a code refresh keeps every other section, so it needs a report whose other inputs are current: rerun with refresh`, { path: report, reportStatus, problems, options: ["refresh", "keep the report as it is"] });
@@ -83,7 +91,7 @@ if (status.code !== 66 && (!a.refresh || codeRefresh)) {
 
 phase("Research");
 const inputDigest = (await gsd(["revisions", "hash", phaseDir, "research"])).json?.hash;
-if (!inputDigest) return { status: "failed", reason: "revisions hash research gave no hash" };
+if (!inputDigest) return finish({ status: "failed", reason: "revisions hash research gave no hash" });
 const before = await fileSha(report);
 // O66D: an ahead run lists the earlier phases not COMPLETE yet; a code refresh keeps the digests of the sections it must
 // not touch. A resumed attempt keeps what its first record asked (the record is not rewritten on continuation).
@@ -94,14 +102,14 @@ if (ahead) {
   if (codeRefresh) base = await sectionDigests((await flow(["read", report])).json?.text);
   else {
     const roadmap = await gsd(["roadmap", "analyze"]);
-    if (roadmap.code !== 0 || !Array.isArray(roadmap.json?.phases)) return { status: "failed", reason: `roadmap analyze failed (exit ${roadmap.code}); research_ahead needs the phase list` };
+    if (roadmap.code !== 0 || !Array.isArray(roadmap.json?.phases)) return finish({ status: "failed", reason: `roadmap analyze failed (exit ${roadmap.code}); research_ahead needs the phase list` });
     pending = roadmap.json.phases.filter((p) => phaseOrder(p.number, phaseNumber(phaseDir)) < 0 && p.status !== "COMPLETE").map((p) => String(p.number));
   }
   asked = { aheadOf: pending, part: codeRefresh ? "code" : "full", ...(base ? { base } : {}) };
 }
 // GSDC-30: recorded before dispatch; a fresh run id never adopts another run's unfinished attempt.
 const attempt = (await gsd(["attempt", "record", phaseDir, "--kind", "research"], { runId, inputDigest, before, ...asked })).json;
-if (!attempt?.key) return { status: "failed", reason: "attempt record research failed" };
+if (!attempt?.key) return finish({ status: "failed", reason: "attempt record research failed" });
 const aheadOf = attempt.aheadOf ?? [];
 const part = attempt.part ?? null;
 
@@ -143,7 +151,7 @@ async function decide() {
 
 // --resume of the same run: the report of this attempt may already be on disk.
 const already = await decide();
-if (already) return already;
+if (already) return finish(already);
 
 function aheadContract() {
   if (part === "code") return `Code refresh: the decisions, libraries and upstream findings of ${report} stand. Edit only its section ## Code APIs: re-verify every claim against the current code ([VERIFIED: path:line]), drop the [PENDING: ...] tags, correct or add the claims the current code calls for${a.focus ? ` (focus on: ${a.focus})` : ""}. Leave every other section exactly as it is; a finding outside ## Code APIs that the current code contradicts goes into ## Code APIs as a line starting "Needs full refresh:". Update the frontmatter (input_digest, attempt_key; no ahead_of) and the final line.`;
@@ -152,7 +160,7 @@ function aheadContract() {
   return `Research ahead: phase ${aheadOf.join(", ")} before this one is not complete; its code is still being written. Ground libraries, upstream UI and this phase's decisions as usual, and let no section but ## Code APIs rest on project code that phase ${aheadOf.join(", ")} builds or changes. ${code} Tag each claim resting on code those phases have not finished [PENDING: phase <n>]. The frontmatter also carries ahead_of: ${JSON.stringify(aheadOf)}. For this report the status check ends at provisional, not complete, while those phases run: provisional with no problems listed is done.`;
 }
 const rendered = (await gsd(["research", "prompt", phaseDir])).json;
-if (!rendered?.prompt) return { status: "failed", reason: "research prompt could not be rendered" };
+if (!rendered?.prompt) return finish({ status: "failed", reason: "research prompt could not be rendered" });
 const prompt = [
   rendered.prompt,
   `<kit_research_contract>\nWrite only ${report}. Its frontmatter carries status (complete or blocked), input_digest: ${inputDigest} and attempt_key: ${attempt.key}; a complete report ends with the line <!-- gsd:research-complete ${attempt.key} -->; a blocked one has <research_blockers>.\nBefore your final reply, run \`node .agents/harness/ph.mjs gsd research status ${phaseDir}\` (read-only). It lists the \`problems\` of the report; fix every listed problem and run it again until the status is complete, or blocked with its blockers listed.\n${a.refresh && !codeRefresh ? `Refresh: keep findings of the existing report that are still valid${a.focus ? `; focus on: ${a.focus}` : ""}.` : ""}${ahead ? `\n${aheadContract()}` : ""}\nDo not build, test, install or commit anything. Keep provenance tags on every claim. The package audit is not installed: never report it as OK.\nReturn JSON {"status": "complete" | "blocked", "path": "${report}"}.\n</kit_research_contract>`,
@@ -163,13 +171,13 @@ const { reason } = await call(prompt, { label: "researcher", role: "research", a
 
 phase("Readback");
 const decided = await decide();
-if (decided) return decided;
+if (decided) return finish(decided);
 const { st } = await readback();
-if (fatal(reason)) return { status: "failed", reason: `researcher failed: ${reason}` };
-if (st.code === 66) return { status: "failed", reason: `researcher wrote no report${reason ? ` (${reason})` : ""}` };
+if (fatal(reason)) return finish({ status: "failed", reason: `researcher failed: ${reason}` });
+if (st.code === 66) return finish({ status: "failed", reason: `researcher wrote no report${reason ? ` (${reason})` : ""}` });
 // The researcher's reason and the report's problems (or blockers) are the only clue to what failed; keep both.
 const problems = st.json?.problems ?? st.json?.blockers ?? [];
-return { status: "failed", reason: `report ${report} is not this attempt's (status ${st.json?.status ?? st.code}; attempt key or input digest differs)${reason ? `; researcher: ${reason}` : ""}`, problems };
+return finish({ status: "failed", reason: `report ${report} is not this attempt's (status ${st.json?.status ?? st.code}; attempt key or input digest differs)${reason ? `; researcher: ${reason}` : ""}`, problems });
 } finally {
   await flow(["unlock", `research-${nn}`, lease.json.token]);
 }

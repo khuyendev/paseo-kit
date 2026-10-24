@@ -43,6 +43,8 @@ const anyObj = () => ({ kind: "anyObj" });
 
 const argv = () => ({ kind: "strs", min: 1 });
 const effort = () => str({ oneOf: THINKING_LEVELS });
+// A glob string, or {glob, source?} (kit feedback 120: a regenerated entry may name the file it is generated from).
+const globEntry = () => ({ kind: "globEntry" });
 
 export const SCHEMA = obj({
   tiers: map(obj({ provider: str({ pattern: /^$|^[^/]+\/.+$/, patternText: '"" or provider/model' }), thinking: effort(), features: anyObj() }, ["thinking", "features"])),
@@ -118,7 +120,7 @@ export const SCHEMA = obj({
       shared: obj({ globs: strs(), predicate: nullable(str({ nonEmpty: true, repoPath: true })) }),
       source_roots: strs(),
       ignore: strs(),
-      regenerated: strs(),
+      regenerated: arr(globEntry()),
     }, ["ignore", "regenerated"]),
     review_lenses: arr(obj({
       name: str({ nonEmpty: true }),
@@ -156,7 +158,9 @@ export const SCHEMA = obj({
     // Kit feedback 117 F3: doc tools the project actually has (for example "ctx7"). Absent = the generated roles
     // drop documentation_lookup. A non-empty list keeps it; regenerate with `ph gsd upstream build`.
     doc_tools: strs(),
-  }, ["checks", "catalogs", "crash_signatures", "doc_tools"]),
+    // Kit feedback 120: extra generated-file globs (string or {glob, source?}). Absent = none. Not a default, so an old overlay loads.
+    generated: arr(globEntry()),
+  }, ["checks", "catalogs", "crash_signatures", "doc_tools", "generated"]),
   gsd: obj({
     roles: map(obj({ model: str({ nonEmpty: true }), effort: effort(), reason: str() }, ["model", "effort", "reason"])),
     granularity: str({ oneOf: ["coarse", "standard", "fine"] }),
@@ -211,7 +215,9 @@ export const SCHEMA = obj({
     // role sections at upstream build; true keeps them. Not in the defaults, so an old overlay still loads.
     tdd_mode: bool(),
     mvp_mode: bool(),
-  }, ["tdd_mode", "mvp_mode"]),
+    // Kit feedback 121: map-drift count that stops gsd-plan and gsd-research. Absent = 10 × drift_threshold; 0 = warn only.
+    map_drift_block: int(),
+  }, ["tdd_mode", "mvp_mode", "map_drift_block"]),
 });
 
 export const TOP_LEVEL_KEYS = Object.freeze(Object.keys(SCHEMA.fields));
@@ -299,6 +305,17 @@ function check(node, value, key) {
       }
       const detail = errors.at(-1)?.message;
       throw new ConfigError(key, `expected an argv template or a filter rule {filter, join?, argv?}${detail ? ` (${detail})` : ""}`);
+    }
+    case "globEntry": {
+      if (typeof value === "string") {
+        if (!value) throw new ConfigError(key, "must not be empty");
+        return;
+      }
+      if (!isObject(value)) throw new ConfigError(key, "expected a glob or {glob, source}");
+      if (typeof value.glob !== "string" || !value.glob) throw new ConfigError(`${key}.glob`, "expected a non-empty glob");
+      if (value.source !== undefined && (typeof value.source !== "string" || !value.source)) throw new ConfigError(`${key}.source`, "expected a non-empty string");
+      for (const name of Object.keys(value)) if (name !== "glob" && name !== "source") throw new ConfigError(`${key}.${name}`, "unknown key");
+      return;
     }
     case "anyObj":
       if (!isObject(value)) throw new ConfigError(key, "expected object");
