@@ -56,6 +56,24 @@ export function cwdGuard(root, worktreeDir, cwd) {
 
 // Orchestrator bookkeeping (planning records, run records) is not plan output; owned SUMMARY files still count.
 const bookkeeping = (p) => p.startsWith(".planning/") || p.startsWith("_workspace/");
+// Kit feedback 106 F3: files a stack's tools rewrite. The adapter writer seeds these into adapter.ownership.regenerated
+// when that key is absent from the project overlay; regeneratedSeed returns a list the project already set (including
+// empty) unchanged. The stacks flow-checks.mjs knows besides flutter have no such globs. The shipped default stays [].
+export const REGENERATED_BY_STACK = Object.freeze({
+  flutter: Object.freeze([
+    "windows/flutter/generated_plugin_registrant.*",
+    "linux/flutter/generated_plugin*",
+    "macos/Flutter/GeneratedPluginRegistrant.swift",
+    "ios/Runner/GeneratedPluginRegistrant.*",
+    "android/**/GeneratedPluginRegistrant.java",
+  ]),
+});
+
+export function regeneratedSeed(stack, own) {
+  if (Array.isArray(own)) return own.slice();
+  return (REGENERATED_BY_STACK[String(stack ?? "").toLowerCase()] ?? []).slice();
+}
+
 // adapter.ownership.<key> globs as a path test; an unreadable config matches nothing.
 const ownershipGlobs = (root, key) => {
   let globs = [];
@@ -287,9 +305,10 @@ function gateStop(phaseDir, problems) {
 // execute-progress.json), ignore?: [prefix]}.
 // A path claimed by a plan's transfer record goes to that plan, else to every plan owning it; deleted paths go to
 // `removed`; unowned paths the integration fixer was given go to `integration`; paths owned only by `pending` plans
-// (committed later in the run) are left alone; an unowned tracked file whose only change is line endings (`eolOnly`, kit feedback 80)
-// or that lies outside adapter.ownership.source_roots (`outside`, kit feedback 77) is reported and never committed; everything
-// else is `unowned` and must stop the commit.
+// (committed later in the run) are left alone; an unowned tracked file `git status` lists whose `--ignore-cr-at-eol` diff
+// against HEAD is empty (`eolOnly`: line endings only, or stat/autocrlf noise, kit feedback 80, 106 F1) or that lies outside
+// adapter.ownership.source_roots (`outside`, kit feedback 77) is reported and never committed; everything else is `unowned`
+// and must stop the commit.
 export function ownedChanges(root, phaseDir, { plans: given, pending = [], integration = readState(root, phaseDir).integration, ignore = [], claims = false }) {
   // claims (worktree isolation): a plan without `claimed` claims the files its transfer record names.
   const plans = claims ? given.map((p) => ({ ...p, claimed: p.claimed ?? (readJsonIf(resolveInside(root, `${phaseDir}/transfers/${p.id}.json`), null)?.files ?? []).map((f) => f.path) })) : given;
@@ -397,18 +416,25 @@ export function worktreeChanges(dir) {
   };
 }
 
-// A tracked file whose only difference from its base commit is line endings (a toolchain rewrote CRLF or LF). An
-// untracked file has no base copy to compare with, and a file equal to its base (a restored seed, GSDF-94) differs in
-// more than line endings from what the worktree was given, so neither qualifies.
-const eolOnly = (wt, base, rel) => git(wt, ["cat-file", "-e", `${base}:${rel}`], { allowFail: true }).code === 0
-  && git(wt, ["diff", "--quiet", base, "--", rel], { allowFail: true }).code !== 0
-  && git(wt, ["diff", "--ignore-cr-at-eol", "--quiet", base, "--", rel], { allowFail: true }).code === 0;
+// A tracked file `git status` lists as modified whose `--ignore-cr-at-eol` diff against the base is empty (kit feedback
+// 80, 106 F1): "line endings only" when the plain diff is not empty, "unchanged" when both diffs are empty (stat or
+// autocrlf: checkout smudged CRLF, a tool wrote the blob's LF back, and status still says modified). Null when it is not
+// that: no base copy (untracked), a real diff, or a file status does not list. A restored seed (GSDF-94) equals the base
+// and is not in status; the caller adds it apart from status, so it does not qualify.
+export function unchangedAgainst(wt, base, rel) {
+  if (git(wt, ["cat-file", "-e", `${base}:${rel}`], { allowFail: true }).code !== 0) return null;
+  if (git(wt, ["diff", "--ignore-cr-at-eol", "--quiet", base, "--", rel], { allowFail: true }).code !== 0) return null;
+  if (git(wt, ["diff", "--quiet", base, "--", rel], { allowFail: true }).code !== 0) return "line endings only";
+  return status(wt).some((e) => e.path === rel && e.code !== "??" && !e.code.includes("D")) ? "unchanged" : null;
+}
+const eolOnly = (wt, base, rel) => unchangedAgainst(wt, base, rel) !== null;
 
 // GSDF-94: validate everything first, then copy file by file; a refusal writes nothing and keeps the worktree.
 // Kit feedback 75: each record entry also holds wt_sha256, the hash of the worktree content that was copied; the record is
 // how `ph worktrees` and the discard after the plan's commit know that the worktree's delta landed (sha256 can be rewritten by adopt).
-// kit-feedback 26: a path outside owns that matches adapter.ownership.regenerated, or differs only in line endings, is
-// dropped (not copied; the main tree keeps its own version) and listed in the record, instead of refusing the transfer.
+// kit-feedback 26, 106 F1: a path outside owns that matches adapter.ownership.regenerated, or that unchangedAgainst names
+// (line endings only, or stat/autocrlf noise), is dropped (not copied; the main tree keeps its own version) and listed
+// in the record, instead of refusing the transfer.
 export function transfer(root, phaseDir, { plan, worktree, owns = [], summary, files_deleted = [] }) {
   const prefixes = ownsPrefixes(root);
   const wt = path.resolve(root, worktree);
@@ -428,8 +454,11 @@ export function transfer(root, phaseDir, { plan, worktree, owns = [], summary, f
     if (owned(c.path, allowed, prefixes)) {
       if (c.kind === "deleted" && !files_deleted.some((d) => toSlash(d) === c.path)) refused.push({ path: c.path, reason: "deletion not declared in files_deleted" });
     } else if (regenerated(c.path)) dropped.push({ path: c.path, reason: "regenerated", wt_sha256: contentHash(path.join(wt, c.path)) });
-    else if (c.kind === "modified" && eolOnly(wt, base, c.path)) dropped.push({ path: c.path, reason: "line endings only", wt_sha256: contentHash(path.join(wt, c.path)) });
-    else refused.push({ path: c.path, reason: "outside owns" });
+    else {
+      const why = c.kind === "modified" ? unchangedAgainst(wt, base, c.path) : null;
+      if (why) dropped.push({ path: c.path, reason: why, wt_sha256: contentHash(path.join(wt, c.path)) });
+      else refused.push({ path: c.path, reason: "outside owns" });
+    }
   }
   const kept = changes.filter((c) => !dropped.some((d) => d.path === c.path));
   const baseline = readJsonIf(baselineFile(root, phaseDir), null);

@@ -54,6 +54,9 @@ export function executeSteps(kit, run) {
   // for an owner commit, ph gsd commit adopt, or fix-and-rerun with the action).
   const ANSWER = {
     halt: (plan = "<id>") => ({ verb: "halt.clear", command: `ph gsd halt clear ${N} --plan ${plan} --reason <answer>` }),
+    // Kit feedback 106 F2: a fix-round transfer refusal. The fixer worktree holds the finished fix; --resume transfers it
+    // after the problem the refusal names is answered.
+    haltResume: () => ({ verb: "halt.clear", command: `ph gsd halt clear ${N} --plan <id> --resume --reason <answer>` }),
     shared: (wave = "<wave>") => ({ verb: "shared.clear", command: `ph gsd shared clear ${N} ${wave} [--path <file>] --reason <what you did or accept>` }),
     request: (plan = "<id>", file = "<file>") => ({ verb: "request.clear", command: `ph gsd request clear ${N} --plan ${plan} --path ${file} --reason <why it is satisfied>` }),
     grant: (file, plan) => ({ verb: "grant", command: `ph gsd grant ${N} --path ${file}${plan ? ` --plan ${plan}` : ""}` }),
@@ -411,15 +414,21 @@ export function executeSteps(kit, run) {
     return { plan: t.plan, ok: true, wt };
   }
   // The transfer of the executors' worktrees (CR-GSF-08) and the SUMMARY spot-check; a refusal halts the plan.
-  const integrate = (outcomes, tasks) => writeTree(() => integrateNow(outcomes, tasks));
-  async function integrateNow(outcomes, tasks) {
+  // resume (kit feedback 106 F2, a fix round only): the fixer already finished, so the halt is `finished: true` with that
+  // worktree and the stop names `ph gsd halt clear --resume`. The Execute transfer does not: that plan is dispatched again.
+  const integrate = (outcomes, tasks, resume = false) => writeTree(() => integrateNow(outcomes, tasks, resume));
+  async function integrateNow(outcomes, tasks, resume = false) {
     for (const t of tasks) {
       const o = outcomes.find((x) => x?.plan === t.plan);
       if (!o?.ok) continue;
       if (worktreeMode && o.wt) {
         // CR-GSF-08: the deletion declaration comes from the validated handoff task (the index does not carry it).
         const tr = await flow(["transfer", phaseDir], { plan: t.plan, worktree: o.wt, owns: t.owns ?? [], summary: t.summary, files_deleted: t.files_deleted ?? [] });
-        if (tr.code !== 0) { Object.assign(o, await halt(t.plan, `transfer refused: ${(tr.json?.refused ?? []).map((r) => `${r.path} (${r.reason})`).join(", ") || tr.json?.error}`, { defects: (tr.json?.refused ?? []).filter((r) => r.reason === "outside owns").map((r) => ({ kind: "owns-reach", evidence: `transfer refused: ${r.path} outside owns` })) }), { ok: false }); continue; }
+        if (tr.code !== 0) {
+          if (resume && o.wt) worktrees[t.plan] = o.wt;
+          Object.assign(o, await halt(t.plan, `transfer refused: ${(tr.json?.refused ?? []).map((r) => `${r.path} (${r.reason})`).join(", ") || tr.json?.error}`, { defects: (tr.json?.refused ?? []).filter((r) => r.reason === "outside owns").map((r) => ({ kind: "owns-reach", evidence: `transfer refused: ${r.path} outside owns` })) }, resume ? { finished: true } : {}), { ok: false, ...(resume ? { resume: true } : {}) });
+          continue;
+        }
         await state("plan", { plan: t.plan, stage: "transferred" });
         ev(`transfer ${t.plan}`);
         for (const d of tr.json?.dropped ?? []) log(`transfer ${t.plan}: ${d.path} not copied to the main tree (${d.reason})`);
@@ -434,7 +443,11 @@ export function executeSteps(kit, run) {
     if (!bad.length) return null;
     const quota = bad.find((o) => o.failure?.class === "quota");
     if (quota) return owner(stage, `quota or rate limit: ${quota.reason}`, { answer: ANSWER.rerun("rerun after the reset"), failure: quota.failure, halted: bad, options: [`rerun after the reset${quota.failure.retryAfterSeconds ? ` (about ${quota.failure.retryAfterSeconds} s)` : ""}`] });
-    return owner(stage, bad.map((o) => `${o.plan}: ${o.reason}`).join("; "), { answer: ANSWER.halt(), halted: bad, options: [`answer each halt with ph gsd halt clear ${N} --plan <id> --reason <answer>, then rerun with the same args`, "stop"] });
+    // Kit feedback 106 F2: every halt of this stop is a fix-round transfer refusal whose worktree holds the finished fix.
+    const resumable = bad.every((o) => o.resume);
+    const listed = bad.map((o) => `${o.plan}: ${o.reason}`).join("; ");
+    if (resumable) return owner(stage, `${listed}; the fixer worktree holds the finished fix, so after the problem is answered: ${ANSWER.haltResume().command}`, { answer: ANSWER.haltResume(), halted: bad, options: [`answer the transfer problem, then ${ANSWER.haltResume().command}, then rerun with the same args`, "stop"] });
+    return owner(stage, listed, { answer: ANSWER.halt(), halted: bad, options: [`answer each halt with ph gsd halt clear ${N} --plan <id> --reason <answer>, then rerun with the same args`, "stop"] });
   };
   // The stops a wave and a graph plan share before their executors run.
   const haltedStop = (ids, plan) => owner("Execute", `plans with a SUMMARY and a halt record: ${ids.join(", ")}; resolve the halt first (ph gsd halt clear ${N} --plan <id> --reason <answer>)`, { answer: ANSWER.halt(plan), halted: ids });
@@ -630,7 +643,7 @@ export function executeSteps(kit, run) {
       if (stateError) return red("could not persist pending change requests");
       if (worktreeMode) {
         const live = tasks.filter((t) => cur.byPlan?.[t.plan] && worktrees[t.plan]);
-        const hs = haltStop(await integrate(live.map((t) => ({ plan: t.plan, ok: true, wt: worktrees[t.plan] })), live), "Gate");
+        const hs = haltStop(await integrate(live.map((t) => ({ plan: t.plan, ok: true, wt: worktrees[t.plan] })), live, true), "Gate");
         if (hs) return { stop: hs };
       }
       const stray = await strayStop(tasks, "Gate");
@@ -1025,6 +1038,18 @@ export function executeSteps(kit, run) {
     return result("paused", { stage: "Wave", reason: p.reason, pausedAt: p.pausedAt, answer: p.answer, ...extra });
   }
 
+  // A plan whose SUMMARY is already on main, and whose halt was cleared with --resume (kit feedback 106 F2: a fix-round
+  // transfer refusal). The fixer worktree still holds the finished fix; transfer it. No such answer: nothing, and the plan
+  // rejoins the gate as before. A refusal halts it again, still finished, so --resume stays the answer.
+  async function resumeTransfer(t) {
+    if (!worktreeMode) return {};
+    const rec = await records(t);
+    if (!rec.resume) return {};
+    worktrees[t.plan] = rec.resume;
+    log(`plan ${t.plan}: halt cleared with --resume; the finished worktree ${rec.resume} is transferred`);
+    const hs = haltStop(await integrate([{ plan: t.plan, ok: true, wt: rec.resume }], [t], true), "Execute");
+    return hs ? { stop: hs } : {};
+  }
   // One wave's coding stage (waves schedule and batch mode). Plans already committed are only tracked; plans with a SUMMARY but
   // no commit (an interrupted transaction, CR-GSF-02) rejoin the wave's gate, review and commit without a new executor. opts:
   // limit (executors at once, the composition's gsd.parallelization), earlier (batch: the tasks of the waves coded before, so
@@ -1041,7 +1066,13 @@ export function executeSteps(kit, run) {
     if (haltedCoded.length) return { stop: haltedStop(haltedCoded) };
     const partial = await pendingTransfers(open.map((t) => t.plan));
     if (partial.length) return { stop: partialStop(partial) };
-    for (const t of coded) log(`plan ${t.plan}: SUMMARY present but not committed; it rejoins the gate, review and commit of wave ${w.k}`);
+    for (const t of coded) {
+      // Kit feedback 106 F2: the SUMMARY is already on main (the executor transferred) but the fixer's tree was refused.
+      // halt clear --resume names that tree; transfer it before the plan rejoins the gate. No resume: the log below, as before.
+      const landed = await resumeTransfer(t);
+      if (landed.stop) return { stop: landed.stop };
+      log(`plan ${t.plan}: SUMMARY present but not committed; it rejoins the gate, review and commit of wave ${w.k}`);
+    }
     const toRun = open.filter((t) => !planInfo(t.plan).has_summary && planInfo(t.plan).ready !== false);
     // G055: a halted or blocked plan is reported, never skipped in silence while the rest of the wave commits.
     for (const t of open.filter((x) => !planInfo(x.plan).has_summary && planInfo(x.plan).ready === false)) {
@@ -1120,7 +1151,7 @@ export function executeSteps(kit, run) {
     // the main tree
     aloneOnTree, writeTree,
     // executors
-    dispatch, integrate, haltStop, haltedStop, partialStop, dirtyStop, seedTrees, acceptedStop, pendingTransfers, declareShared, codeWave,
+    dispatch, integrate, haltStop, haltedStop, partialStop, dirtyStop, seedTrees, acceptedStop, pendingTransfers, declareShared, codeWave, resumeTransfer,
     // gate, shared changes, fix rounds
     runGate, gateNow, smokeStop, strayStop, unownedStop, applyShared, fixRounds,
     // review and fix
