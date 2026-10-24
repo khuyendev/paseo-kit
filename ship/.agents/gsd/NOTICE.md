@@ -12,7 +12,7 @@ Each departure is applied by a kit overlay or by kit code, never by editing upst
 | Owner questions become markers returned to the orchestrator instead of in-agent questions | GSDF-01 |
 | Single writer of PROJECT, STATE, ROADMAP and REQUIREMENTS (the orchestrator, through `ph gsd`) | GSDC-12 |
 | Plan verify obligations are run by the post-wave gate with the adapter's commands, not by executors | GSDC-19 |
-| Gap closure is capped at one gap wave per phase | GSDC-30 |
+| Gap closure is capped at one gap wave per phase, counted once that wave reaches its gate or commits (a halt before either is continued by a rerun) | GSDC-30 |
 | Plans of one wave declare disjoint `owns` when the adapter uses a shared tree | GSDC-23 |
 | Research provider waterfall and cache, and the package legitimacy audit, are not installed | GSDC-33 |
 | Upstream verbs and modes the kit does not serve answer "not ported" (exit 69) with a reason | GSDC-04 |

@@ -143,13 +143,15 @@ test("GSDF-93 parallelization off runs one executor at a time, max_concurrent ca
   assert.match(r.result.reason, /missing in 01-01/);
 });
 
-test("GSDF-30 executing the gap wave marks waveExecuted before the first executor; a second gap wave is refused", async () => {
+test("GSDF-30 executing the gap wave counts it at the gate, not before the first executor; a second gap wave is refused", async () => {
   const g = makeExecWorld({ waves: [[task("01-03")]], prefix: "gap-", meta: { "01-03": { gap: true } } });
   g.attempts.gap = { key: "k", runId: "wf_plan", inputDigest: "v", before: "b", done: true, result: { plans: ["01-03"], waveExecuted: false } };
   let markedFirst = null;
   const r = await exec(g, { gapsOnly: true }, { "exec-": () => { markedFirst = g.attempts.gap.result.waveExecuted; } });
-  assert.equal(markedFirst, true);
+  // Kit feedback W14: the cap is counted when the wave reaches its gate, not before the first executor.
+  assert.equal(markedFirst, false);
   assert.equal(r.result.status, "executed");
+  assert.equal(g.attempts.gap.result.waveExecuted, true);
   const g2 = makeExecWorld({ waves: [[task("01-03")]], prefix: "gap-", meta: { "01-03": { gap: true } } });
   g2.attempts.gap = { ...g.attempts.gap };
   const again = await runScript("gsd-execute", { root: g2.root, runId: "wf_fresh", args: { phaseDir: PHASE_DIR, gapsOnly: true }, gsd: g2.gsd, agent: executor(g2) });

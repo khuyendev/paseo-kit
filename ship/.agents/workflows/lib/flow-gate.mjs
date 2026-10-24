@@ -368,6 +368,16 @@ export function inputsOf(root, scopes) {
   return { head: head(root), scopes, files: Object.fromEntries(Object.entries(files).sort()), config: sha256(JSON.stringify({ commands: cfg.adapter.commands, verify_vocabulary: cfg.adapter.verify_vocabulary })) };
 }
 
+const commitNames = (root, sha) => gitLines(root, ["diff-tree", "--no-commit-id", "--name-only", "-r", "-m", "--root", sha], { allowFail: true }).map((f) => toSlash(f));
+
+// Kit feedback W13: a HEAD move during the gate fails inputs-stable only when a commit touches a gate input
+// (a scope inputsOf hashed) or the two tips are not one history. {touches, shas}.
+function headMoveInputs(root, before, after, scopes) {
+  const shas = before && after ? gitLines(root, ["rev-list", "--reverse", `${before}..${after}`], { allowFail: true }) : [];
+  const hit = (file) => scopes.some((s) => !s || s === "." || file === s || file.startsWith(`${s}/`));
+  return { touches: shas.length === 0 || shas.some((sha) => commitNames(root, sha).some(hit)), shas };
+}
+
 // Files a run writes about itself (gate evidence, review and pre-code review records, transfer and commit records, progress, halts): they
 // are not inputs of a judgment, so they never change an agent call's digest; a resumed run then replays the calls
 // whose code is unchanged (G080, G081).
@@ -684,7 +694,11 @@ export async function gate(root, phaseDir, input) {
   if (weak.step) steps.push(weak.step);
   const after = inputsOf(root, scopes);
   const moved = Object.keys({ ...inputs.files, ...after.files }).filter((f) => inputs.files[f] !== after.files[f]);
-  if (after.head !== inputs.head) moved.unshift("HEAD");
+  if (after.head !== inputs.head) {
+    const foreign = headMoveInputs(root, inputs.head, after.head, scopes);
+    if (foreign.touches) moved.unshift("HEAD");
+    else notes.push(`inputs-stable: HEAD moved (${foreign.shas.slice(0, 3).map((s) => s.slice(0, 7)).join(", ")}) but no commit touches the gate's inputs; ignored`);
+  }
   if (after.config !== inputs.config) moved.unshift("adapter configuration");
   if (moved.length) steps.push(noRun(root, logDir, "inputs-stable", "failed", `inputs changed while the gate ran: ${moved.slice(0, 10).join(", ")}`));
   // Kit feedback 122 F3: tag a failed or timed-out step. A step that did not run (not configured) is not a compile failure.

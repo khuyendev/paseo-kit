@@ -320,17 +320,28 @@ export function executeSteps(kit, run) {
     }
     return null;
   }
-  // The gap wave cap (GSDF-30, D-73): marked before the first executor; the run that started it may resume it.
+  // The gap wave cap (GSDF-30, D-73, kit feedback W14): counted only once the wave reaches its gate or commits.
+  // A halt before either leaves the flag clear, so a rerun with the same args continues it, like a normal wave.
+  // The run that counted it may resume it; a different run is refused.
+  let gapMarked = false;
   async function gapCap() {
     const at = await gsd(["attempt", "show", phaseDir, "--kind", "gap"]);
     if (at.code !== 0) return result("refused", { reason: "no gap attempt record; plan the gaps first" });
     const prior = at.json.result ?? {};
     if (prior.waveExecuted && prior.waveRunId !== runId) return owner("Gaps", "the gap wave of this phase already executed; gap closure is capped at one wave", { answer: ANSWER.workflow("gsd-verify again, or plan the leftovers as a new phase"), options: ["verify again", "plan the leftovers as a new phase"] });
-    if (!prior.waveExecuted) {
-      const rec = await gsd(["attempt", "record", phaseDir, "--kind", "gap"], { runId: at.json.runId, inputDigest: at.json.inputDigest, before: at.json.before, done: true, result: { ...prior, waveExecuted: true, waveRunId: runId } });
-      if (rec.code !== 0) return result("failed", { reason: `gap attempt could not be marked: ${rec.json?.error ?? rec.code}` });
-    } else log(`resuming the gap wave started by this run (${runId})`);
+    if (prior.waveExecuted) { gapMarked = true; log(`resuming the gap wave started by this run (${runId})`); }
     return null;
+  }
+  async function markGapExecuted(why) {
+    if (!a.gapsOnly || gapMarked) return;
+    const at = await gsd(["attempt", "show", phaseDir, "--kind", "gap"]);
+    if (at.code !== 0) throw new Error(`gap attempt could not be marked (${why}): ${at.json?.error ?? at.code}`);
+    const prior = at.json.result ?? {};
+    if (prior.waveExecuted) { gapMarked = true; return; }
+    const rec = await gsd(["attempt", "record", phaseDir, "--kind", "gap"], { runId: at.json.runId, inputDigest: at.json.inputDigest, before: at.json.before, done: true, result: { ...prior, waveExecuted: true, waveRunId: runId, waveReached: why } });
+    if (rec.code !== 0) throw new Error(`gap attempt could not be marked (${why}): ${rec.json?.error ?? rec.code}`);
+    gapMarked = true;
+    log(`gap wave counted as executed (${why})`);
   }
   // CR-GSF-03: an executor worktree starts from HEAD; uncommitted planning inputs are read from the main checkout. Then the
   // test command the gate runs.
@@ -382,7 +393,12 @@ export function executeSteps(kit, run) {
   // lands while another plan's executor runs, and a worktree may start from it (kit-feedback 66).
   const ownCommits = new Set();
   const landed = new Set();
-  const movedBy = (now, before) => now !== before && !ownCommits.has(now);
+  // Owns of the handoff wave an executor is running in (kit feedback W13). The plan's own owns decide an executor
+  // commit; the wave's owns decide a foreign one.
+  const waveOwnsOf = (waveId) => {
+    const w = (waves.length ? waves : handoff).find((x) => x.waveId === waveId);
+    return (w?.tasks ?? []).flatMap((t) => [...(t.owns ?? []), t.summary].filter(Boolean));
+  };
   const slashPath = (p) => String(p).trim().replace(/\\/g, "/").replace(/^\.\//, "");
   // Requests of a reply (exec-route): G072 to the open plan owning the path most specifically, G089 a shared change when no open
   // plan owns it, kit feedback 86 a refused route (a generated file without its generator) held as a shared change only the
@@ -494,8 +510,13 @@ export function executeSteps(kit, run) {
     const wt = d?.worktree ?? null;
     if (wt) worktrees[t.plan] = wt;
     ev(`code ${waveId} ${t.plan}`);
-    // GSDF-42: workers never commit; a moved HEAD (main or the agent worktree) fails the plan.
-    if (movedBy(await headNow(), before) || (wt && movedBy(await headNow(wt), before))) return { ...(await halt(t.plan, "executor committed (HEAD moved)")), failed: true };
+    // GSDF-42, kit feedback W13: workers never commit. A HEAD move is this executor's only when a new commit touches
+    // files it owns, or its worktree branch moved. A foreign commit that touches no file of the wave is accepted and
+    // the baseline moves forward; one that touches a file the wave owns halts and names the commit.
+    const move = await flow(["exec-head-move", phaseDir], { before, head: await headNow(), ...(wt ? { worktreeHead: await headNow(wt) } : {}), own: [...ownCommits], plan: t.plan, owns: t.owns ?? [], waveOwns: waveOwnsOf(waveId) });
+    if (move.code !== 0 || !move.json?.kind) return { ...(await halt(t.plan, `HEAD check failed: ${move.json?.error ?? `exit ${move.code}`}`)), failed: true };
+    if (move.json.kind === "executor" || move.json.kind === "foreign") return { ...(await halt(t.plan, move.json.reason || "executor committed (HEAD moved)")), failed: true };
+    if (move.json.kind === "accepted") for (const c of move.json.commits ?? []) log(`plan ${t.plan}: commit ${c.sha.slice(0, 7)} touches no file of this wave (${(c.files ?? []).slice(0, 5).join(", ")}); accepted, base moved forward`);
     const summaryAt = wt ? `${wt}/${t.summary}` : t.summary;
     const hasSummary = Boolean((await flow(["exists", summaryAt])).json?.exists?.[summaryAt]);
     if (!res) {
@@ -591,7 +612,7 @@ export function executeSteps(kit, run) {
   // ---- green gate and bounded verify-fix rounds (GSDF-44, GSDF-49..52) ----
   // extra (graph schedule): {suite: false} runs only the plans' obligations; obligations, a Set of plan ids, runs only those
   // plans' obligations with the suite; context names other open plans, so a failure in their files is theirs.
-  const runGate = (waveId, tasks, extra) => aloneOnTree(() => gateNow(waveId, tasks, extra));
+  const runGate = (waveId, tasks, extra) => aloneOnTree(async () => { await markGapExecuted("gate"); return gateNow(waveId, tasks, extra); });
   async function gateNow(waveId, tasks, { suite = true, obligations = null, context = [] } = {}) {
     const r = await flow(["gate", phaseDir], { waveId, plans: tasks.map((t) => ({ id: t.plan, owns: t.owns ?? [], verify: !obligations || obligations.has(t.plan) ? t.verify ?? [] : [] })), testArgv, ...(suite ? {} : { suite: false }), ...(context.length ? { context: context.map((t) => ({ id: t.plan, owns: t.owns ?? [] })) } : {}) });
     if (!r.json || r.json.status === "error") return { green: false, failureCount: 1, failures: [{ step: "gate", excerpt: r.json?.error ?? "gate failed to run" }], byPlan: {}, unplaced: [], blockedBy: {} };
@@ -1201,6 +1222,7 @@ export function executeSteps(kit, run) {
   // commits.json, the plans recorded committed, their landed worktrees discarded.
   async function commitWaves(list, verify, evidence) {
     phase("Commit");
+    await markGapExecuted("commit");
     const requestStop = await settleRequests(list);
     if (requestStop) return { stop: requestStop };
     const pf = await planFiles(list.flatMap((d) => d.tasks));
