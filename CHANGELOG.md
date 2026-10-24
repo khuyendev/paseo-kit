@@ -6,6 +6,20 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Kit feedback 127 and WildEraV6 13-16 (owner 2026-10-25: "Có feedback tiếp"; three Grok 4.7 agents, notes
+  kit-bughunt/fb13/design/<ID>.md). Stalled agents (127): new `agent_silent_s` (default 300, 0 = off): an agent with no
+  stream event for that long is reported as a stall, naming an open tool call and how long it has been open; new
+  `ph watch-agents` (foreground, for Monitor; one line per stall or recovery, offers `ph stop` / resend and never acts;
+  `--until-idle`, `--run`, `--label`, `--caller`); `ph fanout --collect` prints the same lines while it waits and the
+  spawn / fanout hints name watch-agents. Workflow steering (FLOW-29..38) is unchanged. Concurrent runs and gap waves
+  (W13, W14): a HEAD move during an executor is the executor's only when a new commit touches files its plan owns (or
+  its worktree branch moved); a foreign commit that touches no file of the wave is logged and the baseline head moves
+  on, one that does halts naming the commit; the gate's inputs-stable check ignores commits outside its inputs; a gap
+  wave counts as executed only once it reached its gate or committed, so a halted gap wave is continued by a rerun.
+  Planning answers (W15, W16): `ph gsd contracts change` accepts an addition (`old` empty) for a symbol the manifest does
+  not produce yet, inside the plan's owns, and replans only the producer and its consumers; new `ph gsd owns add` and
+  `ph gsd owns handover` edit manifest owns (logged as owner answers) and replan only the affected plans; the
+  ownership-only SOURCE AUDITs of one planner wave stop the run once, together.
 - Kit feedback 118-126 and WildEraV6 8-12 (owner 2026-10-25: "Check feedback r làm tiếp"; six Grok 4.7 agents, notes
   kit-bughunt/fb12/design/<ID>.md). Gate attribution (119, 124, W10): failing files come from error lines (warnings
   unless the argv makes them non-fatal) and failed tests, never from analyzer infos; `loading X` / failed-to-load test
