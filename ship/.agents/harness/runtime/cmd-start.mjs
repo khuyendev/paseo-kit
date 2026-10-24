@@ -9,6 +9,7 @@ import { checkBlockNames, parseFanout } from "./fanout.mjs";
 import { selectModel } from "./models.mjs";
 import { loadPrices } from "./pricing.mjs";
 import { resultJson } from "./result.mjs";
+import { watchAgent } from "./stall.mjs";
 import { checkCapacity, checkNameLengths, checkNamesFree, prepareCreate, readPrompt, runningCount, startAgent, waitHint, withCapLock } from "./start.mjs";
 
 // Same modest interval as workflow admission's recount (admission.mjs): a poll, not a busy loop.
@@ -173,7 +174,13 @@ async function collect(ctx, session, live, blocks, spec) {
         throw e;
       }
       ctx.out(`${agent.id} ${b.name}`);
-      await session.waitTurn(agent.id, { timeoutS: cfg.wait_timeout_s, turnsBefore: 0 });
+      // The command is still alive while the turn runs, so the silence watch lives here (kit feedback 127). It only prints.
+      const stopStall = await watchAgent(session, agent, { clock: ctx.clock, silentS: cfg.agent_silent_s, out: ctx.out });
+      try {
+        await session.waitTurn(agent.id, { timeoutS: cfg.wait_timeout_s, turnsBefore: 0 });
+      } finally {
+        stopStall();
+      }
       const result = await resultJson(session, (await session.fetchAgent(agent.id)) ?? agent, prices);
       const base = path.join(dir, safeName(b.name));
       writeTextAtomic(`${base}.md`, `${result.final ?? ""}\n`);

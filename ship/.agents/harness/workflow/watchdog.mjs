@@ -1,9 +1,14 @@
-// Model-time watchdog of workflow agents (FLOW-29..FLOW-39). Armed only by the workflow runner, never for spawn or
-// fanout teammates (FLOW-39). Message texts are shipped prompt text (D-35): change only with owner review.
+// Model-time watchdog of workflow agents (FLOW-29..FLOW-39) and the silence report (kit feedback 127).
+// Steering (nudge, interrupt, stop, archive) is armed only by the workflow runner, never for spawn or fanout
+// teammates (FLOW-39). Silence — no stream event for agent_silent_s — is reported for every agent ph starts:
+// here while a workflow agent is armed, by fanout --collect while it waits, and by `ph watch-agents` after spawn
+// or plain fanout returns. A silence report never stops or resends. Steering texts are shipped prompt text
+// (D-35): change only with owner review.
 import path from "node:path";
 import { generatedMatch, generatedRules } from "../adapter/contract.mjs";
 import { errText } from "../lib/cli.mjs";
 import { id8 } from "../lib/paths.mjs";
+import { judgeSilence, noteStream, silenceDetail, silenceState, watchdogResumeLine, watchdogStallLine } from "../runtime/stall.mjs";
 import { SEARCH_TOOLS, SHELL_TOOLS, inputKey, inputOf, inputReady, readPaths, toolKind } from "./tools.mjs";
 
 export const TICK_MS = 10_000;
@@ -28,6 +33,7 @@ export function watchdogConfig(cfg) {
     repeatCalls: cfg.watchdog_repeat_calls,
     sameFileReads: cfg.watchdog_same_file_reads,
     readsWithoutWrite: cfg.watchdog_reads_without_write,
+    silentS: cfg.agent_silent_s,
   };
 }
 
@@ -68,6 +74,12 @@ export function createWatchdog({ session, cfg, clock, out, root }) {
     return slash.toLowerCase().startsWith(rootSlash) ? slash.slice(rootSlash.length) : slash;
   };
 
+  const reportSilence = (st, now) => {
+    const kind = judgeSilence(st.silence, now, c.silentS);
+    if (kind === "stall") out(watchdogStallLine(st.label, st.agentId, silenceDetail(st.silence, now)));
+    else if (kind === "resume") out(watchdogResumeLine(st.label, st.agentId));
+  };
+
   const schedule = () => {
     if (timer || !states.size) return;
     timer = clock.setTimeout(() => {
@@ -91,6 +103,7 @@ export function createWatchdog({ session, cfg, clock, out, root }) {
     const st = {
       agentId, label, promptAt: clock.now(), nudged: false, signals: new Set(), calls: new Map(), finished: new Set(),
       toolSpans: [], repeats: new Map(), fileReads: new Map(), readsSinceWrite: 0, generatedNoted: new Set(),
+      silence: silenceState(clock.now()),
       stuckInterrupted: false, retry: null, retryBase: 0, stopped: false, stopReason: null, archived: false,
     };
     const tag = () => `log watchdog: ${label} ${id8(agentId)}`;
@@ -104,6 +117,8 @@ export function createWatchdog({ session, cfg, clock, out, root }) {
     // Each runner prompt starts a new measurement; the stuck flag, open calls and finished ids survive (FLOW-37).
     st.reset = () => {
       Object.assign(st, { nudged: false, promptAt: clock.now(), toolSpans: [], readsSinceWrite: 0 });
+      st.silence.lastEventAt = clock.now();
+      st.silence.reported = false;
       st.signals.clear();
       st.repeats.clear();
       st.fileReads.clear();
@@ -124,6 +139,7 @@ export function createWatchdog({ session, cfg, clock, out, root }) {
     };
     st.tick = (now) => {
       if (st.stopped) return;
+      reportSilence(st, now);
       const stuck = [...st.calls.values()].find((call) => call.inputAt !== null && stuckLimitS(c, call.name) > 0 && now - call.inputAt >= stuckLimitS(c, call.name) * 1000);
       if (stuck && !st.stuckInterrupted) {
         // First hang: interrupt the turn so finished work is kept; the runner waits for the retry turn (FLOW-35).
@@ -133,6 +149,7 @@ export function createWatchdog({ session, cfg, clock, out, root }) {
         for (const [callId, call] of st.calls) {
           if (call.inputAt !== null) st.toolSpans.push([call.inputAt, now]);
           st.finished.add(callId);
+          st.silence.tools.delete(callId);
         }
         st.calls.clear();
         out(`${tag()} one ${stuck.name} call ran ${Math.round((now - stuck.inputAt) / 1000)} s without returning, interrupted`);
@@ -220,10 +237,19 @@ export function createWatchdog({ session, cfg, clock, out, root }) {
     states,
     onEvent(p) {
       const st = states.get(p?.agentId);
-      const it = p?.event?.item;
-      if (!st || p.event?.type !== "timeline" || it?.type !== "tool_call" || !it.callId) return;
-      // A fast tool can report completed before its running event; a late running event must not reopen it (FLOW-31).
-      if (st.finished.has(it.callId)) return;
+      if (!st || !p?.event) return;
+      const heard = clock.now();
+      const it = p.event.item;
+      const toolEvent = p.event.type === "timeline" && it?.type === "tool_call" && it.callId;
+      // A late event still proves the stream is alive, but a finished call must not become "open" again (FLOW-31).
+      if (toolEvent && st.finished.has(it.callId)) {
+        st.silence.lastEventAt = heard;
+        reportSilence(st, heard);
+        return;
+      }
+      noteStream(st.silence, it, heard);
+      reportSilence(st, heard);
+      if (!toolEvent) return;
       const now = clock.now();
       let call = st.calls.get(it.callId);
       if (!call) {

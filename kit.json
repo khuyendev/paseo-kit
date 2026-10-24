@@ -396,6 +396,7 @@
     ".agents/harness/runtime/pricing.mjs",
     ".agents/harness/runtime/prompts.mjs",
     ".agents/harness/runtime/result.mjs",
+    ".agents/harness/runtime/stall.mjs",
     ".agents/harness/runtime/start.mjs",
     ".agents/harness/runtime/tasks.mjs",
     ".agents/harness/runtime/worktree-landed.mjs",

@@ -50,6 +50,10 @@ export function createFakeDaemon({
   }
 
   function emit(agentId, event) {
+    // The daemon bumps UpdatedAt on every stream event, thinking included (kit feedback 127). The timeline row is
+    // kept even when nobody is observing, so a later poll can still see an open tool call.
+    const agent = agents.get(agentId);
+    if (agent) agent.updatedAt = iso();
     if (event.type === "timeline") timelines.get(agentId)?.push({ item: structuredClone(event.item) });
     if (!observed.has(agentId)) return;
     const message = { type: "agent_stream", payload: { agentId, seq: ++eventSeq, event: structuredClone(event) } };

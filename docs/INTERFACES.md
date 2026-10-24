@@ -141,6 +141,7 @@ Merge column: `entry` = one-level per-entry merge; `replace` = whole value repla
 | `watchdog_same_file_reads` | integer >= 0 | 6 | replace | M6 |
 | `watchdog_reads_without_write` | integer >= 0 | 40 | replace | M6 |
 | `watchdog_enabled` | boolean | true | replace | M6 |
+| `agent_silent_s` | integer >= 0 (0 disables) | 300 | replace | silence report: no stream event for this long (the daemon bumps `updatedAt` on every stream event, thinking included, or the stream the runtime already reads) is a stall, reported whatever the turn's model or tool time. A stall during an open tool call names the tool and how long it has been open, so a long run is not taken for an API hang. Reported by the workflow log while a workflow agent is armed, by `ph fanout --collect` while it waits, and by `ph watch-agents` (spawn and plain fanout return before the turn ends). The line offers `ph stop <id>` or a resend; nothing is stopped or resent. `watchdog_enabled: false` still arms no workflow steering (FLOW-38); it does not turn this report off |
 | `compact_resume` | string | `Compaction done. Continue where you left off; re-arm any Monitor you stopped.` | replace | M5 compact-self |
 | `context_guard` | exactly `{window_tokens >= 1, start_pct 1..100, step_pct 1..100}` integers | `{1000000, 60, 5}` | entry | M8, `ph context`, M13 |
 | `io_guard` | exactly `{start_rounds >= 0, step_rounds >= 1, edit_start_rounds >= 0, edit_step_rounds >= 1}` | 2/2/2/2 | entry | M8 |

@@ -18,7 +18,8 @@ export function readPrompt(ctx) {
 }
 
 export function waitHint(ph, names) {
-  return `next: wait with Monitor running \`${ph} watch ${names.map(quoteName).join(" ")}\` (one event per idle agent, exits when all are idle); do not poll with sleep/grep loops`;
+  const watch = `${ph} watch ${names.map(quoteName).join(" ")}`;
+  return `next: wait with Monitor running \`${watch}\` (one event per idle agent, exits when all are idle); stalls: \`${ph} watch-agents\` (one line per stall or recovery; it does not stop or resend); do not poll with sleep/grep loops`;
 }
 
 export function checkNameLengths(names) {

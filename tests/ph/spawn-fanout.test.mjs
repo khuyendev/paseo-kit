@@ -60,7 +60,7 @@ test("PHCL-06 --cwd becomes a prompt instruction and the daemon cwd", async () =
 test("PHCL-07 hint quotes names with spaces; no hint when every create failed", async () => {
   const s = setup();
   const r = await s.ph(["spawn", "--name", "a b", "--prompt", "w"]);
-  assertLastLine(r, /watch 'a b'` \(one event per idle agent, exits when all are idle\); do not poll with sleep\/grep loops$/);
+  assertLastLine(r, /watch 'a b'` \(one event per idle agent, exits when all are idle\); stalls: `.* watch-agents` \(one line per stall or recovery; it does not stop or resend\); do not poll with sleep\/grep loops$/);
   s.fake.failNext("createAgent", new Error("down"));
   const f = await s.ph(["spawn", "--name", "c", "--prompt", "w"]);
   assertExit(f, 2);

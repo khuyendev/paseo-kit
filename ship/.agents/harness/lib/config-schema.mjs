@@ -74,6 +74,8 @@ export const SCHEMA = obj({
   watchdog_same_file_reads: int(),
   watchdog_reads_without_write: int(),
   watchdog_enabled: bool(),
+  // Kit feedback 127: no stream event for this long is a stall, reported and not acted on. 0 disables.
+  agent_silent_s: int(),
   compact_resume: str(),
   context_guard: obj({ window_tokens: int(1), start_pct: int(1, 100), step_pct: int(1, 100) }),
   io_guard: obj({ start_rounds: int(), step_rounds: int(1), edit_start_rounds: int(), edit_step_rounds: int(1) }),

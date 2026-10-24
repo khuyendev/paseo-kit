@@ -64,7 +64,7 @@ test("PHCL-27 ph skill: advisory read-only points to ph freeze --check", () => {
 
 test("PHCL-04 ph skill: watchdog numbers equal the shipped defaults; no legacy tool names or facades", () => {
   const cfg = loadKitConfig();
-  for (const key of ["agent_nudge_s", "agent_stop_s", "agent_tool_stuck_s", "agent_file_tool_stuck_s", "watchdog_repeat_calls", "watchdog_same_file_reads", "watchdog_reads_without_write"]) {
+  for (const key of ["agent_nudge_s", "agent_stop_s", "agent_tool_stuck_s", "agent_file_tool_stuck_s", "watchdog_repeat_calls", "watchdog_same_file_reads", "watchdog_reads_without_write", "agent_silent_s"]) {
     const m = new RegExp(`\\| \`${key}\` \\| (\\d+) \\|`).exec(SKILL);
     assert.ok(m, `${key} missing from the skill table`);
     assert.equal(Number(m[1]), cfg[key], key);

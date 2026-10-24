@@ -216,7 +216,7 @@ test("FLOW-38 the watchdog reads its limits from the M3 config", async () => {
   assert.equal(r.s.fake.callsOf("cancelAgent").length, 1);
 });
 
-test("FLOW-39 spawned teammates are never watched: no message or cancel for an agent the runner did not arm", async () => {
+test("FLOW-39 steering stays on workflow agents: a spawned teammate the runner did not arm is never nudged, cancelled or archived", async () => {
   const r = await rig({ agent_nudge_s: 1, agent_stop_s: 2, agent_tool_stuck_s: 1, agent_file_tool_stuck_s: 1 });
   const mate = r.s.fake.addAgent({ parent: CALLER, status: "running" });
   await r.session.observe([mate.id]);
@@ -224,6 +224,8 @@ test("FLOW-39 spawned teammates are never watched: no message or cancel for an a
   r.st.disarm();
   await r.at(5000 * S);
   assert.equal(r.s.fake.callsOf("cancelAgent").length + r.s.fake.callsOf("sendAgentMessage").length + r.s.fake.callsOf("archiveAgent").length, 0);
+  // Steering is not pulled into spawn/fanout. Silence of those agents is reported by ph watch-agents and
+  // fanout --collect (runtime/stall.mjs), not by this hub (kit feedback 127).
   // Only the workflow runner arms the watchdog: the ph runtime never imports it.
   const { readFileSync, readdirSync } = await import("node:fs");
   const dir = new URL("../../ship/.agents/harness/runtime/", import.meta.url);
