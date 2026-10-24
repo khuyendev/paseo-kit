@@ -35,10 +35,10 @@ test("PHCL-05 spawn --count names agents N-1..N-K and returns with the wait hint
 
 test("PHCL-05 a duplicate live name is refused with zero creates; one failing create gives exit 2", async () => {
   const s = setup();
-  addSub(s.fake, { title: "rev" });
+  const rev = addSub(s.fake, { title: "rev" });
   const dup = await s.ph(["spawn", "--name", "rev", "--prompt", "w"]);
   assertExit(dup, 1);
-  assertErrLine(dup, "usage error: a live subagent already has the name rev (names must be unique)");
+  assertErrLine(dup, `usage error: a live subagent already has the name rev (id ${rev.id}); ph result ${rev.id} to read it or ph archive ${rev.id} to free the name`);
   assert.equal(creates(s.fake).length, 0);
   s.fake.failNext("createAgent", new Error("boom"));
   const r = await s.ph(["spawn", "--name", "z", "--count", "2", "--prompt", "w"]);
@@ -153,11 +153,15 @@ test("PHCL-10 fanout --collect: one slot at a time, files written before archivi
   assert.equal(s.fake.callsOf("archiveAgent").length, 2);
 });
 
-test("PHCL-10 fanout --collect refuses when no running slot is free", async () => {
-  const s = setup({ overlay: { max_subagents: 1 } });
+test("PHCL-10 fanout --collect waits out a full running cap (WildEraV6 #1), then fails the block", async () => {
+  const s = setup({ overlay: { max_subagents: 1, wait_timeout_s: 1 } });
   addSub(s.fake, { status: "running", title: "busy" });
   s.project.write("f.txt", "=== a\nA\n");
-  assertErrLine(await s.ph(["fanout", "--file", "f.txt", "--collect", "out"]), "usage error: 1 subagents running, max_subagents 1: no free slot; wait or archive");
+  const r = await s.ph(["fanout", "--file", "f.txt", "--collect", "out"]);
+  assertExit(r, 2);
+  assertLine(r, "waiting for a free running slot (1 running of 1); a slot another agent of this caller frees is used");
+  assertLine(r, "failed a: timed out after 1 s waiting for a free running slot (1 running of 1)");
+  assert.equal(creates(s.fake).length, 0);
 });
 
 test("PHCL-27 read-only agents: note always, per-agent denies only with the client capability", async () => {

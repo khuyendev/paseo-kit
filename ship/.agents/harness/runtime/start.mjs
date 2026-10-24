@@ -26,9 +26,32 @@ export function checkNameLengths(names) {
   if (long.length) throw new UsageError(`names longer than ${NAME_MAX} characters: ${long.join(", ")}`);
 }
 
+// errText keeps 300 characters. One full id fits; more than one would be cut off mid-id, so the rest use the 8-character
+// prefix ph result and ph archive already accept, and a list that still does not fit names the first ids and a count.
+const CLASH_LIMIT = 290;
+const clashLine = (list, them, hidden) => {
+  const who = list.map((c) => `${c.name} (id ${c.id})`).join(", ");
+  const ids = list.map((c) => c.id).join(" ");
+  const tail = hidden ? ` and ${hidden} more` : "";
+  return `a live subagent already has the name ${who}${tail}; ph result ${ids} to read ${them} or ph archive ${ids} to free the name`;
+};
+const clashFitted = (clashes, them, idOf) => {
+  const rows = clashes.map((c) => ({ name: c.name, id: idOf(c) }));
+  for (let n = rows.length; n >= 1; n--) {
+    const text = clashLine(rows.slice(0, n), them, clashes.length - n);
+    if (text.length <= CLASH_LIMIT) return text;
+  }
+  return clashLine([{ name: rows[0].name.slice(0, 24), id: rows[0].id }], them, clashes.length - 1);
+};
+
 export function checkNamesFree(live, names) {
-  const taken = names.filter((n) => live.some((a) => a.title === n));
-  if (taken.length) throw new UsageError(`a live subagent already has the name ${taken.join(", ")} (names must be unique)`);
+  const clashes = [];
+  for (const n of names) for (const a of live) if (a.title === n) clashes.push({ name: n, id: a.id });
+  if (!clashes.length) return;
+  // The interrupted fanout left these agents running and the error is the only record of them.
+  const them = clashes.length > 1 ? "them" : "it";
+  const full = clashLine(clashes, them, 0);
+  throw new UsageError(full.length <= CLASH_LIMIT ? full : clashFitted(clashes, them, (c) => id8(c.id)));
 }
 
 export const runningCount = (live) => live.filter((a) => a.status === "running").length;

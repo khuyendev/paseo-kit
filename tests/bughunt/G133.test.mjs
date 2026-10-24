@@ -56,8 +56,8 @@ test("G133 spawn waits for the caller's cap lock held by another process, then c
   assert.equal(creates(s.fake).length, 1);
 });
 
-test("G133 fanout --collect: a block's create re-reads the agents under the cap lock and fails when another process took the slot", async () => {
-  const s = setup({ overlay: { max_subagents: 1 } });
+test("G133 fanout --collect: a block's create re-reads the agents under the cap lock and does not take a slot another process filled", async () => {
+  const s = setup({ overlay: { max_subagents: 1, wait_timeout_s: 1 } });
   s.project.write("f.txt", "=== a\nA\n");
   const release = holdCapLock(s.root);
   const pending = s.ph(["fanout", "--file", "f.txt", "--collect", "out"]);
@@ -67,5 +67,6 @@ test("G133 fanout --collect: a block's create re-reads the agents under the cap 
   const r = await pending;
   assert.equal(r.code, 2);
   assert.equal(creates(s.fake).length, 0, "collect created an agent past the running cap");
-  assert.ok(r.out.some((l) => /^failed a: 1 subagents running \+ 1 new > max_subagents 1/.test(l)), JSON.stringify(r.out));
+  assert.ok(r.out.some((l) => l === "waiting for a free running slot (1 running of 1); a slot another agent of this caller frees is used"), JSON.stringify(r.out));
+  assert.ok(r.out.some((l) => l === "failed a: timed out after 1 s waiting for a free running slot (1 running of 1)"), JSON.stringify(r.out));
 });

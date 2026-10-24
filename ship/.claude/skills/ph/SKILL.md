@@ -29,7 +29,9 @@ A bare `--` ends the options, so a value such as `-h` can still be passed as dat
   can no longer be read, so read results first.
 - Keep at most `max_subagents` agents running (config, shipped 20; about 350 MB of RAM each) and at most
   `max_live_subagents` live (running + idle). `ph` refuses beyond either cap; a workflow queues past `max_subagents`,
-  and past `max_live_subagents` it waits only up to `wait_timeout_s` per call.
+  and past `max_live_subagents` it waits only up to `wait_timeout_s` per call. `ph fanout --collect` does not refuse a
+  full running cap: each admission re-reads how many of this caller's agents are running and waits up to `wait_timeout_s`
+  for a slot one of them frees, then uses it. A full live cap is still refused (an idle agent frees a slot only when archived).
 
 ## Commands
 
@@ -42,7 +44,7 @@ or config error (nothing done), 2 done with failed items or problems.
 | `ph config` | the effective config (kit defaults + `.agents/harness.config.json`) with file provenance. |
 | `ph spawn --name N (--prompt T \| --prompt-file F) [--count K] [--type T] [--role R] [--model M] [--effort E] [--read-only] [--cwd D] [--ws D] [--worktree]` | starts persistent named teammates (`N-1..N-K` with `--count`), prints `<id> <name>` per agent and the `next:` wait line, returns at once. |
 | `ph fanout --file F [--type] [--role] [--model] [--effort] [--read-only] [--cwd] [--ws]` | one teammate per `=== <name>` block of F, started together. |
-| `ph fanout --file F --collect DIR [--keep]` | one-shot agents within the free slots; waits, writes `DIR/<name>.md` (final reply) and `DIR/<name>.json` (the `result --json` object), archives each agent unless `--keep`. Run it in the foreground; do not poll its output. |
+| `ph fanout --file F --collect DIR [--keep]` | one-shot agents, at most `max_subagents` running; waits up to `wait_timeout_s` for a running slot another agent of this caller frees. Writes `DIR/<name>.md` (final reply) and `DIR/<name>.json` (the `result --json` object), archives each agent unless `--keep`. Run it in the foreground; do not poll its output. |
 | `ph send (--prompt T \| --prompt-file F) [--now] NAME...` | delivers a message between turns (`--now` interrupts), prints `sent <name>` and the wait line. |
 | `ph watch NAME...` | under Monitor: `idle <name> <id8> out_tokens= context_tokens= duration_s=` per agent, then `watch done: k idle, m failed`. |
 | `ph result [--json] NAME...` | final replies; `--json` adds status, model, usage, tokens (only for agents this process created), `costUsd` from `.agents/model-prices.json`, `reportedCostUsd`, durations and the skills the agent called in its newest 1000 timeline entries (`skills` is `null` when the timeline could not be read; `skillsWarning` says which). |
@@ -224,8 +226,11 @@ Time counts model time since the last prompt, tool time excluded. Teammates get 
 Run `ph doctor`. `PASEO_AGENT_ID is not set`: run `ph` from a Paseo agent. `tier <name> has no model`: the project
 has not mapped its tiers yet (run the harness adapter generator, or set `tiers.<name>.provider` in
 `.agents/harness.config.json`). A cap refusal names its cap. `max_subagents` (agents running at once): wait,
-`ph archive --idle`, or use a workflow (it queues until a running slot frees). `max_live_subagents` (running or idle
-agents): archive idle agents first with `ph archive --idle`, since only archiving frees a live slot. A workflow call
+`ph archive --idle`, or use a workflow (it queues until a running slot frees); `fanout --collect` waits itself, up to
+`wait_timeout_s`, and logs `waiting for a free running slot`. `max_live_subagents` (running or idle
+agents): archive idle agents first with `ph archive --idle`, since only archiving frees a live slot. A name clash
+(`a live subagent already has the name ...`) names each live agent's id: `ph result <id>` reads it, `ph archive <id>`
+frees the name. A workflow call
 does not wait it out: it waits at most `wait_timeout_s` per call, and calls run one after another. Both caps count this
 caller's agents only. An agent stopped for a permission it was not granted, or failing with an error, shows in
 `ph watch` as `failed <name> <id8>: ...`; read it with `ph result <name>`.
