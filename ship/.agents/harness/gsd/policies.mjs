@@ -20,6 +20,7 @@ export const COMPOSITION_POLICIES = Object.freeze({
   "gsd.request_check": script("gsd-execute"),
   "gsd.batch_review": script("gsd-execute"),
   "gsd.fixer_verifies_itself": script("gsd-execute"),
+  "gsd.executor_verifies_itself": script("gsd-execute"),
   "gsd.max_verify_rounds": script("gsd-execute"),
   "gsd.branching": script("gsd-execute"),
   "gsd.protected_branches": script("gsd-execute"),

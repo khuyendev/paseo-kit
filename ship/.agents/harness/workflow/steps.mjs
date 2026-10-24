@@ -6,10 +6,13 @@
 // the values. The returned object is the run: its record, `result`, `owner`, `ANSWER` and the steps. A step never decides a
 // stop for the composition: it returns it (`{stop}` or the stop result, always with its `answer`), and the composition
 // returns it or goes on.
+import { ownsDepth as matchDepth } from "../gsd/adapter-hooks.mjs";
+
 export function executeSteps(kit, run) {
   const { shell, agent, parallel, log, phase, runId, flow, gsd, call: rawCall, renderPrompt, digestLine, policyBlock, fatal, leaseText, fileSha, pool, serialize, turnLock, FLOW } = kit;
   // policy: pending (gsd.pending_request_tasks), requestCheck, reviewLimit and reviewers (gsd.code_review), reviewDepth,
-  // fixer {verifies, attempts, minutes}, smokeTriggers, protectedBranches (gsd.branching none + gsd.protected_branches).
+  // fixer {verifies, attempts, minutes}, executorVerifies (gsd.executor_verifies_itself, kit feedback 122), smokeTriggers,
+  // protectedBranches (gsd.branching none + gsd.protected_branches).
   const { phaseDir, args: a, cfg, setup: S, policy: P } = run;
   const { N, nn, prefix, mode: execMode, worktreeMode, metricsOn, schemas } = S;
   const cmds = cfg.adapter.commands;
@@ -37,6 +40,9 @@ export function executeSteps(kit, run) {
   // Kit feedback 121: set in lock() from map-drift. Execute does not stop; the result names remap when the map is stale.
   let mapDrift = null;
   const [worktrees, keptTrees, seeds] = [{}, {}, {}];
+  // Kit feedback 122 F3: the first gate of each wave id (the one before its fix rounds), counted once.
+  const firstGateSeen = new Set();
+  const firstGateCounts = { compile: 0, behaviour: 0 };
   let sharedChanges = [];
   let pendingRequests = {};
   let handEdits = null;
@@ -48,7 +54,7 @@ export function executeSteps(kit, run) {
     // Kit feedback 126 F3: the run's last log line names the worktrees this run kept and the command that removes them
     // once the phase's waves are committed. The success path logs the leftover-worktrees note first, then this.
     if (trees?.kept?.length) log(`kept ${trees.kept.length} executor worktree(s): ${trees.kept.map((k) => `${k.plan} ${k.path}`).join("; ")}; ph worktrees --prune --committed-phase ${N} removes them once this phase's waves are committed`);
-    return { status, phaseDir, mode: execMode, isolation: cfg.gsd.isolation, waves: waveResults, sharedChanges, ...(Object.keys(pendingRequests).length ? { requests: pendingRequests } : {}), ...(skipped.length ? { skipped } : {}), ...(trees ? { worktrees: trees } : {}), ...(handEdits ? { handEdits } : {}), ...(reported.outsideRoots.size ? { outsideRoots: [...reported.outsideRoots] } : {}), ...(reported.eolOnly.size ? { eolOnly: [...reported.eolOnly] } : {}), ...(pendingTasks.some((p) => !p.commit) ? { pendingRequestTasks: pendingTasks.filter((p) => !p.commit) } : {}), ...(pendingTasks.some((p) => p.commit) ? { pendingSettled: pendingTasks.filter((p) => p.commit) } : {}), ...(kitNotes.length ? { kitNotes } : {}), ...(ownerAnswers.length ? { ownerAnswers } : {}), ...(requestsClosed.length ? { requestsClosed } : {}), ...(warnings.length ? { warnings } : {}), ...(mapDrift?.advisory ? { advisories: [mapDrift.advisory], mapDrift, remap: mapDrift.paths ?? [] } : {}), events, ...extra };
+    return { status, phaseDir, mode: execMode, isolation: cfg.gsd.isolation, waves: waveResults, sharedChanges, ...(Object.keys(pendingRequests).length ? { requests: pendingRequests } : {}), ...(skipped.length ? { skipped } : {}), ...(trees ? { worktrees: trees } : {}), ...(handEdits ? { handEdits } : {}), ...(reported.outsideRoots.size ? { outsideRoots: [...reported.outsideRoots] } : {}), ...(reported.eolOnly.size ? { eolOnly: [...reported.eolOnly] } : {}), ...(pendingTasks.some((p) => !p.commit) ? { pendingRequestTasks: pendingTasks.filter((p) => !p.commit) } : {}), ...(pendingTasks.some((p) => p.commit) ? { pendingSettled: pendingTasks.filter((p) => p.commit) } : {}), ...(kitNotes.length ? { kitNotes } : {}), ...(ownerAnswers.length ? { ownerAnswers } : {}), ...(requestsClosed.length ? { requestsClosed } : {}), ...(warnings.length ? { warnings } : {}), ...(firstGateCounts.compile || firstGateCounts.behaviour ? { firstGate: { compile: firstGateCounts.compile, behaviour: firstGateCounts.behaviour } } : {}), ...(mapDrift?.advisory ? { advisories: [mapDrift.advisory], mapDrift, remap: mapDrift.paths ?? [] } : {}), events, ...extra };
   };
   // Kit feedback 87 C1: a red gate whose failures hold the gate's check-weakening step stops at stage Checks with its answers (ph gsd allow).
   const owner = (stage, reason, extra = {}) => {
@@ -430,6 +436,36 @@ export function executeSteps(kit, run) {
     }
     return unsaved("after the owner's answers");
   }
+  // Kit feedback 122 F1: the plan's owned changed files (files_modified covered by owns). Empty when the plan names none.
+  // The same matcher as the gate (adapter-hooks ownsDepth); steps.mjs cannot import the workflow lib (a harness-only tree has none).
+  function checkFilesOf(t) {
+    const declared = (planInfo(t.plan).files_modified ?? []).map(slashPath).filter(Boolean);
+    if (!declared.length) return [];
+    const prefixes = (cfg.adapter.ownership?.owns_forms ?? []).map((f) => f.prefix).filter(Boolean);
+    const list = prefixes.length ? prefixes : ["Path:"];
+    const covered = declared.filter((file) => {
+      const p = slashPath(file).replace(/^\.\//, "");
+      return (t.owns ?? []).some((entry) => {
+        let o = String(entry).trim().replace(/^`|`$/g, "");
+        for (const pre of list) if (o.startsWith(pre)) { o = o.slice(pre.length).trim(); break; }
+        o = slashPath(o).replace(/^\.\//, "");
+        return o && matchDepth(o, p) >= 0;
+      });
+    });
+    return covered.length ? covered : declared;
+  }
+  // The brief's per-call bindings (kit feedback 122). The overlay states the rule; unset, both sections stay out.
+  function executorBrief(t) {
+    const argv = cmds.check_files;
+    const check = Array.isArray(argv) && argv.length > 0;
+    const verify = P.executorVerifies === true;
+    return {
+      check,
+      ...(check ? { checkCommand: JSON.stringify(argv), checkFiles: JSON.stringify(checkFilesOf(t)) } : {}),
+      selfVerify: verify,
+      ...(verify ? { verifyCommand: JSON.stringify(testCommand ?? testArgv ?? []), verifyAttempts: String(P.fixer.attempts), verifyMinutes: String(P.fixer.minutes) } : {}),
+    };
+  }
   // One executor: the brief, the call and the verdict on its reply; {plan, ok, wt} or a halt.
   async function dispatch(t, waveId) {
     const rec = await records(t);
@@ -451,7 +487,7 @@ export function executeSteps(kit, run) {
     if (planInfo(t.plan).summary_file) log(`plan ${t.plan}: SUMMARY is a previous attempt (status halted, or older than the halt answer); the executor runs again with the answer`);
     const before = await headNow();
     const reqs = pendingRequests[t.plan] ?? [];
-    const prompt = await renderPrompt("executor", { plan: fromMain(planPath(t.plan)), snapshot: mainRoot ?? "", summary: String(t.summary), owns: JSON.stringify(t.owns ?? []), stackSkill: S.stackSkill ? fromMain(S.stackSkill) : "none", generated: S.generated, pending: pendingOn, metrics: metricsOn, answers: rec.answers?.length ? JSON.stringify(rec.answers) : "", notes: rec.notes?.length ? JSON.stringify(rec.notes) : "", accepted: rec.accepted?.length ? JSON.stringify(rec.accepted) : "", requests: reqs.length ? JSON.stringify(reqs) : "", digest: digestLine(`plan:${t.plan}`, t.planHash ?? "none") });
+    const prompt = await renderPrompt("executor", { plan: fromMain(planPath(t.plan)), snapshot: mainRoot ?? "", summary: String(t.summary), owns: JSON.stringify(t.owns ?? []), stackSkill: S.stackSkill ? fromMain(S.stackSkill) : "none", generated: S.generated, pending: pendingOn, metrics: metricsOn, answers: rec.answers?.length ? JSON.stringify(rec.answers) : "", notes: rec.notes?.length ? JSON.stringify(rec.notes) : "", accepted: rec.accepted?.length ? JSON.stringify(rec.accepted) : "", requests: reqs.length ? JSON.stringify(reqs) : "", ...executorBrief(t), digest: digestLine(`plan:${t.plan}`, t.planHash ?? "none") });
     const run = () => agent(prompt, { ...execOpts(t, `exec-${t.plan}`), detail: true });
     const d = await (worktreeMode ? run() : writeTree(run));
     const res = d?.result ?? null;
@@ -559,6 +595,11 @@ export function executeSteps(kit, run) {
   async function gateNow(waveId, tasks, { suite = true, obligations = null, context = [] } = {}) {
     const r = await flow(["gate", phaseDir], { waveId, plans: tasks.map((t) => ({ id: t.plan, owns: t.owns ?? [], verify: !obligations || obligations.has(t.plan) ? t.verify ?? [] : [] })), testArgv, ...(suite ? {} : { suite: false }), ...(context.length ? { context: context.map((t) => ({ id: t.plan, owns: t.owns ?? [] })) } : {}) });
     if (!r.json || r.json.status === "error") return { green: false, failureCount: 1, failures: [{ step: "gate", excerpt: r.json?.error ?? "gate failed to run" }], byPlan: {}, unplaced: [], blockedBy: {} };
+    // Kit feedback 122 F3: the first gate of this wave id, before any fix round reuses the id.
+    if (!firstGateSeen.has(waveId)) {
+      firstGateSeen.add(waveId);
+      for (const f of r.json.failures ?? []) if (f.class === "compile" || f.class === "behaviour") firstGateCounts[f.class]++;
+    }
     for (const n of r.json.notes ?? []) log(`gate: ${n}`);
     for (const tline of r.json.timedOut ?? []) log(`gate timeout: ${tline}`);
     ev(`gate ${waveId} ${r.json.green ? "green" : `red (${r.json.failureCount})`}`);

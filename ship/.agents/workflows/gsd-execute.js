@@ -27,9 +27,9 @@ const S = (await flow(["exec-setup"], { cfg, args: a, pending: pendingOn })).jso
 if (S.status !== "ok") return { status: "failed", reason: `exec-setup: ${S.error ?? "no answer"}` };
 const { N, prefix, mode: execMode, worktreeMode } = S;
 // The run's steps with the policies they take: open requests checked before Commit (gsd.request_check: auto, tree or off), the
-// review's depth, the fixer's own verification and limits (gsd.fixer_verifies_itself, gsd.fixer), the files that trigger the
+// review's depth, the fixer's own verification and limits (gsd.fixer_verifies_itself, gsd.fixer), the executor's own new tests (gsd.executor_verifies_itself), the files that trigger the
 // smoke builds (adapter.smoke_triggers), the branches a commit warns about (gsd.branching none, gsd.protected_branches).
-const R = executeSteps({ phaseDir, args: a, cfg, setup: S, policy: { pending: pendingOn, requestCheck: g.request_check ?? "auto", reviewLimit, reviewers, reviewDepth: g.review_depth, fixer: { verifies: Boolean(g.fixer_verifies_itself), attempts: g.fixer.max_build_attempts, minutes: g.fixer.minutes }, smokeTriggers: cfg.adapter.smoke_triggers ?? [], protectedBranches: g.branching === "none" ? g.protected_branches ?? [] : [] } });
+const R = executeSteps({ phaseDir, args: a, cfg, setup: S, policy: { pending: pendingOn, requestCheck: g.request_check ?? "auto", reviewLimit, reviewers, reviewDepth: g.review_depth, fixer: { verifies: Boolean(g.fixer_verifies_itself), attempts: g.fixer.max_build_attempts, minutes: g.fixer.minutes }, executorVerifies: Boolean(g.executor_verifies_itself), smokeTriggers: cfg.adapter.smoke_triggers ?? [], protectedBranches: g.branching === "none" ? g.protected_branches ?? [] : [] } });
 const { result, owner, ANSWER, GATE_RED, state, unsaved, tracked, planInfo, index, selectedTask, skipped, worktrees, inFlight, defectEvent, call, integrationPrompt, fixerOpts, classify, aloneOnTree } = R;
 const { dispatch, integrate, haltStop, haltedStop, partialStop, dirtyStop, seedTrees, acceptedStop, pendingTransfers, declareShared, codeWave, resumeTransfer, runGate, gateNow, smokeStop, strayStop, unownedStop, applyShared, fixRounds } = R;
 const { reviewPlan, reviewAll, reviewFix, unverifiedStop, planFiles, commitWaves, track, trackCommitted, stopAsked, pauseBefore, paused, finish, phaseGate } = R;
