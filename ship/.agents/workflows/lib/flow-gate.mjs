@@ -89,6 +89,17 @@ const SPACE = /\s/;
 const MAX_PATH = 260;
 // Keys of the visible files: case-folded on Windows, like samePath.
 const pathKey = (rel) => (process.platform === "win32" ? rel.toLowerCase() : rel);
+// An absolute Windows path (either case of the drive letter, backslashes, a file:// URL) resolved against the root.
+// The drive letter is rewritten to the root's, so path.relative still lands inside the repo.
+function resolveRepo(root, raw) {
+  let s = String(raw ?? "").trim().replace(/\\/g, "/").replace(/^file:\/\//, "");
+  if (/^\/[A-Za-z]:\//.test(s)) s = s.slice(1);
+  if (/^[A-Za-z]:\//.test(s)) {
+    const drive = /^[A-Za-z]:/.exec(toSlash(path.resolve(root)))?.[0];
+    if (drive && s.slice(0, 2).toLowerCase() === drive.toLowerCase()) s = drive + s.slice(2);
+  }
+  return path.resolve(root, s);
+}
 // The files the gate can see: tracked, or untracked and not ignored (the same list inputsOf reads).
 function visibleFiles(root) {
   return new Set(gitLines(root, ["ls-files", "-co", "--exclude-standard", "-z"]).flatMap((l) => l.split("\0")).filter(Boolean).map((rel) => pathKey(toSlash(rel))));
@@ -105,11 +116,12 @@ function mentionedFiles(root, text, visible, { locatedOnly = false } = {}) {
       while (lo > 0 && end - lo < MAX_PATH && !PATH_STOP.test(line[lo - 1])) lo--;
       for (let s = lo; s < end; s++) {
         if (SPACE.test(line[s]) || (s > lo && !SPACE.test(line[s - 1]))) continue;
-        const abs = path.resolve(root, line.slice(s, end));
+        const abs = resolveRepo(root, line.slice(s, end));
         const rel = toSlash(path.relative(root, abs));
         if (!isInside(abs, root) || !visible.has(pathKey(rel)) || !fs.statSync(abs, { throwIfNoEntry: false })?.isFile()) continue;
         found.add(rel);
-        if (/^["'`]?:\d/.test(line.slice(end))) located.add(rel);
+        // A position is path:line or MSVC path(line,col). A file only mentioned (no position) does not count once one is located.
+        if (/^["'`]?(?::\d|\(\d)/.test(line.slice(end))) located.add(rel);
         break;
       }
     }
@@ -122,7 +134,7 @@ function visibleRel(root, raw, visible) {
   let s = String(raw ?? "").trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/^file:\/\//, "");
   if (/^\/[A-Za-z]:\//.test(s)) s = s.slice(1);
   if (!s || s.startsWith("package:") || s.split("/").includes("..")) return null;
-  const abs = path.resolve(root, s);
+  const abs = resolveRepo(root, s);
   const rel = toSlash(path.relative(root, abs));
   if (!isInside(abs, root) || !visible.has(pathKey(rel)) || !fs.statSync(abs, { throwIfNoEntry: false })?.isFile()) return null;
   return rel;
@@ -162,6 +174,67 @@ function failureReportFiles(root, text, visible) {
   return [...out];
 }
 
+// Kit feedback 119 F1: which diagnostic levels fail the step. An analyzer `info` line never does. A warning does unless
+// the step's argv says `--no-fatal-warnings` (the adapter's fatal level). `--no-fatal-infos` names the same rule for infos.
+function fatalLevels(argv) {
+  const args = Array.isArray(argv) ? argv : [];
+  return { error: true, warning: !args.includes("--no-fatal-warnings"), info: false };
+}
+// An analyzer line starts with the level (`error - ... - path:line:col - code`). A compiler line carries it after the position.
+function lineLevel(line) {
+  const head = /^\s*(error|warning|info)\b/i.exec(line);
+  if (head) return head[1].toLowerCase();
+  if (/\(\d+,\d+\):\s*(?:fatal\s+)?error\b/i.test(line) || /:\d+:\d+:\s*(?:fatal\s+)?error\b/i.test(line) || /\b(?:fatal\s+)?error\s+LNK\d*\b/i.test(line)) return "error";
+  if (/\(\d+,\d+\):\s*warning\b/i.test(line) || /:\d+:\d+:\s*warning\b/i.test(line)) return "warning";
+  return null;
+}
+// The log with non-fatal diagnostics removed, so an info-only file is never a failing file.
+function diagnosticText(text, argv) {
+  const fatal = fatalLevels(argv);
+  return String(text).split(/\r?\n/).filter((line) => {
+    const level = lineLevel(line);
+    return !level || fatal[level];
+  }).join("\n");
+}
+// A link error (`error LNK`): a repo file named on the line, or a `file.cpp.obj` whose source is visible.
+function lnkFiles(root, text, visible) {
+  const out = new Set();
+  for (const line of String(text).split(/\r?\n/)) {
+    if (!/\b(?:fatal\s+)?error\s+LNK\d*\b/i.test(line)) continue;
+    for (const ext of line.matchAll(/\.[A-Za-z0-9]+(?![A-Za-z0-9])/g)) {
+      const end = ext.index + ext[0].length;
+      let lo = end;
+      while (lo > 0 && end - lo < MAX_PATH && !PATH_STOP.test(line[lo - 1])) lo--;
+      const slice = line.slice(lo, end).trim();
+      const rel = visibleRel(root, slice, visible) || (/\.obj$/i.test(slice) ? visibleRel(root, slice.replace(/\.obj$/i, ""), visible) : null);
+      if (rel) out.add(rel);
+    }
+  }
+  return [...out];
+}
+// Files an error-level line names at a position (analyzer `error -`, MSVC `error C`, clang `error:`, `error LNK`).
+function errorFilesOf(root, text, visible) {
+  const lines = String(text).split(/\r?\n/).filter((line) => lineLevel(line) === "error");
+  return [...new Set([...mentionedFiles(root, lines.join("\n"), visible, { locatedOnly: true }), ...lnkFiles(root, lines.join("\n"), visible)])];
+}
+// A Flutter load failure is `HH:MM +N -M: loading <path> [E]` or `Failed to load "<path>"`, not a test that ran (kit feedback 124).
+// A real failure is a progress line ending in [E] whose path is not a load.
+function reportTests(root, text, visible) {
+  const loading = new Set();
+  const real = new Set();
+  const add = (set, raw) => { const rel = visibleRel(root, raw, visible); if (rel) set.add(rel); };
+  for (const line of String(text).split(/\r?\n/)) {
+    const failed = /Failed to load "([^"]+)"/.exec(line);
+    if (failed) add(loading, failed[1]);
+    if (!/\[E\]\s*$/.test(line)) continue;
+    const load = /:\s+loading\s+(.+?)\s+\[E\]\s*$/.exec(line);
+    if (load) { add(loading, load[1]); continue; }
+    const ran = /:\s+(.+?):\s+.*\[E\]\s*$/.exec(line);
+    if (ran) add(real, ran[1]);
+  }
+  return { loading: [...loading].filter((f) => !real.has(f)), real: [...real] };
+}
+
 const squashWs = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
 // The file's stem without a trailing test/spec marker: feature_providers_test.js → feature_providers.
 function subjectOf(file) {
@@ -185,11 +258,18 @@ function namesFile(text, file) {
 }
 // The change that likely broke an unowned test: a phase shared change or an owner answer (halt, decision, allow) whose path is
 // the file, else one whose text names it. Path equality wins; a shared change wins over an answer that only names the subject.
+// The line of the record that named the file (kit feedback 119 F3): a change or reason line before the path alone.
+function evidenceLine(rec, file) {
+  const lines = String([rec.change, rec.reason, rec.path].filter(Boolean).join("\n")).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const named = lines.filter((l) => namesFile(l, file));
+  const richer = named.find((l) => toSlash(l).toLowerCase() !== toSlash(file).toLowerCase());
+  return (richer ?? named[0] ?? lines[0] ?? "").slice(0, 240);
+}
 function likelyCause(file, shared, answers) {
   const eq = (p) => p && toSlash(p).toLowerCase() === toSlash(file).toLowerCase();
   const blob = (rec) => [rec.path, rec.change, rec.reason].filter(Boolean).join(" ");
-  const asShared = (s) => ({ kind: "shared", id: s.id ?? null, from: s.from ?? null, path: s.path ? toSlash(s.path) : null, text: squashWs(s.change).slice(0, 240) });
-  const asAnswer = (a) => ({ kind: "decision", id: a.id ?? null, from: a.plan ?? null, path: a.path ? toSlash(a.path) : null, text: squashWs(a.reason).slice(0, 240) });
+  const asShared = (s) => ({ kind: "shared", id: s.id ?? null, from: s.from ?? null, path: s.path ? toSlash(s.path) : null, text: squashWs(s.change).slice(0, 240), matched: evidenceLine(s, file) });
+  const asAnswer = (a) => ({ kind: "decision", id: a.id ?? null, from: a.plan ?? null, path: a.path ? toSlash(a.path) : null, text: squashWs(a.reason).slice(0, 240), matched: evidenceLine(a, file) });
   const sharedPath = (shared ?? []).find((s) => eq(s.path));
   const answerPath = (answers ?? []).find((a) => eq(a.path));
   if (answerPath) return asAnswer(answerPath);
@@ -199,10 +279,31 @@ function likelyCause(file, shared, answers) {
   const a = (answers ?? []).find((x) => namesFile(blob(x), file));
   return a ? asAnswer(a) : null;
 }
-// Kit feedback 108 F2: failing test files no plan of this gate owns (an earlier wave's plan, or none). context plans are not this
-// wave. cause is set when a shared change or an owner answer of the phase names the file or its subject.
+function readGrants(root, phaseDir) {
+  try {
+    const list = readJsonIf(path.join(resolveInside(root, phaseDir), "grants.json"), []);
+    return Array.isArray(list) ? list.filter((g) => g && typeof g.path === "string") : [];
+  } catch { return []; }
+}
+const sameFile = (a, b) => toSlash(a).toLowerCase() === toSlash(b).toLowerCase();
+// A grant clears the unowned-test stop when it names a plan of this gate, or names no plan (the integration fixer takes it).
+// A grant to a plan of an earlier wave does not (kit feedback 119 F4): this wave still has no owner.
+function grantCovers(file, grants, plans) {
+  const g = (grants ?? []).find((x) => sameFile(x.path, file));
+  if (!g) return false;
+  return !g.plan || plans.some((p) => p.id === g.plan);
+}
+function grantPlans(file, grants, plans) {
+  const g = (grants ?? []).find((x) => sameFile(x.path, file) && x.plan && plans.some((p) => p.id === x.plan));
+  return g ? [g.plan] : [];
+}
+// Kit feedback 108 F2, 119 F2, 124 F2: real failing test files no plan of this gate owns (an earlier wave's plan, or none).
+// A load failure is not one. A file granted to a plan of this gate is not one. context plans are not this wave.
+// cause is set when a shared change or an owner answer of the phase names the file or its subject.
 function unownedTestsOf(root, phaseDir, plans, failures, prefixes) {
-  const files = [...new Set(failures.flatMap((f) => f.tests ?? []).filter((file) => !specificOwners(file, plans, prefixes).length))];
+  const grants = readGrants(root, phaseDir);
+  const ownedHere = (file) => specificOwners(file, plans, prefixes).length > 0 || grantCovers(file, grants, plans);
+  const files = [...new Set(failures.flatMap((f) => f.failingTests ?? []).filter((file) => !ownedHere(file)))];
   if (!files.length) return [];
   let shared = [];
   try { shared = readState(root, phaseDir).shared ?? []; } catch { shared = []; }
@@ -540,7 +641,19 @@ export async function gate(root, phaseDir, input) {
   const failures = steps.filter((s) => s.outcome !== "passed").map((s) => (s.kind === CHECKS_STEP
     ? { step: s.name, plan: null, outcome: s.outcome, excerpt: s.text, log: s.log, files: [], needsOwner: weak.stop ?? { stage: "Checks", reason: s.text, options: ["fix the cause (git, the harness config), then rerun with the same args"] } }
     : stepFailure(root, s, visible, checks)));
-  const attribution = await attribute(root, cfg, [...(input.plans ?? []), ...(input.context ?? []).map(({ id, owns }) => ({ id, owns: owns ?? [] }))], failures.filter((f) => f.step !== CHECKS_STEP), prefixes);
+  // Kit feedback 124 F1: a load failure belongs to the owners of the analyzer/compile errors in this gate. The fix round
+  // sees those errors (the build excerpt) ahead of the "loading X" text.
+  const wavePlans = input.plans ?? [];
+  const ownedErrors = [...new Set(failures.flatMap((f) => (f.errorFiles ?? []).filter((file) => specificOwners(file, wavePlans, prefixes).length)))];
+  if (ownedErrors.length) {
+    const analyzer = failures.filter((f) => (f.errorFiles ?? []).some((file) => ownedErrors.includes(file))).map((f) => f.excerpt).filter(Boolean).join("\n");
+    for (const f of failures) {
+      if (!(f.loading ?? []).length) continue;
+      f.files = [...new Set([...(f.files ?? []).filter((file) => !(f.loading ?? []).includes(file)), ...ownedErrors])];
+      if (analyzer && !String(f.excerpt ?? "").includes(analyzer.slice(0, 80))) f.excerpt = `${analyzer}\n${f.excerpt ?? ""}`.slice(0, 8000);
+    }
+  }
+  const attribution = await attribute(root, cfg, [...wavePlans, ...(input.context ?? []).map(({ id, owns }) => ({ id, owns: owns ?? [] }))], failures.filter((f) => f.step !== CHECKS_STEP), prefixes, phaseDir);
   if (attribution.attributionError) notes.push(`attribution hook failed: ${attribution.attributionError}; its failures stay unplaced`);
   // Kit feedback 112: a crash is reported on its own. It is not a timeout hang, even when the step also hit its limit.
   const crashed = steps.filter((s) => s.crash?.signature).map((s) => `${s.name} crashed: ${s.crash.signature}`);
@@ -561,16 +674,24 @@ function stepFailure(root, s, visible, checks) {
   const cls = s.class ? { class: s.class } : {};
   if (s.crash?.signature) return { step: s.name, plan: s.plan ?? null, outcome: s.outcome, excerpt: excerpt(s.text), log: s.log, files: [], crash: { signature: s.crash.signature }, ...cls };
   const hungOnes = s.hang?.files ?? s.blockedByHang?.files ?? [];
-  const files = [...new Set([...mentionedFiles(root, s.text, visible, { locatedOnly: hungOnes.length > 0 }), ...failureReportFiles(root, s.text, visible), ...hungOnes])];
-  const tests = [...new Set([...argvFiles(root, s.argv, visible), ...files].filter((f) => isTestFile(f, checks)))];
-  return { step: s.name, plan: s.plan ?? null, outcome: s.outcome, excerpt: excerpt(s.text), log: s.log, files, ...(tests.length ? { tests } : {}), ...cls };
+  // Kit feedback 119 F1: infos (and warnings the command marks non-fatal) name no failing file. 124: a load is not a failed test.
+  const body = diagnosticText(s.text, s.argv);
+  const reported = reportTests(root, s.text, visible);
+  const loading = reported.loading;
+  const files = [...new Set([...mentionedFiles(root, body, visible, { locatedOnly: hungOnes.length > 0 }), ...failureReportFiles(root, body, visible), ...lnkFiles(root, body, visible), ...reported.real, ...hungOnes])];
+  const tests = [...new Set([...argvFiles(root, s.argv, visible), ...files, ...hungOnes].filter((f) => isTestFile(f, checks)))].filter((f) => !loading.includes(f));
+  const failingTests = [...new Set([...reported.real, ...files.filter((f) => isTestFile(f, checks))])].filter((f) => !loading.includes(f));
+  const errorFiles = errorFilesOf(root, s.text, visible);
+  return { step: s.name, plan: s.plan ?? null, outcome: s.outcome, excerpt: excerpt(s.text), log: s.log, files, ...(tests.length ? { tests } : {}), ...(failingTests.length ? { failingTests } : {}), ...(loading.length ? { loading } : {}), ...(errorFiles.length ? { errorFiles } : {}), ...cls };
 }
 
-async function attribute(root, cfg, plans, failures, prefixes) {
+async function attribute(root, cfg, plans, failures, prefixes, phaseDir) {
   const byPlan = {};
   const unplaced = [];
   const blockedBy = {};
-  const ownersOfFiles = (f) => [...new Set(f.files.flatMap((file) => specificOwners(file, plans, prefixes).map((p) => p.id)))];
+  const grants = phaseDir ? readGrants(root, phaseDir) : [];
+  // A file granted to a plan of this gate is that plan's for this run (kit feedback 119 F4), on top of owns.
+  const ownersOfFiles = (f) => [...new Set(f.files.flatMap((file) => [...specificOwners(file, plans, prefixes).map((p) => p.id), ...grantPlans(file, grants, plans)]))];
   for (const f of failures) {
     // Kit feedback 112: a tool crash is an environment failure. It is not the plan's, even when the step is that plan's obligation.
     if (f.crash) { unplaced.push(f); continue; }

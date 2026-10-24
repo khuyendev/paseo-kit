@@ -137,7 +137,10 @@ test("TE exec-fixers and exec-round-end: fixer routing (G064), owner decisions t
   const stuck = await end({ decisions: [d, { id: "01-02", decision: { status: "partial" } }], gate });
   assert.deepEqual(stuck.stuck, { reason: "owner decision needed in the fix of 01-01: decide", decision: { note: "decide" } });
   assert.deepEqual(stuck.logs, ['fix of 01-02 reported "partial", but its failures are gone after the transfer and the rerun; not an owner decision']);
-  assert.equal((await end({ soft: [{ id: null, why: "integration unresolved" }], gate })).still, "integration unresolved");
+  // WildEraV6 10: an unresolved integration fixer stops the round only when no placed failure still has a fixer.
+  assert.equal((await end({ soft: [{ id: null, why: "integration unresolved" }], gate: { ...gate, byPlan: {} } })).still, "integration unresolved");
+  assert.equal((await end({ soft: [{ id: null, why: "integration unresolved" }], gate })).still, undefined);
+  assert.equal((await end({ soft: [{ id: "01-01", why: "plan unresolved" }, { id: null, why: "integration unresolved" }], gate })).still, "plan unresolved");
   assert.deepEqual(await end({ gate }), { logs: [], stall: { prev: 3, noDrop: 1 }, stalled: false });
   assert.equal((await end({ gate, stall: { prev: 3, noDrop: 1 } })).stalled, true);
   assert.deepEqual((await end({ gate: { ...gate, failureCount: 2 }, stall: { prev: 3, noDrop: 1 } })).stall, { prev: 2, noDrop: 0 });
