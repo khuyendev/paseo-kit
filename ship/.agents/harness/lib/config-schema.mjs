@@ -165,7 +165,7 @@ export const SCHEMA = obj({
     doc_tools: strs(),
     // Kit feedback 120: extra generated-file globs (string or {glob, source?}). Absent = none. Not a default, so an old overlay loads.
     generated: arr(globEntry()),
-    // Kit feedback 125 F3 / WildEraV6 12. Outside commands and verify_vocabulary, so they do not move the gate hash.
+    // Kit feedback 125 F3 / W12. Outside commands and verify_vocabulary, so they do not move the gate hash.
     // metrics: regexes recorded from an obligation's output (group value, or the first capture). test_report: the suite's
     // machine-readable report; a pure test-filter obligation covered by it is not started again.
     metrics: arr(str({ nonEmpty: true })),

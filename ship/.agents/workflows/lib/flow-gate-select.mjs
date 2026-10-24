@@ -1,4 +1,4 @@
-// Kit feedback 125 and WildEraV6 12: which obligations a gate runs. Step selection, suite-report reuse and
+// Kit feedback 125 and W12: which obligations a gate runs. Step selection, suite-report reuse and
 // metric recording. Failure parsing stays in flow-gate.mjs (H119).
 import fs from "node:fs";
 import path from "node:path";

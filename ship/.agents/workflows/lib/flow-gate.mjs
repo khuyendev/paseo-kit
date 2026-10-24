@@ -572,7 +572,7 @@ export async function gate(root, phaseDir, input) {
     }
     return runBounded(name, argv, timeoutS, extra);
   };
-  // Kit feedback 125 F3 / WildEraV6 12: a covered pure test filter is a step, not a second runner. The log starts `from suite report`.
+  // Kit feedback 125 F3 / W12: a covered pure test filter is a step, not a second runner. The log starts `from suite report`.
   const fromReport = (name, argv, verdict, meta) => {
     const names = [...new Set(verdict.matched.map((m) => m.name))];
     const text = ["from suite report", ...verdict.matched.map((m) => `${m.name}: ${m.status}${m.message ? ` (${m.message})` : ""}`)].join("\n");
@@ -628,7 +628,7 @@ export async function gate(root, phaseDir, input) {
     const earlier = earlierObligations(root, cfg, { ...input, phaseDir }, obligationStepNames);
     for (const n of earlier.notes) notes.push(n);
     skippedObligations = earlier.skipped;
-    // WildEraV6 12: the suite report, only when the suite step finished and did not crash (102/112 stay in force otherwise).
+    // kit feedback W12: the suite report, only when the suite step finished and did not crash (102/112 stay in force otherwise).
     const suiteStep = steps.find((s) => s.name === "test");
     const reportSpec = cfg.adapter.test_report ?? null;
     let report = { present: false, tests: [] };
