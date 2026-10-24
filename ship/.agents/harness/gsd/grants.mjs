@@ -22,7 +22,9 @@ export function grantPath(g, phase, filePath, planRef) {
   };
   const owners = readPlans(phase).filter((p) => p.owns.some(owned)).map((p) => p.id);
   const plan = planRef ? (/^\d+$/.test(planRef) ? `${phase.padded}-${String(planRef).padStart(2, "0")}` : normPlanId(planRef)) : null;
-  if (plan && !owners.includes(plan)) throw fail(`${plan} does not own ${file}${owners.length ? ` (owned by ${owners.join(", ")})` : ""}`);
+  // Kit feedback 119 F4: a plan of this phase may take a file another plan owns, so a later wave's grant stop is answerable.
+  // A plan id that is not a plan of the phase is still refused. Omitting --plan while someone owns the file is still refused.
+  if (plan && !owners.includes(plan) && !readPlans(phase).some((p) => p.id === plan)) throw fail(`${plan} does not own ${file}${owners.length ? ` (owned by ${owners.join(", ")})` : ""}`);
   if (!plan && owners.length) throw fail(`${file} is owned by ${owners.join(", ")}; grant it with --plan <id>`);
   const grantsFile = path.join(phase.dir, GRANTS);
   const list = readJsonIf(grantsFile, []);

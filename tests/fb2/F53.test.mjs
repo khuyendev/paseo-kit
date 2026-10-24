@@ -52,11 +52,15 @@ test("F53 a granted file changed in the main tree joins the wave commit as integ
   assert.deepEqual(JSON.parse(w.read(`${PD}/commits.json`)).at(-1).integration, ["src/01-01/shared.js"]);
 });
 
-test("F53 ph gsd grant records the grant of a file to the phase; a plan is named only when it owns the file", async () => {
+test("F53 ph gsd grant records the grant of a file to the phase; a named plan must be a plan of the phase", async () => {
   const p = project({ files: { [`${PD}/01-01-PLAN.md`]: plan({ id: "01", owns: '["Path:src/01-01/"]' }), [`${PD}/01-02-PLAN.md`]: plan({ id: "02", owns: '["Path:src/01-02/"]' }) } });
-  const notOwner = await runGsdIn(p, ["grant", "1", "--path", "src/01-01/shared.js", "--plan", "01-02"]);
-  assert.equal(notOwner.code, 1);
-  assert.match(notOwner.json.error, /01-02 does not own src\/01-01\/shared\.js \(owned by 01-01\)/);
+  // Kit feedback 119 F4: a later wave's plan may take a file an earlier plan owns. A plan that is not in the phase is still refused.
+  const notAPlan = await runGsdIn(p, ["grant", "1", "--path", "src/01-01/shared.js", "--plan", "01-09"]);
+  assert.equal(notAPlan.code, 1);
+  assert.match(notAPlan.json.error, /01-09 does not own src\/01-01\/shared\.js \(owned by 01-01\)/);
+  const laterWave = await runGsdIn(p, ["grant", "1", "--path", "src/01-01/shared.js", "--plan", "01-02"]);
+  assert.equal(laterWave.code, 0, JSON.stringify(laterWave.json));
+  assert.equal(laterWave.json.plan, "01-02");
   const noPlan = await runGsdIn(p, ["grant", "1", "--path", "src/01-01/shared.js"]);
   assert.equal(noPlan.code, 1);
   assert.match(noPlan.json.error, /owned by 01-01; grant it with --plan/);

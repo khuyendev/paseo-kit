@@ -599,28 +599,38 @@ export function executeSteps(kit, run) {
   // rule). opts: rounds (the composition's bound, gsd.max_verify_rounds); graph schedule: gate() reruns the gate (default: these
   // plans), done(gate) ends the rounds early (default: green).
   // Kit feedback 108 F2: a failing test file no plan of this wave owns, named by a shared change or an owner decision, stops
-  // here — before any fixer of the round — with `ph gsd grant`. Kit feedback 102 F4: a request routed to a same-wave owner
-  // dispatches that owner's fixer in this round (one follow-up; a request that follow-up creates waits for the next round).
+  // with `ph gsd grant`. Kit feedback 119 F2: only after a round of the failures this wave does own, and never for a file
+  // that is not itself failing. 119 F4: the grant names a plan of THIS wave (a grant to an earlier wave's plan leaves no
+  // owner here). Kit feedback 102 F4: a request routed to a same-wave owner dispatches that owner's fixer in this round
+  // (one follow-up; a request that follow-up creates waits for the next round).
   async function fixRounds(waveId, tasks, first, label, tail, { rounds, gate = () => runGate(waveId, tasks), done = (x) => x.green } = {}) {
     let cur = first;
     let stall = { prev: first.failureCount, noDrop: 0 };
     const owed = new Set();
+    let gaveOwnedRound = false;
     const reqKeys = () => new Set(Object.entries(pendingRequests).flatMap(([plan, list]) => (list ?? []).map((q) => `${plan}\0${q.from ?? ""}\0${q.path}\0${q.change}`)));
+    const ownedFailures = (g) => Object.entries(g.byPlan ?? {}).some(([id, list]) => (list ?? []).length && tasks.some((t) => t.plan === id));
     const grantStop = async (gateResult) => {
       const named = (gateResult.unownedTests ?? []).filter((t) => t.cause);
       if (!named.length) return null;
       const owners = (await flow(["owners"], { paths: named.map((t) => t.file), plans: allTasks.map(asPlan) })).json?.owners ?? {};
       const earlier = (file) => (owners[file] ?? []).find((id) => !tasks.some((t) => t.plan === id)) ?? null;
-      const lines = named.map((t) => `${t.file}${earlier(t.file) ? ` (owned by ${earlier(t.file)}, not this wave)` : " (no plan of this wave owns it)"} — likely broken by ${t.cause.kind} ${t.cause.id ?? ""} ${t.cause.from ? `from ${t.cause.from} ` : ""}${t.cause.path ? `${t.cause.path}: ` : ""}${t.cause.text}`);
-      return owner("Gate", `${label}: failing test file(s) no plan of this wave owns, so no fix round runs until they are granted: ${lines.join("; ")}`, { answer: ANSWER.grant(named[0].file, earlier(named[0].file)), unownedTests: named, failures: gateResult.failures, evidence: gateResult.evidence, options: named.map((t) => `ph gsd grant ${N} --path ${t.file}${earlier(t.file) ? ` --plan ${earlier(t.file)}` : ""}, then rerun with the same args`) });
+      const wavePlan = tasks.find((t) => t.plan)?.plan ?? null;
+      // An earlier owner is named in the reason. The command grants the file to a plan of this wave, which is what clears the stop.
+      const answerPlan = (file) => (earlier(file) ? wavePlan : null);
+      const lines = named.map((t) => `${t.file}${earlier(t.file) ? ` (owned by ${earlier(t.file)}, not this wave)` : " (no plan of this wave owns it)"} — likely broken by ${t.cause.kind} ${t.cause.id ?? ""} matched ${JSON.stringify(t.cause.matched ?? "")} ${t.cause.from ? `from ${t.cause.from} ` : ""}${t.cause.path ? `${t.cause.path}: ` : ""}${t.cause.text}`);
+      return owner("Gate", `${label}: failing test file(s) no plan of this wave owns, so no fix round runs until they are granted: ${lines.join("; ")}`, { answer: ANSWER.grant(named[0].file, answerPlan(named[0].file)), unownedTests: named, failures: gateResult.failures, evidence: gateResult.evidence, options: named.map((t) => `ph gsd grant ${N} --path ${t.file}${answerPlan(t.file) ? ` --plan ${answerPlan(t.file)}` : ""}, then rerun with the same args`) });
     };
     for (let round = 1; !done(cur) && round <= rounds; round++) {
       // Kit feedback 112: a test tool that crashed is an environment failure. No fixer runs; the owner frees memory or
       // bounds the suite's concurrency and reruns. A Checks failure in the same gate still wins inside the owner stop.
       const crashes = (cur.failures ?? []).filter((f) => f.crash?.signature);
       if (crashes.length) return { stop: owner("Gate", `${label}: ${crashes.map((f) => `${f.step} crashed: ${f.crash.signature}`).join("; ")}; the test tool crashed (an environment failure, not a file a plan owns), so no fixer runs`, { answer: ANSWER.rerun("rerun with the same args after freeing memory or bounding test concurrency"), crashes: crashes.map((f) => ({ step: f.step, signature: f.crash.signature })), failures: cur.failures, evidence: cur.evidence }) };
-      const early = await grantStop(cur);
-      if (early) return { stop: early };
+      // Owned failures get a round before the grant stop. A gate with only unowned failing tests still stops first.
+      if (gaveOwnedRound || !ownedFailures(cur)) {
+        const early = await grantStop(cur);
+        if (early) return { stop: early };
+      } else gaveOwnedRound = true;
       const red = (why, extra = {}) => ({ stop: owner("Gate", `${label} is red after fix round ${round}: ${why}${tail}`, { answer: GATE_RED, failures: cur.failures, evidence: cur.evidence, blockedBy: cur.blockedBy, ...extra }) });
       // Fixer routing (exec-fixers): a plan's failures go to its executor session, or to a main-tree fixer when the plan resumed
       // without its worktree (a new one would start from HEAD); G064: an integration fixer owns exactly the files of the failures

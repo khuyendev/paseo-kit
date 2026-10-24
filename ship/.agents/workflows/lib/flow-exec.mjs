@@ -442,7 +442,9 @@ export function execRoundEnd({ decisions = [], soft = [], gate, done = false, st
   const stuck = decisions.filter((d) => fails(d.id));
   const logs = decisions.filter((d) => !fails(d.id)).map((d) => `fix of ${d.id} reported "${said(d)}", but its failures are gone after the transfer and the rerun; not an owner decision`);
   if (stuck.length) return { logs, stuck: { reason: stuck.map((d) => `owner decision needed in the fix of ${d.id}: ${said(d)}`).join("; "), decision: stuck[0].decision } };
-  const still = soft.filter((s) => (s.id ? fails(s.id) : (gate.unplaced ?? []).some((f) => (f.files ?? []).length)));
+  // An unresolved integration fixer (no plan id) stops the round only when no placed failure still has a fixer.
+  const ownedLeft = Object.values(gate.byPlan ?? {}).some((list) => (list ?? []).length);
+  const still = soft.filter((s) => (s.id ? fails(s.id) : !ownedLeft && (gate.unplaced ?? []).some((f) => (f.files ?? []).length)));
   if (!done && still.length) return { logs, still: still.map((s) => s.why).join("; ") };
   const noDrop = gate.failureCount >= stall.prev ? (stall.noDrop ?? 0) + 1 : 0;
   return { logs, stall: { prev: gate.failureCount, noDrop }, stalled: !done && noDrop >= 2 };
@@ -592,11 +594,16 @@ export function execSharedBefore(root, phaseDir, { waveId, plans = [] }) {
 }
 
 // The outside text of a shared-change fixer names a failure unless it says there is none ("none", "n/a", "No failures outside
-// the shared files were observed") without naming a file or a "but".
+// the shared files were observed", "No outside failures observed") without naming a file or a "but". A directory such as
+// `windows/flutter` is not a file; a path with an extension (`test/x_test.dart`) is (kit feedback 105, 119).
 const NO_FAILURE = /^\s*(?:none\b|n\/a\b|nothing\b|no\b)/i;
+const FILE_TOKEN = /[\w.@-]+(?:\/[\w.@-]+)+\.[A-Za-z0-9]+/g;
 const namesFailure = (text) => {
   const t = String(text ?? "").trim();
-  return Boolean(t) && !(NO_FAILURE.test(t) && !/\bbut\b/i.test(t) && !(t.replace(/\bn\/a\b/gi, "").match(PATH_TOKEN) ?? []).length);
+  if (!t) return false;
+  const denial = NO_FAILURE.test(t) && !/\bbut\b/i.test(t);
+  if (denial && !(t.replace(/\bn\/a\b/gi, "").match(FILE_TOKEN) ?? []).length) return false;
+  return true;
 };
 // exec-shared-reply (kit feedback 82, 96 b): the shared-change fixer's reply. {waveId, open: [{id}] (the changes asked, in index
 // order), reply} -> {made: [ids reported present (per change, or every one when status fixed has no list)], logs}.

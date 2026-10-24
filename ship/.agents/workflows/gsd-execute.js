@@ -405,9 +405,7 @@ if (shB) return shB;
 const smB = await smokeStop(doneTasks, batchId, "the batch");
 if (smB) return smB;
 let final = await batchGate();
-// G064: failures in files no executed plan owns go to an integration fixer owning exactly those files; the batch fixer gets only
-// the failures of the executed plans; a failure naming no file has no fixer. Kit feedback 64: in batch mode the cause of the red
-// gate is what the integration fixer names; the batch fixer's own defects are recorded with its fix call.
+// G064, kit feedback 64: unplaced files go to the integration fixer; unresolved stops only when no executed plan still has a failure.
 if (!final.green) {
   const placed = (final.unplaced ?? []).filter((f) => (f.files ?? []).length);
   const batchRed = { wave: batchId, round: 1, label: "the batch", plans: doneTasks.map((t) => t.plan), failures: final.failureCount ?? null };
@@ -420,8 +418,10 @@ if (!final.green) {
     const r = await call(await integrationPrompt(files, placed), fixerOpts("integration-fix-batch"));
     const named = await defectEvent("fix-round", { wave: batchId, round: 1, label: "the batch", plan: null, fixer: "integration" }, { reply: r.result });
     await defectEvent("gate-failure", batchRed, { defects: named });
-    if (!r.result || r.result.status !== "fixed") return owner("Gate", `the integration fixer of the batch ${r.result ? "answered unresolved" : `returned nothing${r.reason ? ` (${r.reason})` : ""}`}`, { answer: fatal(r.reason) ? ANSWER.rerun("rerun after the reset") : GATE_RED, failures: placed, evidence: final.evidence, ...(fatal(r.reason) ? { failure: classify(r.reason) } : {}) });
-    final = await batchGate();
+    const ownedLeft = Object.entries(final.byPlan ?? {}).some(([id, list]) => (list ?? []).length && doneTasks.some((t) => t.plan === id));
+    if ((!r.result || r.result.status !== "fixed") && !(r.result && r.result.status === "unresolved" && ownedLeft)) return owner("Gate", `the integration fixer of the batch ${r.result ? "answered unresolved" : `returned nothing${r.reason ? ` (${r.reason})` : ""}`}`, { answer: fatal(r.reason) ? ANSWER.rerun("rerun after the reset") : GATE_RED, failures: placed, evidence: final.evidence, ...(fatal(r.reason) ? { failure: classify(r.reason) } : {}) });
+    if (r.result && r.result.status === "fixed") final = await batchGate();
+    else if (ownedLeft) log("integration fixer of the batch answered unresolved; placed failures still have a fixer");
   }
 }
 const batchFailures = [...new Set(Object.entries(final.byPlan ?? {}).filter(([id]) => doneTasks.some((t) => t.plan === id)).flatMap(([, list]) => list))];
