@@ -6,6 +6,30 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Kit feedback 110-117 and WildEraV6 4-7 (owner 2026-10-24: "Tiếp tục lấy feedback đi, có vụ prompt truyền vào vớ vẩn
+  đấy", then "agent nạp đúng thứ cần thiết để làm việc thôi"; six Grok 4.7 agents, notes kit-bughunt/fb10/design/<ID>.md,
+  verification kit-bughunt/fb10/VERIFY.md). Role prompts (117, WildEraV6 7): the inventory declares per role the
+  upstream sections the kit overlay or runtime replaces (commit protocol, final commit, STATE/ROADMAP updates, worktree
+  metadata, checkpoint/continuation return formats, project-state loading, agent-skills bootstrap, doc lookup) and
+  `ph gsd upstream.build` drops them, leaving one `<!-- kit: <id> replaced by the kit overlay -->` line; every other
+  line stays upstream text and `upstream.check` proves it (D-111). executor-rules.md no longer repeats the role's
+  sections (12.3 KB -> 0.3 KB) and the executor runtime block no longer restates overlay rules. Sizes: gsd-executor
+  47.8 -> 28.5 KB, gsd-code-fixer 43.4 -> 17.6 KB, debugger 47.7 -> 38.8 KB, phase-researcher 46.6 -> 38.5 KB.
+  Optional `adapter.doc_tools` keeps documentation_lookup; `ph gsd upstream size` (printed by `ph doctor`) shows each
+  role's size and dropped bytes; the run log names each agent's first-prompt size. WildEraV6 6: the code-review, fixer
+  and finding-verifier prompts name the stack skill. WildEraV6 4: the workflow config load keeps the whole JSON
+  (tailChars). WildEraV6 5: a one-shot call's reply is journaled before its agent is archived; per-agent memory note
+  700 MB and `ph doctor` suggests max_live_subagents (an MCP filter per role is not possible in the current runtime).
+  110: a gap-closure wave commits as `fix(<N>-gap<k>): phase <N> gap wave <k>` and its record lists `gaps`. 111: `ph gsd
+  evidence refresh <N>` reruns the phase's batch gate on HEAD; gsd-verify stops needs-owner with that verb when every
+  evidence file is stale. 112: a step whose output holds a runtime crash signature (out of memory, DumpStackTrace, ...;
+  optional `adapter.crash_signatures`) is `crashed`, not a hang, blocks no other step and stops with `rerun`; steps
+  record free memory and commit; `ph doctor` notes low commit. 113: `hand-edit.record --amend` keeps a `history`; the
+  usage names the 300-character limit. 114: contract drift ignores spans qualified by another type or naming another
+  produced symbol, and names it. 115: plans marked for re-planning after their planner ran are re-planned before the
+  checker (bounded), the checker does not start with an open mark, and each plan gets a threat-ID range T-NN-MMxx.
+  116: the gate's signature note accepts equivalent declarations (body, parameter names, `this.`/`super.` field
+  formals, multi-name fields).
 - Kit feedback 102 F4, 103, 105-109 and WildEraV6 1-3 (owner 2026-10-24: "Lấy feedback từ wilderav6 và paseo kit về
   kiểm tra rồi fix", then "Bỏ opus dùng grok đi": six Grok 4.7 agents, notes kit-bughunt/fb9/design/<ID>.md, verification
   kit-bughunt/fb9/VERIFY.md). 104 was already fixed by 91. Fix rounds (102 F4, 108): the gate log's failing files include
