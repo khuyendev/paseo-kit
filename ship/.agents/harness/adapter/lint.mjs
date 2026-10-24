@@ -32,6 +32,9 @@ export function scriptOperands(argv) {
 // Every script an adapter command or checker argv runs: [{where, rel}].
 function adapterArgvScripts(a) {
   const lists = [["adapter.commands.build", a.commands.build], ["adapter.commands.test", a.commands.test]];
+  const fileArgs = a.commands.test_file_args;
+  if (Array.isArray(fileArgs)) lists.push(["adapter.commands.test_file_args", fileArgs]);
+  else if (fileArgs?.argv) lists.push(["adapter.commands.test_file_args", fileArgs.argv]);
   for (const g of a.commands.gates ?? []) lists.push([`adapter.commands.gates.${g.name}`, g.argv]);
   for (const [k, v] of Object.entries(a.commands.verify)) lists.push([`adapter.commands.verify.${k}`, v.argv]);
   (a.commands.smoke_builds ?? []).forEach((argv, i) => lists.push([`adapter.commands.smoke_builds[${i}]`, argv]));

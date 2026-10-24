@@ -10,7 +10,7 @@ import { runArgv } from "../../harness/lib/proc.mjs";
 import { invokeHook } from "../../harness/adapter/hooks.mjs";
 import { withMutex } from "../../harness/adapter/mutex.mjs";
 import { evidenceVerdict, requiredSteps, executionProblem, gateStepName, obligationStepNames } from "../../harness/adapter/evidence.mjs";
-import { gateObligation, testCommandOf } from "../../harness/adapter/contract.mjs";
+import { fileTestArgvs, gateObligation, testCommandOf } from "../../harness/adapter/contract.mjs";
 import { sha256 } from "../../harness/lib/hash.mjs";
 import { producedCheck } from "../../harness/gsd/contracts.mjs";
 import { gitLines, head } from "./flow-git.mjs";
@@ -442,9 +442,12 @@ export async function gate(root, phaseDir, input) {
     const tagged = { ...extra, crashPatterns };
     if (!testPrefix(argv)) return step(root, logDir, name, argv, timeoutS, tagged);
     const files = argvFiles(root, argv, (seen ??= visibleFiles(root))).filter((f) => isTestFile(f, checks));
-    if (files.length < 2 && !(files.length === 0 && fileTimeout < timeoutS)) return step(root, logDir, name, argv, timeoutS, tagged);
-    const { r, memory } = await watched(() => runBoundedTests({ cwd: root, argv, files, timeoutS, fileTimeoutS: fileTimeout, isTest: (rel) => isTestFile(rel, checks) }));
-    return recordRun(root, logDir, name, argv, r, { ...tagged, memory });
+    // Kit feedback 11: a project whose test command takes filters, not paths, maps the named files first.
+    const plans = cmds.test_file_args && files.length ? fileTestArgvs(cmds, files, argv).map((a) => testCommandOf(cfg, a).argv ?? a) : null;
+    if (plans?.length === 1 && files.length < 2) return step(root, logDir, name, plans[0], timeoutS, tagged);
+    if (!plans && files.length < 2 && !(files.length === 0 && fileTimeout < timeoutS)) return step(root, logDir, name, argv, timeoutS, tagged);
+    const { r, memory } = await watched(() => runBoundedTests({ cwd: root, argv: plans?.length === 1 ? plans[0] : argv, files, plans, timeoutS, fileTimeoutS: fileTimeout, isTest: (rel) => isTestFile(rel, checks) }));
+    return recordRun(root, logDir, name, plans?.length === 1 ? plans[0] : argv, r, { ...tagged, memory });
   };
   const run = async (name, argv, timeoutS, extra = {}) => {
     const prior = reusable.get(name);

@@ -168,7 +168,7 @@ test("MACH-06 the machine keys in the defaults", () => {
   const cfg = loadKitConfig();
   assert.deepEqual(cfg.agent_providers, { circle: "circle-agent" });
   assert.deepEqual(cfg.agent_provider_disallowed_tools, WORKER_DENIES);
-  assert.deepEqual(cfg.agent_provider_env, { ENABLE_TOOL_SEARCH: "true" });
+  assert.deepEqual(cfg.agent_provider_env, { ENABLE_TOOL_SEARCH: "true", CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" });
   assert.deepEqual(cfg.main_provider_disallowed_tools, ["Agent", "Workflow"]);
   assert.ok(cfg.agent_provider_disallowed_tools.includes("SendMessage"));
   assert.ok(!cfg.main_provider_disallowed_tools.includes("SendMessage"));

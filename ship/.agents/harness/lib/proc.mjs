@@ -13,6 +13,55 @@ export function pidAlive(pid) {
   }
 }
 
+// A runner's process starts with the run, or seconds after run.json's startedAt (the parent writes the record, then the
+// child starts). A pid reused by an unrelated process started later than this is not that runner (kit feedback 118).
+export const RUNNER_START_SLACK_MS = 2 * 60 * 1000;
+
+// pid -> epoch ms, one process-list call. A pid the list does not name is absent (the caller treats that as unknown,
+// not as dead). Windows StartTime is UTC; POSIX etimes is seconds ago, so the stamp is approximate.
+export function processStartTimes(pids) {
+  const want = [...new Set(pids.filter((p) => Number.isInteger(p) && p > 0))];
+  const out = new Map();
+  if (!want.length) return out;
+  if (process.platform === "win32") {
+    const ids = want.join(",");
+    const r = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+      `$want=@(${ids}); Get-Process -ErrorAction SilentlyContinue | Where-Object { $want -contains $_.Id } | ForEach-Object { '{0} {1}' -f $_.Id, $_.StartTime.ToUniversalTime().ToString('o') }`],
+    { encoding: "utf8", windowsHide: true, timeout: 20000 });
+    for (const line of String(r.stdout ?? "").split(/\r?\n/)) {
+      const m = /^(\d+)\s+(\S+)/.exec(line.trim());
+      if (!m) continue;
+      const t = Date.parse(m[2]);
+      if (Number.isFinite(t)) out.set(Number(m[1]), t);
+    }
+    return out;
+  }
+  const r = spawnSync("ps", ["-o", "pid=,etimes=", "-p", want.join(",")], { encoding: "utf8", windowsHide: true, timeout: 5000 });
+  if (r.status !== 0) return out;
+  const now = Date.now();
+  for (const line of String(r.stdout ?? "").split("\n")) {
+    const [pid, sec] = line.trim().split(/\s+/).map(Number);
+    if (Number.isInteger(pid) && Number.isFinite(sec) && sec >= 0) out.set(pid, now - sec * 1000);
+  }
+  return out;
+}
+
+/**
+ * A run.json record whose runner is still the process that started it (kit feedback 118). `starts` is processStartTimes;
+ * omit it to judge by pid liveness only. An alive pid whose process started after startedAt plus the slack is a reused
+ * pid. An alive pid with no start time (the list failed, or startedAt is missing) stays live: a live run is not called dead.
+ */
+export function runnerLive(info, { alive = pidAlive, starts } = {}) {
+  if (info?.status !== "running") return false;
+  if (!alive(info.pid)) return false;
+  if (!starts) return true;
+  const proc = starts.get(info.pid);
+  if (proc == null) return true;
+  const runAt = Date.parse(info.startedAt ?? "");
+  if (!Number.isFinite(runAt)) return true;
+  return proc <= runAt + RUNNER_START_SLACK_MS;
+}
+
 export const realClock = Object.freeze({
   now: () => Date.now(),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),

@@ -84,7 +84,7 @@ test("CONF-03 machine keys cannot be set by a project", () => {
   assert.deepEqual(cfg.main_provider_disallowed_tools, ["Agent", "Workflow"]);
   assert.deepEqual(cfg.agent_providers, { circle: "circle-agent" });
   assert.ok(cfg.agent_provider_disallowed_tools.includes("SendMessage"));
-  assert.deepEqual(cfg.agent_provider_env, { ENABLE_TOOL_SEARCH: "true" });
+  assert.deepEqual(cfg.agent_provider_env, { ENABLE_TOOL_SEARCH: "true", CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" });
   assert.deepEqual(MACHINE_KEYS, ["agent_providers", "agent_provider_disallowed_tools", "agent_provider_env", "main_provider_disallowed_tools"]);
 });
 
@@ -228,7 +228,7 @@ const GOLDEN = {
   agent_provider_disallowed_tools: ["Agent", "AskUserQuestion", "CronCreate", "CronDelete", "CronList", "DesignSync", "EnterPlanMode",
     "EnterWorktree", "ExitPlanMode", "ExitWorktree", "ListAgents", "Monitor", "PushNotification", "ReportFindings", "ScheduleWakeup",
     "SendMessage", "WebSearch", "Workflow"],
-  agent_provider_env: { ENABLE_TOOL_SEARCH: "true" },
+  agent_provider_env: { ENABLE_TOOL_SEARCH: "true", CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" },
   main_provider_disallowed_tools: ["Agent", "Workflow"],
   max_subagents: 20,
   max_live_subagents: 40,

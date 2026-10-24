@@ -49,8 +49,8 @@ export const commands = [
   },
   {
     name: "runs",
-    summary: "list workflow runs newest first; --prune removes done and stopped runs beyond runs_keep",
-    usage: "ph runs [--prune] [--runs-dir D]",
+    summary: "list workflow runs newest first; a running record whose runner is gone is dead; --live lists live runners; --prune removes done and stopped runs beyond runs_keep and dead running records",
+    usage: "ph runs [--prune] [--live] [--runs-dir D]",
     options: RUNS_OPTIONS,
     config: "required",
     run: (ctx) => runsCommand(ctx),

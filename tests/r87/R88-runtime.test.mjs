@@ -19,7 +19,7 @@ async function stopRequested(root, argv, env) {
   return { code, json: JSON.parse(line) };
 }
 const runInfo = (s, id) => JSON.parse(s.project.read(`_workspace/_runs/${id}/run.json`));
-const running = (s, id, extra = {}) => s.project.writeJson(`_workspace/_runs/${id}/run.json`, { runId: id, status: "running", pid: process.pid, startedAt: "2026-10-24T10:00:00.000Z", name: "gsd-execute", ...extra });
+const running = (s, id, extra = {}) => s.project.writeJson(`_workspace/_runs/${id}/run.json`, { runId: id, status: "running", pid: process.pid, startedAt: new Date().toISOString(), name: "gsd-execute", ...extra });
 
 test("R88 ph workflow stop writes a stop request for a running run; ph runs shows it pending; nothing is killed", async () => {
   const s = setup();

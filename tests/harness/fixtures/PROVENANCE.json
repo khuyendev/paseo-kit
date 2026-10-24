@@ -864,13 +864,13 @@
       "file": "harness/references/paseo-runtime.md",
       "from": 1,
       "to": 432,
-      "lines": 432,
+      "lines": 436,
       "categories": [
         "c",
         "d",
         "f"
       ],
-      "sha256": "732db6c9b090953a06da0f6178c62ef143bfd9ace02129d2f8c9e08f2da99ff9"
+      "sha256": "2f06e2c5be27ae4191ff939f29bb330f2447557b8d5e94cdd027bafda03a1106"
     }
   ]
 }

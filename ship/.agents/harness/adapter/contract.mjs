@@ -104,6 +104,50 @@ export function testCommandOf(cfg, argv = cfg.adapter.commands.test) {
   return { argv: out, caseTimeoutS: out.length > argv.length ? cfg.adapter.commands.test_case_timeout_s : null };
 }
 
+// Pieces of a repo-relative test path a filter rule may name (kit feedback 11).
+export function testFileParts(rel) {
+  const file = toSlash(rel).replace(/^\.\//, "");
+  const base = file.split("/").pop();
+  const dot = base.lastIndexOf(".");
+  return { file, base, stem: dot > 0 ? base.slice(0, dot) : base, dir: file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : "" };
+}
+
+const FILE_TOKEN = /\{(file|files|filter|stem|base|dir)\}/g;
+
+function fillWord(word, parts, files, filters, join) {
+  if (word === "{files}") return files;
+  if (word === "{file}") return [parts.file];
+  if (word === "{filter}") return [filters.join(join)];
+  if (!word.includes("{")) return [word];
+  return [word.replace(FILE_TOKEN, (token, key) => {
+    if (key === "files") return files.join(join);
+    if (key === "filter") return filters.join(join);
+    return parts[key] ?? "";
+  })];
+}
+
+/**
+ * Argv lists for `files` (kit feedback 11). No test_file_args: one argv per file, `base` plus the path (what test-run
+ * appended). An argv template or a `{filter}` rule replaces that. `{file}` runs once per file; `{files}` is one
+ * invocation (a lone `{files}` element becomes one element per file). Returns string[][].
+ */
+export function fileTestArgvs(commands, files, base = commands?.test ?? []) {
+  const list = files.map((f) => testFileParts(f).file);
+  const spec = commands?.test_file_args;
+  if (!spec) return list.map((f) => [...base, f]);
+  const template = Array.isArray(spec) ? spec : (spec.argv ?? [...(commands.test ?? base), "{filter}"]);
+  const join = Array.isArray(spec) ? "," : (spec.join ?? "+");
+  const token = (word, name) => [...String(word).matchAll(/\{(file|files|filter|stem|base|dir)\}/g)].some((m) => m[1] === name);
+  const filtersOf = (one) => (Array.isArray(spec) ? [] : [String(spec.filter).replace(FILE_TOKEN, (_, key) => one[key] ?? "")]);
+  // `{files}` contains the letters of `{file}`; match the placeholder, not the prefix.
+  const perFile = template.some((w) => token(w, "file")) && !template.some((w) => token(w, "files"));
+  const oneArgv = (parts, fileList, filters) => template.flatMap((w) => fillWord(w, parts, fileList, filters, join));
+  if (perFile) return list.map((f) => oneArgv(testFileParts(f), [f], filtersOf(testFileParts(f))));
+  const filters = Array.isArray(spec) ? [] : list.map((f) => filtersOf(testFileParts(f))[0]);
+  if (!template.some((w) => w.includes("{"))) return [[...template, ...list]];
+  return [oneArgv(testFileParts(list[0] ?? ""), list, filters)];
+}
+
 export const isBuiltinRunnerKind = (kind) => BUILTIN_RUNNERS.has(kind);
 
 // ADPT-03 default `cmd` resolution: the first path-like token (has a slash or a file extension) against the code root.

@@ -102,7 +102,9 @@ export const SCHEMA = obj({
       non_weakening_flags: arr(str({ nonEmpty: true, pattern: /^-/, patternText: "a flag starting with -" })),
       // Kit feedback 109 F4 / 107 F3: whole-file bound. Absent = test_timeout_s (the kit kills the runner tree and names the file).
       test_file_timeout_s: nullable(int(1)),
-    }, ["smoke_builds", "test_case_timeout_s", "test_case_timeout_arg", "non_weakening_flags", "test_file_timeout_s"]),
+      // Kit feedback 11: how test-run and the gate pass test files. Absent = append each path (the old behaviour).
+      test_file_args: nullable({ kind: "either", of: [argv(), obj({ filter: str({ nonEmpty: true }), join: str({ nonEmpty: true }), argv: argv() }, ["join", "argv"])] }),
+    }, ["smoke_builds", "test_case_timeout_s", "test_case_timeout_arg", "non_weakening_flags", "test_file_timeout_s", "test_file_args"]),
     verify_vocabulary: map(obj({
       prefix: str({ nonEmpty: true }),
       parser: nullable(str({ nonEmpty: true, repoPath: true })),
@@ -286,6 +288,18 @@ function check(node, value, key) {
         }
         throw e;
       }
+    case "either": {
+      const errors = [];
+      for (const alt of node.of) {
+        try {
+          return check(alt, value, key);
+        } catch (e) {
+          errors.push(e);
+        }
+      }
+      const detail = errors.at(-1)?.message;
+      throw new ConfigError(key, `expected an argv template or a filter rule {filter, join?, argv?}${detail ? ` (${detail})` : ""}`);
+    }
     case "anyObj":
       if (!isObject(value)) throw new ConfigError(key, "expected object");
       return;

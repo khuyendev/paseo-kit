@@ -56,3 +56,34 @@ export function clearLinks(dir) {
   }
   return { unlinked, refused };
 }
+
+/**
+ * Deletes dir after clearLinks, never following a link: lstat, non-recursive unlink of a link, recurse only into a real
+ * directory (kit feedback 126). A link that stays, or a dir that is itself a link, is refused and nothing further is removed.
+ */
+export function removeUnlinkedTree(dir) {
+  const root = lstat(dir);
+  if (!root) return { ok: true, removed: false };
+  if (root.isSymbolicLink()) return { ok: false, removed: false, reason: "the worktree directory is itself a link" };
+  const { refused } = clearLinks(dir);
+  if (refused.length) return { ok: false, removed: false, reason: `refused, a link in the worktree stays: ${refused.map((r) => `${r.path} (${r.reason})`).join("; ")}` };
+  const rm = (current) => {
+    for (const name of fs.readdirSync(current)) {
+      const child = path.join(current, name);
+      const st = lstat(child);
+      if (!st) continue;
+      if (st.isSymbolicLink()) {
+        fs.rmSync(child);
+        if (lstat(child)) throw new Error(`link stayed: ${child}`);
+      } else if (st.isDirectory()) rm(child);
+      else fs.rmSync(child);
+    }
+    fs.rmdirSync(current);
+  };
+  try {
+    rm(dir);
+  } catch (e) {
+    return { ok: false, removed: false, reason: e.message ?? String(e) };
+  }
+  return { ok: true, removed: true };
+}
