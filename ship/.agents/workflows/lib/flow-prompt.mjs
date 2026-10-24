@@ -67,9 +67,11 @@ export function renderPrompt(root, name, vars = {}) {
   if (!fs.existsSync(file)) throw new Error(`prompt template ${rel} not found`);
   try {
     const raw = templateText(readText(file));
-    // The stack-skill line is optional. A composition written before the line existed does not pass stackSkill;
-    // omitting it is the same as empty, so the line stays out and a resumed run still matches the old prompt.
-    const varsIn = raw.includes("{{#stackSkill}}") && !given(vars, "stackSkill") ? { ...vars, stackSkill: "" } : vars;
+    // A section added after a composition was written is empty when the caller omits it, so the line stays out and a
+    // resumed run still matches the old prompt (stack skill; kit feedback 122: the executor check and self-verify).
+    const OPTIONAL_SECTION = ["stackSkill", "check", "selfVerify"];
+    let varsIn = vars;
+    for (const name of OPTIONAL_SECTION) if (raw.includes(`{{#${name}}}`) && !given(varsIn, name)) varsIn = { ...varsIn, [name]: "" };
     const { text, unused } = fillTemplate(raw, varsIn);
     return { name, path: rel, text, unused };
   } catch (e) {

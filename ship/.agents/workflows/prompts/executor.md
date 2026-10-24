@@ -5,7 +5,7 @@ plan_defects with gsd.review_metrics); exec-verdict judges it, exec-route routes
 SUMMARY. Variables: plan (plan file), snapshot (input snapshot root or empty), summary, owns (JSON list), stackSkill,
 generated (JSON list of adapter.ownership.regenerated or empty), pending (gsd.pending_request_tasks), metrics
 (gsd.review_metrics), answers, notes, accepted (the confirmed accepted checker issues of the plan, kit feedback 89),
-requests (JSON lists or empty), digest.
+requests (JSON lists or empty), digest. Kit feedback 122: check (adapter.commands.check_files is set) with checkCommand (JSON argv, `{files}` is one word) and checkFiles (JSON list of the plan's owned changed files); selfVerify (gsd.executor_verifies_itself) with verifyCommand (JSON argv of the gate's test command), verifyAttempts and verifyMinutes (gsd.fixer). The overlay states the rule; these lines are only the binding. Empty when unset.
 -->
 <kit_executor_runtime>
 Plan: {{plan}}
@@ -14,6 +14,15 @@ Planning inputs (.planning/ files, the stack skill) are read, read-only, from th
 {{/snapshot}}
 Write your SUMMARY to exactly: {{summary}}
 You may edit only these paths (owns): {{owns}}
+{{#check}}
+Check command: {{checkCommand}}
+Check files: {{checkFiles}}
+{{/check}}
+{{#selfVerify}}
+Self-verify command: {{verifyCommand}}
+Self-verify attempts: {{verifyAttempts}}
+Self-verify minutes: {{verifyMinutes}}
+{{/selfVerify}}
 Stack skill to follow: {{stackSkill}}
 - A change needed in a file you do not own: do not edit it; return it in requests [{path, change, reason}].
 {{#generated}}

@@ -24,6 +24,17 @@ import { sampleMemory, watchMemory } from "../../harness/lib/memory.mjs";
 const TIMEOUT_CODE = 124;
 const EXCERPT_LINES = 40;
 
+// Kit feedback 122 F3: a failed build or analyze step is a compile failure; a failed test step is behaviour.
+// The count is steps, not diagnostics. checks, contract and inputs-stable are neither.
+export function failureClass(name, argv = []) {
+  const n = String(name ?? "");
+  if (n === "test" || /-(?:cmd|test)(?:-\d+)?$/.test(n)) return "behaviour";
+  if (n === "build" || /-build(?:-\d+)?$/.test(n)) return "compile";
+  if (/^gate-/.test(n) && /analy[sz]e|compil/i.test(n)) return "compile";
+  if ((argv ?? []).some((w) => w === "analyze" || w === "analyse")) return "compile";
+  return null;
+}
+
 // Kit feedback 112 F1: a test tool that dies is not a hung test. First match wins; adapter.crash_signatures (regex
 // strings, absent by default) extends the list. The signature reported is the matched text.
 export const CRASH_SIGNATURES = Object.freeze([
@@ -515,6 +526,11 @@ export async function gate(root, phaseDir, input) {
   if (after.head !== inputs.head) moved.unshift("HEAD");
   if (after.config !== inputs.config) moved.unshift("adapter configuration");
   if (moved.length) steps.push(noRun(root, logDir, "inputs-stable", "failed", `inputs changed while the gate ran: ${moved.slice(0, 10).join(", ")}`));
+  // Kit feedback 122 F3: tag a failed or timed-out step. A step that did not run (not configured) is not a compile failure.
+  for (const s of steps) if (s.outcome === "failed" || s.outcome === "timeout") {
+    const cls = failureClass(s.name, s.argv);
+    if (cls) s.class = cls;
+  }
   const evidence = { v: 1, waveId: input.waveId, at: new Date().toISOString(), inputs, ...(input.suite === false ? { suite: false } : {}), steps: steps.map(({ text, ...s }) => s) };
   writeJsonAtomic(evidenceFile, evidence);
   const visible = visibleFiles(root);
@@ -539,11 +555,12 @@ export async function gate(root, phaseDir, input) {
 // files and the files its output reports at a position; a file only mentioned (a progress line of a test that ran) is none.
 function stepFailure(root, s, visible, checks) {
   // Kit feedback 112: a tool crash is not attributed to the file its output printed last, and no fixer is given a test to run.
-  if (s.crash?.signature) return { step: s.name, plan: s.plan ?? null, outcome: s.outcome, excerpt: excerpt(s.text), log: s.log, files: [], crash: { signature: s.crash.signature } };
+  const cls = s.class ? { class: s.class } : {};
+  if (s.crash?.signature) return { step: s.name, plan: s.plan ?? null, outcome: s.outcome, excerpt: excerpt(s.text), log: s.log, files: [], crash: { signature: s.crash.signature }, ...cls };
   const hungOnes = s.hang?.files ?? s.blockedByHang?.files ?? [];
   const files = [...new Set([...mentionedFiles(root, s.text, visible, { locatedOnly: hungOnes.length > 0 }), ...failureReportFiles(root, s.text, visible), ...hungOnes])];
   const tests = [...new Set([...argvFiles(root, s.argv, visible), ...files].filter((f) => isTestFile(f, checks)))];
-  return { step: s.name, plan: s.plan ?? null, outcome: s.outcome, excerpt: excerpt(s.text), log: s.log, files, ...(tests.length ? { tests } : {}) };
+  return { step: s.name, plan: s.plan ?? null, outcome: s.outcome, excerpt: excerpt(s.text), log: s.log, files, ...(tests.length ? { tests } : {}), ...cls };
 }
 
 async function attribute(root, cfg, plans, failures, prefixes) {

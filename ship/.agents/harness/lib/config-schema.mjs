@@ -102,7 +102,10 @@ export const SCHEMA = obj({
       non_weakening_flags: arr(str({ nonEmpty: true, pattern: /^-/, patternText: "a flag starting with -" })),
       // Kit feedback 109 F4 / 107 F3: whole-file bound. Absent = test_timeout_s (the kit kills the runner tree and names the file).
       test_file_timeout_s: nullable(int(1)),
-    }, ["smoke_builds", "test_case_timeout_s", "test_case_timeout_arg", "non_weakening_flags", "test_file_timeout_s"]),
+      // Kit feedback 122 F1: a static check of the files an executor changed. Absent from the defaults, so a kit update
+      // does not move a phase baseline's gate hash (gateConfig hashes the whole commands object). `{files}` is one argv word.
+      check_files: nullable(argv()),
+    }, ["smoke_builds", "test_case_timeout_s", "test_case_timeout_arg", "non_weakening_flags", "test_file_timeout_s", "check_files"]),
     verify_vocabulary: map(obj({
       prefix: str({ nonEmpty: true }),
       parser: nullable(str({ nonEmpty: true, repoPath: true })),
@@ -169,6 +172,8 @@ export const SCHEMA = obj({
     batch_review: bool(),
     isolation: str({ oneOf: ["shared", "worktree"] }),
     fixer_verifies_itself: bool(),
+    // Kit feedback 122 F2: an executor may run the new test files it created. Default false (the old behaviour).
+    executor_verifies_itself: bool(),
     max_verify_rounds: int(1),
     commit_policy: obj({ docs: bool(), code: str({ oneOf: ["per-wave", "per-plan"] }) }),
     branching: str({ oneOf: ["none", "phase"] }),

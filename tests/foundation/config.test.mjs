@@ -298,6 +298,7 @@ const GOLDEN = {
     batch_review: true,
     isolation: "worktree",
     fixer_verifies_itself: true,
+    executor_verifies_itself: false,
     max_verify_rounds: 4,
     commit_policy: { docs: false, code: "per-wave" },
     branching: "none",
