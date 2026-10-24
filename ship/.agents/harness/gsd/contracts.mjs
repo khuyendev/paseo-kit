@@ -262,12 +262,45 @@ function codeSpans(text) {
   const inline = [...t.replace(/^```[^\n]*\n[\s\S]*?^```/gm, "").matchAll(/`([^`\n]+)`/g)].map((m) => m[1]);
   return [...inline, ...fenced].map((s) => s.trim()).filter(Boolean);
 }
-// The spans that give `symbol` a shape: the symbol (or the last segment of a qualified one, 5+ letters) before `(`, `{` or `<`.
-function shapeSpans(text, symbol) {
+// The identifier before the last `.` `::` or `#`. Null when the symbol is a single segment.
+function qualifierOf(symbol) {
+  const parts = String(symbol ?? "").split(/[.:#]+/).filter(Boolean);
+  return parts.length >= 2 ? parts.at(-2) : null;
+}
+// The identifier chain immediately before `(`, `{` or `<`: `TimelineOwner.setVisible(bool)` -> `TimelineOwner.setVisible`.
+function shapedHeads(span) {
+  return [...String(span).matchAll(/([A-Za-z_$][A-Za-z0-9_$]*(?:\s*[.:#]+\s*[A-Za-z_$][A-Za-z0-9_$]*)*)\s*[({<]/g)].map((m) => m[1].replace(/\s+/g, ""));
+}
+// Kit feedback 114 F1: the symbol's full name, or its last segment (5+ letters when the symbol is qualified) before
+// `(`, `{` or `<`. A segment preceded by `X.` / `X::` / `X#` counts only when X is the symbol's own qualifier.
+function spanShapes(span, symbol) {
+  const text = String(span);
   const seg = lastSegment(symbol);
-  const names = [symbol, ...(seg !== symbol && seg.length >= 5 ? [seg] : [])].map(escapeRe).join("|");
-  const re = new RegExp(`(^|[^A-Za-z0-9_$])(${names})\\s*[({<]`);
-  return new Map(codeSpans(text).filter((s) => re.test(s)).map((s) => [squash(s), s]));
+  const qualified = seg !== symbol;
+  if (qualified && new RegExp(`(^|[^A-Za-z0-9_$])${escapeRe(symbol)}\\s*[({<]`).test(text)) return true;
+  if (qualified && seg.length < 5) return false;
+  const re = new RegExp(`(^|[^A-Za-z0-9_$])${escapeRe(seg)}\\s*[({<]`, "g");
+  const qual = qualifierOf(symbol);
+  for (const m of text.matchAll(re)) {
+    const pre = text.slice(0, m.index + m[1].length);
+    const q = /([A-Za-z_$][A-Za-z0-9_$]*)\s*[.:#]+\s*$/.exec(pre);
+    if (!q || q[1] === qual) return true;
+  }
+  return false;
+}
+function shapeSpans(text, symbol) {
+  return new Map(codeSpans(text).filter((s) => spanShapes(s, symbol)).map((s) => [squash(s), s]));
+}
+// Kit feedback 114 F3: another produced symbol written in the span (a bare name after `.` is that other type's member, not the symbol).
+function mentionsSymbol(span, sym) {
+  const re = new RegExp(`(^|[^A-Za-z0-9_$])${escapeRe(sym)}(?![A-Za-z0-9_$])`, "g");
+  const qualified = /[.:#]/.test(sym);
+  for (const m of String(span).matchAll(re)) {
+    const pre = span.slice(0, m.index + m[1].length);
+    if (!qualified && /[A-Za-z0-9_$]\s*[.:#]+\s*$/.test(pre)) continue;
+    return true;
+  }
+  return false;
 }
 const parseManifest = (text) => { try { return entriesOf(JSON.parse(String(text ?? ""))); } catch { return null; } };
 
@@ -277,6 +310,7 @@ const parseManifest = (text) => { try { return entriesOf(JSON.parse(String(text 
 export function contractDrift(before = {}, after = {}) {
   const [was, now] = [parseManifest(before.manifest), parseManifest(after.manifest)];
   if (!was || !now) return { drift: [], warnings: [`contract drift not checked: the manifest ${!now ? "after" : "before"} the revision is not valid JSON`] };
+  const all = now.flatMap((e) => producesOf(e).filter((x) => x.structured).map((x) => x.symbol));
   const drift = [];
   for (const entry of now) for (const p of producesOf(entry).filter((x) => x.structured)) {
     const old = producesOf(was.find((e) => e.id === entry.id)).find((x) => x.structured && x.symbol === p.symbol);
@@ -285,10 +319,19 @@ export function contractDrift(before = {}, after = {}) {
     const prior = shapeSpans(before.outline, p.symbol);
     const added = [...shapeSpans(after.outline, p.symbol)].filter(([k]) => !prior.has(k)).map(([, s]) => s);
     const names = new Set([p.symbol, lastSegment(p.symbol), ...p.symbol.split(/[.:#]+/)]);
-    const spans = added.filter((s) => [...s.matchAll(IDENT)].some((m) => !names.has(m[0]) && !known.has(m[0])));
+    // 114 F2: a span whose shaped head is exactly another produced symbol of this manifest belongs to that symbol.
+    const own = added.filter((s) => {
+      const owners = shapedHeads(s).filter((h) => all.includes(h));
+      return owners.length === 0 || owners.includes(p.symbol);
+    });
+    const spans = own.filter((s) => [...s.matchAll(IDENT)].some((m) => !names.has(m[0]) && !known.has(m[0])));
     if (spans.length) drift.push({ plan: entry.id, symbol: p.symbol, signature: p.signature, spans });
   }
-  const errors = drift.map((d) => `contract drift: the outline now shapes ${d.symbol} as \`${d.spans[0]}\`, but the manifest still freezes it (${d.plan} produces) as \`${d.signature}\`; change that produces entry's signature to the new shape (add the old one to its supersedes), or write the outline's code span as the manifest signature`);
+  const errors = drift.map((d) => {
+    const matched = [...new Set(d.spans.flatMap((s) => all.filter((sym) => sym !== d.symbol && mentionsSymbol(s, sym))))];
+    const named = matched.length ? ` The span matches ${matched.join(", ")}.` : "";
+    return `contract drift: the outline now shapes ${d.symbol} as \`${d.spans[0]}\`, but the manifest still freezes it (${d.plan} produces) as \`${d.signature}\`; change that produces entry's signature to the new shape (add the old one to its supersedes), or write the outline's code span as the manifest signature${named}`;
+  });
   return { drift, errors, warnings: [] };
 }
 
@@ -400,11 +443,330 @@ function hasKeyPath(value, keyPath) {
   return true;
 }
 
+// --- kit feedback 116: a declaration can hold a signature without quoting it ---
+// Stack-neutral (Dart / TS / Java-like) and conservative: a form this cannot read keeps the note. A stack-specific matcher
+// (an analyzer element model the adapter would name) is not called; this text comparer is the hook point, and no adapter key
+// selects another (116 F3).
+
+const DECL_MOD = new Set(["final", "const", "late", "static", "var", "external", "abstract", "covariant", "public", "private", "protected", "readonly", "override", "factory"]);
+const canonType = (t) => String(t ?? "").replace(/\s+/g, "");
+const namesOf = (d) => (d?.names?.length ? d.names : [d?.name]);
+
+function tokenizeDecl(src) {
+  const s = String(src ?? "");
+  const out = [];
+  let i = 0;
+  const skipString = (q) => {
+    if ((q === '"' || q === "'") && s.slice(i, i + 3) === q.repeat(3)) {
+      const end = s.indexOf(q.repeat(3), i + 3);
+      i = end < 0 ? s.length : end + 3;
+      return;
+    }
+    i++;
+    while (i < s.length) {
+      if (s[i] === "\\") { i += 2; continue; }
+      if (s[i] === q) { i++; return; }
+      if (q !== "`" && (s[i] === "\n" || s[i] === "\r")) return;
+      i++;
+    }
+  };
+  while (i < s.length) {
+    const c = s[i];
+    if (/\s/.test(c)) { i++; continue; }
+    if (c === "/" && s[i + 1] === "/") { const n = s.indexOf("\n", i); i = n < 0 ? s.length : n + 1; continue; }
+    if (c === "/" && s[i + 1] === "*") { const n = s.indexOf("*/", i + 2); i = n < 0 ? s.length : n + 2; continue; }
+    if (c === '"' || c === "'" || c === "`") { skipString(c); continue; }
+    if (/[A-Za-z_$]/.test(c)) {
+      const m = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(s.slice(i));
+      out.push({ t: "id", v: m[0] });
+      i += m[0].length;
+      continue;
+    }
+    if (/[0-9]/.test(c)) {
+      const m = /^[0-9][0-9A-Za-z_.]*/.exec(s.slice(i));
+      out.push({ t: "num", v: m[0] });
+      i += m[0].length;
+      continue;
+    }
+    if (s.startsWith("=>", i)) { out.push({ t: "=>" }); i += 2; continue; }
+    if ("(){}[]<>,;=?:.@#".includes(c)) { out.push({ t: c }); i++; continue; }
+    i++;
+  }
+  return out;
+}
+
+function skipAngles(ts, i) {
+  if (ts[i]?.t !== "<") return -1;
+  let depth = 0;
+  while (i < ts.length) {
+    if (ts[i].t === "<") depth++;
+    else if (ts[i].t === ">") { depth--; if (depth === 0) return i + 1; }
+    i++;
+  }
+  return -1;
+}
+
+function skipGroup(ts, i, open, close) {
+  if (ts[i]?.t !== open) return -1;
+  let depth = 0;
+  while (i < ts.length) {
+    if (ts[i].t === open) depth++;
+    else if (ts[i].t === close) { depth--; if (depth === 0) return i + 1; }
+    i++;
+  }
+  return -1;
+}
+
+// A default expression ends at the param delimiter. Angles are not depth: `>=` must not close a generic.
+function skipDefault(ts, i) {
+  let depth = 0;
+  const open = { "(": 1, "[": 1, "{": 1 };
+  const close = { ")": 1, "]": 1, "}": 1 };
+  while (i < ts.length) {
+    const t = ts[i].t;
+    if (depth === 0 && (t === "," || t === ")" || t === "}" || t === "]")) return i;
+    if (open[t]) depth++;
+    else if (close[t]) depth--;
+    i++;
+  }
+  return -1;
+}
+
+function parseType(ts, i) {
+  if (ts[i]?.t === "(") {
+    if (ts[i + 1]?.t !== "{") return null;
+    i += 2;
+    const parts = [];
+    if (ts[i]?.t !== "}") {
+      while (i < ts.length) {
+        const ty = parseType(ts, i);
+        if (!ty || ts[ty.next]?.t !== "id") return null;
+        parts.push(`${ty.type} ${ts[ty.next].v}`);
+        i = ty.next + 1;
+        if (ts[i]?.t === ",") { i++; if (ts[i]?.t === "}") break; continue; }
+        break;
+      }
+    }
+    if (ts[i]?.t !== "}" || ts[i + 1]?.t !== ")") return null;
+    i += 2;
+    let type = `({${parts.join(",")}})`;
+    while (ts[i]?.t === "?") { type += "?"; i++; }
+    return { type, next: i };
+  }
+  if (ts[i]?.t !== "id") return null;
+  let type = ts[i].v;
+  i++;
+  while (ts[i]?.t === "." && ts[i + 1]?.t === "id") { type += `.${ts[i + 1].v}`; i += 2; }
+  if (ts[i]?.t === "<") {
+    i++;
+    const args = [];
+    if (ts[i]?.t !== ">") {
+      while (i < ts.length) {
+        const ty = parseType(ts, i);
+        if (!ty) return null;
+        args.push(ty.type);
+        i = ty.next;
+        if (ts[i]?.t === ",") { i++; if (ts[i]?.t === ">") break; continue; }
+        break;
+      }
+    }
+    if (ts[i]?.t !== ">") return null;
+    i++;
+    type += `<${args.join(",")}>`;
+  }
+  while (ts[i]?.t === "?") { type += "?"; i++; }
+  return { type, next: i };
+}
+
+function parseOneParam(ts, i, { named, optional = false }) {
+  let required = false;
+  while (ts[i]?.t === "id" && (ts[i].v === "required" || ts[i].v === "covariant" || ts[i].v === "final")) {
+    if (ts[i].v === "required") required = true;
+    i++;
+  }
+  if ((ts[i]?.v === "this" || ts[i]?.v === "super") && ts[i + 1]?.t === "." && ts[i + 2]?.t === "id") {
+    const name = ts[i + 2].v;
+    return finishParam(ts, i + 3, { named, optional, fieldFormal: true, name, type: null, namedRequired: required });
+  }
+  const ty = parseType(ts, i);
+  if (!ty) return null;
+  i = ty.next;
+  if (ts[i]?.t === "id") {
+    const name = ts[i].v;
+    i++;
+    return finishParam(ts, i, { named, optional, fieldFormal: false, name, type: ty.type, namedRequired: required });
+  }
+  if (!/[<.]/.test(ty.type)) return finishParam(ts, i, { named, optional, fieldFormal: false, name: ty.type, type: null, namedRequired: required });
+  return finishParam(ts, i, { named, optional, fieldFormal: false, name: null, type: ty.type, namedRequired: required });
+}
+
+function finishParam(ts, i, spec) {
+  let hasDefault = false;
+  if (ts[i]?.t === "=") { hasDefault = true; i = skipDefault(ts, i + 1); if (i < 0) return null; }
+  const end = ts[i]?.t;
+  if (end !== "," && end !== ")" && end !== "}" && end !== "]") return null;
+  const optional = spec.optional || hasDefault || (spec.named && !spec.namedRequired);
+  return { param: { named: spec.named, optional, fieldFormal: spec.fieldFormal, name: spec.name, type: spec.type }, next: i };
+}
+
+function parseParamList(ts, i) {
+  if (ts[i]?.t !== "(") return null;
+  i++;
+  const params = [];
+  const oneGroup = (open, close, flags) => {
+    if (ts[i]?.t !== open) return false;
+    i++;
+    if (ts[i]?.t !== close) {
+      while (i < ts.length) {
+        const p = parseOneParam(ts, i, flags);
+        if (!p) return null;
+        params.push(flags.optional ? { ...p.param, optional: true } : p.param);
+        i = p.next;
+        if (ts[i]?.t === ",") { i++; if (ts[i]?.t === close) break; continue; }
+        break;
+      }
+    }
+    if (ts[i]?.t !== close) return null;
+    i++;
+    return true;
+  };
+  if (ts[i]?.t !== ")") {
+    while (i < ts.length) {
+      if (ts[i]?.t === "{") {
+        const g = oneGroup("{", "}", { named: true });
+        if (g === null) return null;
+      } else if (ts[i]?.t === "[") {
+        const g = oneGroup("[", "]", { named: false, optional: true });
+        if (g === null) return null;
+      } else {
+        const p = parseOneParam(ts, i, { named: false });
+        if (!p) return null;
+        params.push(p.param);
+        i = p.next;
+      }
+      if (ts[i]?.t === ",") { i++; if (ts[i]?.t === ")") break; continue; }
+      break;
+    }
+  }
+  if (ts[i]?.t !== ")") return null;
+  return { params, next: i + 1 };
+}
+
+function isDeclStart(ts, i) {
+  if (i === 0) return true;
+  const t = ts[i - 1]?.t;
+  return t === "{" || t === "}" || t === ";";
+}
+
+// A declaration at `i`: field, getter, setter, method or constructor. Null when this token does not start one.
+function tryDecl(ts, i) {
+  while (ts[i]?.t === "@") {
+    i++;
+    if (ts[i]?.t !== "id") return null;
+    i++;
+    if (ts[i]?.t === "(") { i = skipGroup(ts, i, "(", ")"); if (i < 0) return null; }
+  }
+  while (ts[i]?.t === "id" && DECL_MOD.has(ts[i].v)) i++;
+  if (ts[i]?.v === "get" || ts[i]?.v === "set") return declGet(ts, i, null);
+  if (ts[i]?.t === "id") {
+    let j = i + 1;
+    if (ts[j]?.t === "<") { const k = skipAngles(ts, j); if (k >= 0 && ts[k]?.t === "(") j = k; }
+    if (ts[j]?.t === "(") {
+      const params = parseParamList(ts, j);
+      if (!params) return null;
+      return { kind: "constructor", name: ts[i].v, params: params.params };
+    }
+  }
+  const ty = parseType(ts, i);
+  if (!ty) return null;
+  i = ty.next;
+  if (ts[i]?.v === "get" || ts[i]?.v === "set") return declGet(ts, i, ty.type);
+  if (ts[i]?.t !== "id") return null;
+  const name = ts[i].v;
+  const names = [name];
+  i++;
+  if (ts[i]?.t === "<") { const j = skipAngles(ts, i); if (j < 0) return null; i = j; }
+  if (ts[i]?.t === "(") {
+    const params = parseParamList(ts, i);
+    if (!params) return null;
+    return { kind: "method", name, type: ty.type, params: params.params };
+  }
+  if (ts[i]?.t === ",") {
+    while (ts[i]?.t === ",") {
+      i++;
+      if (ts[i]?.t !== "id") return null;
+      names.push(ts[i].v);
+      i++;
+    }
+  }
+  if (ts[i]?.t === ";" || ts[i]?.t === "=") return { kind: "field", name, names, type: ty.type };
+  return null;
+}
+
+function declGet(ts, i, type) {
+  const kind = ts[i].v === "get" ? "getter" : "setter";
+  if (ts[i + 1]?.t !== "id") return null;
+  const name = ts[i + 1].v;
+  if (kind === "getter") return { kind, name, type };
+  if (ts[i + 2]?.t !== "(") return null;
+  const params = parseParamList(ts, i + 2);
+  if (!params) return null;
+  return { kind, name, type, params: params.params };
+}
+
+function compareParams(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  for (let n = 0; n < a.length; n++) {
+    const [x, y] = [a[n], b[n]];
+    if (Boolean(x.named) !== Boolean(y.named) || Boolean(x.optional) !== Boolean(y.optional)) return false;
+    if (x.fieldFormal || y.fieldFormal) {
+      if (x.name && y.name && x.name !== y.name) return false;
+      continue;
+    }
+    if (!x.type || !y.type || canonType(x.type) !== canonType(y.type)) return false;
+  }
+  return true;
+}
+
+function compareDecl(want, got) {
+  if (!want || !got || want.kind !== got.kind) return false;
+  if (want.kind === "field") return namesOf(got).includes(want.name) && Boolean(want.type) && Boolean(got.type) && canonType(want.type) === canonType(got.type);
+  if (want.kind === "getter") return want.name === got.name && Boolean(want.type) && Boolean(got.type) && canonType(want.type) === canonType(got.type);
+  if (want.name !== got.name) return false;
+  if (want.kind === "method" && (!want.type || !got.type || canonType(want.type) !== canonType(got.type))) return false;
+  return compareParams(want.params ?? [], got.params ?? []);
+}
+
+function declsNamed(text, name) {
+  const ts = tokenizeDecl(text);
+  const out = [];
+  for (let i = 0; i < ts.length; i++) {
+    if (!isDeclStart(ts, i)) continue;
+    const d = tryDecl(ts, i);
+    if (d && namesOf(d).includes(name)) out.push(d);
+  }
+  return out;
+}
+
+// True only when some declaration of the symbol's name is the signature's name, kind, types, arity and optionality.
+// A parser failure is false: the caller keeps the note (116 F1, conservative).
+function signatureHeld(signature, text, symbol) {
+  try {
+    const ts = tokenizeDecl(String(signature ?? "").replace(/`/g, ""));
+    const want = tryDecl(ts, 0);
+    const name = lastSegment(symbol);
+    if (!want || !namesOf(want).includes(name)) return false;
+    return declsNamed(text, name).some((got) => compareDecl(want, got));
+  } catch {
+    return false;
+  }
+}
+
 // For each plan of `planIds` the manifest says produces structured symbols: the declared file exists and holds the symbol's last
-// identifier segment as a word. The signature text is compared too, but a code form differs by language, so a textual mismatch
-// is a note, not a failure. A catalog file (`.json`, or a file matching `adapter.catalogs`) whose signature is a key path is
-// checked by those keys instead (kit feedback 103): a missing key is a note naming the path, and a file that holds them has no
-// note. A signature that is not a key path keeps the text comparison. Returns [{plan, ok, problems, notes, symbols}].
+// identifier segment as a word. A catalog file (`.json`, or a file matching `adapter.catalogs`) whose signature is a key path is
+// checked by those keys (kit feedback 103): a missing key is a note naming the path. Any other signature is a note when the file
+// neither contains its text nor an equivalent declaration (kit feedback 116: body, parameter name, field formal, multi-name field).
+// A mismatch of name, kind, types, arity or optionality, or a form that cannot be read, stays a note. Returns [{plan, ok, problems, notes, symbols}].
 export function producedCheck(root, phaseDir, planIdList) {
   const dir = path.resolve(root, phaseDir);
   const nn = /^(\d+(?:\.\d+)*)/.exec(path.basename(dir))?.[1];
@@ -428,7 +790,7 @@ export function producedCheck(root, phaseDir, planIdList) {
       if (!wordIn(text, lastSegment(p.symbol))) { problems.push(`${p.symbol}: ${lastSegment(p.symbol)} is not in ${p.file}`); continue; }
       const paths = isCatalog(p.file, globs) ? signatureKeyPaths(p.signature) : null;
       if (!paths) {
-        if (!squash(text).includes(squash(p.signature))) notes.push(`${p.symbol}: ${p.file} does not hold the manifest signature text (${p.signature})`);
+        if (!squash(text).includes(squash(p.signature)) && !signatureHeld(p.signature, text, p.symbol)) notes.push(`${p.symbol}: ${p.file} does not hold the manifest signature text (${p.signature})`);
         continue;
       }
       const json = parseJson(text);
