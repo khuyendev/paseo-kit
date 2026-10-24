@@ -66,7 +66,11 @@ export function renderPrompt(root, name, vars = {}) {
   const { rel, file } = templateFile(root, name);
   if (!fs.existsSync(file)) throw new Error(`prompt template ${rel} not found`);
   try {
-    const { text, unused } = fillTemplate(templateText(readText(file)), vars);
+    const raw = templateText(readText(file));
+    // The stack-skill line is optional. A composition written before the line existed does not pass stackSkill;
+    // omitting it is the same as empty, so the line stays out and a resumed run still matches the old prompt.
+    const varsIn = raw.includes("{{#stackSkill}}") && !given(vars, "stackSkill") ? { ...vars, stackSkill: "" } : vars;
+    const { text, unused } = fillTemplate(raw, varsIn);
     return { name, path: rel, text, unused };
   } catch (e) {
     throw new Error(`prompt ${name}: ${e.message}`);

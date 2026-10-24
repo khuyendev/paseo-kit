@@ -27,7 +27,7 @@ A bare `--` ends the options, so a value such as `-h` can still be passed as dat
   background command is not woken when it finishes.
 - Archive agents when their work is closed (`ph archive <names>` or `ph archive --idle`); an archived agent's reply
   can no longer be read, so read results first.
-- Keep at most `max_subagents` agents running (config, shipped 20; about 350 MB of RAM each) and at most
+- Keep at most `max_subagents` agents running (config, shipped 20; about 700 MB of RAM each, Claude plus the project's MCP servers) and at most
   `max_live_subagents` live (running + idle). `ph` refuses beyond either cap; a workflow queues past `max_subagents`,
   and past `max_live_subagents` it waits only up to `wait_timeout_s` per call. `ph fanout --collect` does not refuse a
   full running cap: each admission re-reads how many of this caller's agents are running and waits up to `wait_timeout_s`

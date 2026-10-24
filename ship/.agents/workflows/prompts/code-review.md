@@ -2,10 +2,13 @@
 The code reviewer of gsd-execute (agent type gsd-code-reviewer, read-only; GSDF-46..48, GSDF-92). Contract: the findings schema
 of exec-setup; exec-findings classes each finding (pre-existing by the changed lines, G056 gate rules). Variables: plan, planPath,
 depth (gsd.review_depth), scope (files, comma separated), lines (changed lines per file), codeOnly, built (the build state when
-not code-only), lenses (one line per lens), digest.
+not code-only), lenses (one line per lens), stackSkill (adapter.stack_skill path, or empty: no line), digest.
 -->
 Review plan {{plan}} ({{planPath}}) at depth {{depth}}. Review only these files: {{scope}}.
 
+{{#stackSkill}}
+Stack skill to follow: {{stackSkill}}
+{{/stackSkill}}
 Lines this plan changed:
 {{lines}}
 

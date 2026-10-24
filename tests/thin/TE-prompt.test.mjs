@@ -91,7 +91,7 @@ test("TE the executor template renders the inline executor brief byte for byte (
 test("TE the fixer template renders the inline fixer prompt byte for byte (verifying itself or not, findings, failures, requests)", () => {
   for (const c of combos(["generated", "verifies", "metrics", "findings", "failures", "reqs"])) {
     const v = { owns: ["Path:src/"], generated: c.generated ? GEN(["a.g"]) : "", verifies: c.verifies, build: ["npm", "run", "build"], testArgv: null, attempts: 3, minutes: 20, metricsOn: c.metrics, findings: c.findings ? FINDINGS : [], failures: c.failures ? FAILS : [], reqs: c.reqs ? REQS : [], digest: "Input digest (fix:w1): x" };
-    const got = render("fixer", { owns: JSON.stringify(v.owns), generated: c.generated ? JSON.stringify(["a.g"]) : "", verifies: v.verifies, build: String(JSON.stringify(v.build)), tests: String(JSON.stringify(v.testArgv)), attempts: String(v.attempts), minutes: String(v.minutes), metrics: v.metricsOn, findings: v.findings.length ? JSON.stringify(v.findings) : "", failures: failureText(v.failures), requests: v.reqs.length ? JSON.stringify(v.reqs) : "", digest: v.digest });
+    const got = render("fixer", { owns: JSON.stringify(v.owns), generated: c.generated ? JSON.stringify(["a.g"]) : "", stackSkill: "", verifies: v.verifies, build: String(JSON.stringify(v.build)), tests: String(JSON.stringify(v.testArgv)), attempts: String(v.attempts), minutes: String(v.minutes), metrics: v.metricsOn, findings: v.findings.length ? JSON.stringify(v.findings) : "", failures: failureText(v.failures), requests: v.reqs.length ? JSON.stringify(v.reqs) : "", digest: v.digest });
     assert.equal(got, oldFixer(v), JSON.stringify(c));
   }
 });
@@ -120,12 +120,12 @@ test("TE the fix-round, integration, shared-change, review, verifier, resolution
       `Return JSON {findings: [{id, severity (critical|high|medium|low|info), trigger, likelihood, confidence, impact, file, line, description, introduced, class, instances}]}; an empty findings list when nothing needs fixing.`,
       "D",
     ].join("\n\n");
-    assert.equal(render("code-review", { plan: "01-01", planPath: ".planning/phases/01-core/01-01-PLAN.md", depth: "standard", scope: "a.js, b.js", lines: "- a.js: 1-3\n- b.js: all (new file)", codeOnly, built: "The wave is built and its tests are green.", lenses: "- correctness: Follow the lens text in .agents/workflows/lenses/correctness.md.", digest: "D" }), old);
+    assert.equal(render("code-review", { plan: "01-01", planPath: ".planning/phases/01-core/01-01-PLAN.md", depth: "standard", scope: "a.js, b.js", lines: "- a.js: 1-3\n- b.js: all (new file)", codeOnly, built: "The wave is built and its tests are green.", lenses: "- correctness: Follow the lens text in .agents/workflows/lenses/correctness.md.", stackSkill: "", digest: "D" }), old);
   }
   for (const metricsOn of [true, false]) {
     const asked = metricsOn ? ["Return JSON {verdicts: [{id, verdict, evidence, plan_catchable, catch_reason}]}.", CATCH_NOTE] : ["Return JSON {verdicts: [{id, verdict, evidence}]}."];
     const old = [`Verify these review findings of plan 01-01 independently, read-only: trace each trigger through the code and answer confirmed, refuted or uncertain with evidence.`, `Findings (JSON): ${JSON.stringify(FINDINGS)}`, ...asked, "D"].join("\n\n");
-    assert.equal(render("finding-verifier", { plan: "01-01", findings: JSON.stringify(FINDINGS), metrics: metricsOn, digest: "D" }), old);
+    assert.equal(render("finding-verifier", { plan: "01-01", findings: JSON.stringify(FINDINGS), stackSkill: "", metrics: metricsOn, digest: "D" }), old);
   }
   assert.equal(render("resolution-check", { plan: "01-01", findings: JSON.stringify(FINDINGS), digest: "D" }), [`Resolution check of plan 01-01: decide for each finding below whether the current code resolves it; a finding with instances is resolved only when every instance is. Review only these findings; raise no new ones.`, `Findings (JSON): ${JSON.stringify(FINDINGS)}`, "Return JSON {resolution: [{id, resolved, evidence}]}.", "D"].join("\n\n"));
   const RESOLVER_NOTE = "Cross-plan change requests were made while the plans of this phase ran. Decide read-only, for each request below, whether the current code already satisfies it: the change is present in the named file in this or an equivalent form that serves the request's reason. Read only the named files; raise nothing new.";

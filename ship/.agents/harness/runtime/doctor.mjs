@@ -22,10 +22,11 @@ import { leftoverWorktrees, runGit } from "./worktrees.mjs";
 import { setupEntries, setupGaps, setupProblems } from "./worktree-setup.mjs";
 import { readCommitFreeMb } from "../lib/memory.mjs";
 
-const MB_PER_AGENT = 350;
+// A Claude agent plus the project's MCP servers. The old note said 350 MB for the process alone.
 // Kit feedback 112 F3: below this, a suite that starts a server per test can crash the test tool. A note, not a problem.
 const LOW_COMMIT_MB = 4096;
 const LOW_PHYSICAL_MB = 2048;
+const MB_PER_AGENT = 700;
 
 async function daemonLines(ctx, line) {
   let session = null;
@@ -223,7 +224,9 @@ export async function runDoctor(ctx, { freemem = os.freemem, commitFreeMb = read
   } catch { commitMb = null; }
   if (commitMb != null && commitMb < LOW_COMMIT_MB) line("note", `free commit ${commitMb} MB is below ${LOW_COMMIT_MB} MB; a suite that starts servers can crash the test tool (free memory, or bound its concurrency)`);
   else if (commitMb == null && freeMb < LOW_PHYSICAL_MB) line("note", `free memory ${freeMb} MB is below ${LOW_PHYSICAL_MB} MB; a suite that starts servers can crash the test tool (free memory, or bound its concurrency)`);
+  const fit = Math.max(1, Math.floor(freeMb / MB_PER_AGENT));
   if (freeMb < needMb) line("note", `free RAM ${freeMb} MB is below max_subagents ${ctx.cfg.max_subagents} x ${MB_PER_AGENT} MB = ${needMb} MB; lower max_subagents or free memory`);
+  line("note", `suggested max_live_subagents ${fit} (free RAM ${freeMb} MB / ${MB_PER_AGENT} MB per agent)`);
   line("note", "this check does not verify tools loaded into a running session (restart the session after changing the mod or the provider config)");
   return problems ? 2 : 0;
 }
