@@ -10,6 +10,9 @@ import { selectModel } from "./models.mjs";
 import { loadPrices } from "./pricing.mjs";
 import { resultJson } from "./result.mjs";
 import { checkCapacity, checkNameLengths, checkNamesFree, prepareCreate, readPrompt, runningCount, startAgent, waitHint, withCapLock } from "./start.mjs";
+
+// Same modest interval as workflow admission's recount (admission.mjs): a poll, not a busy loop.
+const SLOT_POLL_MS = 5000;
 import { repoTop } from "./worktrees.mjs";
 
 const resolveDir = (ctx, dir) => (dir === undefined ? undefined : path.resolve(ctx.root, dir));
@@ -95,17 +98,44 @@ async function fanout(ctx) {
   return started.length === blocks.length ? 0 : 2;
 }
 
-// Blocks run as one-shot agents under a semaphore of the free running slots; each admission also needs a live slot.
+// Blocks run as one-shot agents, at most max_subagents of this caller running at once. Each admission re-reads that
+// count under the cap lock: a slot another agent of the caller frees is taken, after a wait of at most
+// wait_timeout_s. The live cap does not wait (an idle agent frees a live slot only by being archived).
 // Replies and result objects are written before the agent is archived (an archived agent cannot be read, INV-15).
 async function collect(ctx, session, live, blocks, spec) {
   const { cfg } = ctx;
   const dir = path.resolve(ctx.root, ctx.opts.collect);
   const keep = Boolean(ctx.opts.keep);
-  const running = runningCount(live);
-  const slots = cfg.max_subagents - running;
-  if (slots <= 0) throw new UsageError(`${running} subagents running, max_subagents ${cfg.max_subagents}: no free slot; wait or archive`);
   if (live.length >= cfg.max_live_subagents) {
     throw new UsageError(`${live.length} live subagents, max_live_subagents ${cfg.max_live_subagents}: no free slot; archive idle agents`);
+  }
+  let waitLogged = false;
+  // The check and the create share the lock, so two admissions cannot take the same running slot (G133).
+  async function startWhenFree(b) {
+    // The budget starts when the running cap is first full, not while this admission waits on the cap lock (G133).
+    let deadline = null;
+    for (;;) {
+      let waiting = null;
+      const agent = await withCapLock(ctx, session, (now) => {
+        const running = runningCount(now);
+        if (running + 1 > cfg.max_subagents) {
+          waiting = running;
+          return null;
+        }
+        checkCapacity(now, 1, cfg);
+        return startAgent(ctx, session, { ...spec(b), kind: "oneshot" });
+      });
+      if (agent) return agent;
+      if (deadline === null) deadline = ctx.clock.now() + cfg.wait_timeout_s * 1000;
+      else if (ctx.clock.now() >= deadline) {
+        throw new Error(`timed out after ${cfg.wait_timeout_s} s waiting for a free running slot (${waiting} running of ${cfg.max_subagents})`);
+      }
+      if (!waitLogged) {
+        waitLogged = true;
+        ctx.out(`waiting for a free running slot (${waiting} running of ${cfg.max_subagents}); a slot another agent of this caller frees is used`);
+      }
+      await ctx.clock.sleep(SLOT_POLL_MS);
+    }
   }
   fs.mkdirSync(dir, { recursive: true });
   const prices = loadPrices(ctx.root);
@@ -137,11 +167,7 @@ async function collect(ctx, session, live, blocks, spec) {
       await admit();
       admitted = true;
       try {
-        // G133: the create re-reads the agents under the cap lock; another process may have taken the slot of the snapshot.
-        agent = await withCapLock(ctx, session, (now) => {
-          checkCapacity(now, 1, cfg);
-          return startAgent(ctx, session, { ...spec(b), kind: "oneshot" });
-        });
+        agent = await startWhenFree(b);
       } catch (e) {
         if (!(e.agentId && e.archived === false)) liveCount--;
         throw e;
@@ -175,7 +201,7 @@ async function collect(ctx, session, live, blocks, spec) {
   const worker = async () => {
     while (queue.length) await runBlock(queue.shift());
   };
-  await Promise.all(Array.from({ length: Math.min(slots, blocks.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(cfg.max_subagents, blocks.length) }, worker));
   return failed ? 2 : 0;
 }
 

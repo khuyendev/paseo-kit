@@ -20,7 +20,8 @@ import { contentHash } from "./flow-owns.mjs";
 const r = String.raw;
 // The stack defaults: which files are tests (paths are matched only for the stack's extensions) and the regexes of a test
 // declaration (group 1, else the first string literal after it, else the function under an attribute line, is its name), an
-// assertion and a skip marker. Comment lines never count, so a commented-out assertion is a removed one.
+// assertion and a skip marker. Comment lines never count, so a commented-out assertion is a removed one. The C++ stack also
+// reports a narrowed automation-test flag expression and a wider TestNearlyEqual tolerance; those are not counts.
 export const STACKS = Object.freeze([
   {
     name: "dart", ext: [".dart"], comment: "c",
@@ -63,6 +64,24 @@ export const STACKS = Object.freeze([
     test_decl: [r`^\s*@(?:Test|ParameterizedTest|RepeatedTest|TestFactory|TestTemplate|Property)\b`],
     assert: [r`(?<![\w$])(?:assert[A-Z]\w*|fail|verify)\s*\(`, r`^\s*assert\s`, r`\bshould(?:Be|NotBe|Equal|Contain|Throw|Have)\w*\b`],
     skip: [r`@(?:Disabled|Ignore|EnabledIf|DisabledIf|EnabledOn|DisabledOn)\w*\b`, r`(?<![\w$])assume(?:True|False|That|NotNull)?\s*\(`],
+  },
+  {
+    name: "cpp", ext: [".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh", ".inl"], comment: "c",
+    paths: ["**/Tests/**", "**/Test/**", "**/*Test*.cpp", "**/*Spec*.cpp", "**/*.spec.cpp"],
+    test_decl: [
+      r`(?<![\w])(?:IMPLEMENT_SIMPLE_AUTOMATION_TEST|IMPLEMENT_COMPLEX_AUTOMATION_TEST|BEGIN_DEFINE_SPEC)\s*\(\s*([A-Za-z_]\w*)`,
+      r`(?<![\w])TEST(?:_[FP])?\s*\(\s*(\w+\s*,\s*\w+)`,
+      r`(?<![\w])(?:TEST_CASE|SCENARIO|TEMPLATE_TEST_CASE)\s*\(`,
+    ],
+    assert: [
+      r`(?<![\w])Test(?:True|False|Equal|NotEqual|NearlyEqual|Null|NotNull|Valid|Invalid|Same|NotSame)\s*\(`,
+      r`(?<![\w])AddExpectedError\s*\(`,
+      r`(?<![\w])UTEST_\w*`,
+      r`(?<![\w])(?:EXPECT|ASSERT)_\w+`,
+      r`(?<![\w])(?:CHECK|REQUIRE)(?:_\w+)?\s*\(`,
+    ],
+    skip: [r`(?<![\w])GTEST_SKIP\s*\(`, r`(?<![\w])DISABLED_`],
+    extra: cppExtras,
   },
 ]);
 
@@ -111,6 +130,153 @@ function declName(m, lines, i) {
 
 const count = (line, list) => list.reduce((n, src) => n + (line.match(rx(src, "g"))?.length ?? 0), 0);
 const squeeze = (text) => text.replace(/\s+/g, "");
+
+// C++ flag and tolerance checks read the whole file with comment lines blanked; a `return;` early-out is not one
+// (it is not an assert and not a skip). AddExpectedError is an assertion above, so removing one is asserts-removed.
+const FLAG_MACROS = /(?<![\w])(?:IMPLEMENT_SIMPLE_AUTOMATION_TEST|IMPLEMENT_COMPLEX_AUTOMATION_TEST|BEGIN_DEFINE_SPEC)\s*\(/;
+const FLAG_KEEP = ["EngineFilter", "ProductFilter", "ApplicationContextMask", "ClientContext", "EditorContext", "ServerContext"];
+const FLAG_GAIN = ["Disabled", "Negative"];
+const TOLERANCE = Object.freeze({
+  SMALL_NUMBER: 1e-8,
+  KINDA_SMALL_NUMBER: 1e-4,
+  BIG_NUMBER: 3.4e38,
+  UE_SMALL_NUMBER: 1e-8,
+  UE_KINDA_SMALL_NUMBER: 1e-4,
+  UE_DOUBLE_SMALL_NUMBER: 1e-8,
+  UE_DOUBLE_KINDA_SMALL_NUMBER: 1e-4,
+  DOUBLE_SMALL_NUMBER: 1e-8,
+  DOUBLE_KINDA_SMALL_NUMBER: 1e-4,
+});
+
+function readBalanced(src, open) {
+  let depth = 0;
+  let quote = null;
+  for (let i = open; i < src.length; i++) {
+    const c = src[i];
+    if (quote) {
+      if (c === "\\") { i++; continue; }
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === "\"" || c === "'") { quote = c; continue; }
+    if (c === "(") depth++;
+    else if (c === ")") {
+      depth--;
+      if (depth === 0) return src.slice(open + 1, i);
+    }
+  }
+  return null;
+}
+
+function splitArgs(body) {
+  const args = [];
+  let depth = 0;
+  let quote = null;
+  let start = 0;
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (quote) {
+      if (c === "\\") { i++; continue; }
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === "\"" || c === "'") { quote = c; continue; }
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth = Math.max(0, depth - 1);
+    else if (c === "," && depth === 0) {
+      args.push(body.slice(start, i));
+      start = i + 1;
+    }
+  }
+  args.push(body.slice(start));
+  return args;
+}
+
+function eachCall(src, re, fn) {
+  const rxg = new RegExp(re.source, "g");
+  let m;
+  while ((m = rxg.exec(src))) {
+    const open = m.index + m[0].length - 1;
+    if (src[open] !== "(") continue;
+    const body = readBalanced(src, open);
+    if (body === null) continue;
+    fn(body);
+    rxg.lastIndex = open + body.length + 2;
+  }
+}
+
+const hasToken = (expr, token) => new RegExp(`(?:^|[^A-Za-z0-9])${token}(?![A-Za-z0-9])`).test(expr);
+
+function flagFindings(baseText, nowText) {
+  const scan = (text) => {
+    const out = [];
+    eachCall(codeLines(text, "c").join("\n"), FLAG_MACROS, (body) => {
+      const args = splitArgs(body);
+      const name = /^\s*([A-Za-z_]\w*)/.exec(args[0] ?? "");
+      if (name) out.push({ name: name[1], flags: args.slice(2).join(",") });
+    });
+    return out;
+  };
+  const nowBy = new Map();
+  for (const e of scan(nowText)) (nowBy.get(e.name) ?? nowBy.set(e.name, []).get(e.name)).push(e);
+  const used = new Map();
+  const found = [];
+  for (const e of scan(baseText)) {
+    const list = nowBy.get(e.name);
+    const i = used.get(e.name) ?? 0;
+    if (!list || i >= list.length) continue;
+    used.set(e.name, i + 1);
+    const lost = FLAG_KEEP.filter((t) => hasToken(e.flags, t) && !hasToken(list[i].flags, t));
+    const gained = FLAG_GAIN.filter((t) => hasToken(list[i].flags, t) && !hasToken(e.flags, t));
+    if (!lost.length && !gained.length) continue;
+    const bits = [...(lost.length ? [`lost ${lost.join(", ")}`] : []), ...(gained.length ? [`gained ${gained.join(", ")}`] : [])];
+    found.push({ kind: "flags-narrowed", detail: `${e.name}: flag expression ${bits.join("; ")}` });
+  }
+  return found;
+}
+
+function toleranceValue(expr) {
+  const t = expr.trim().replace(/\s+/g, "");
+  const num = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)[fF]?$/.exec(t);
+  if (num) return Number(num[1]);
+  const id = /^(?:[A-Za-z_]\w*::)*([A-Za-z_]\w*)$/.exec(t);
+  return id && Object.hasOwn(TOLERANCE, id[1]) ? TOLERANCE[id[1]] : null;
+}
+
+function nearlyCalls(text) {
+  const out = [];
+  eachCall(codeLines(text, "c").join("\n"), /(?<![\w])TestNearlyEqual\s*\(/, (body) => {
+    const args = splitArgs(body).map((a) => a.trim());
+    const explicit = args.length >= 4;
+    out.push({
+      key: (args[0] ?? "").replace(/\s+/g, ""),
+      tol: explicit ? toleranceValue(args[args.length - 1]) : TOLERANCE.KINDA_SMALL_NUMBER,
+      shown: explicit ? args[args.length - 1].replace(/\s+/g, " ") : "KINDA_SMALL_NUMBER (default)",
+    });
+  });
+  return out;
+}
+
+function toleranceFindings(baseText, nowText) {
+  const now = nearlyCalls(nowText);
+  const used = new Set();
+  const found = [];
+  for (const e of nearlyCalls(baseText)) {
+    const i = now.findIndex((n, idx) => !used.has(idx) && n.key === e.key);
+    if (i < 0 || e.tol === null || now[i].tol === null) continue;
+    used.add(i);
+    const scale = Math.max(Math.abs(e.tol), 1e-12);
+    if (now[i].tol > e.tol && (now[i].tol - e.tol) / scale > 1e-6) {
+      found.push({ kind: "tolerance-widened", detail: `TestNearlyEqual ${e.key || "(call)"} tolerance ${e.shown} -> ${now[i].shown}` });
+    }
+  }
+  return found;
+}
+
+function cppExtras(baseText, nowText) {
+  if (baseText === null || nowText === null) return [];
+  return [...flagFindings(baseText, nowText), ...toleranceFindings(baseText, nowText)];
+}
 
 /** The test declarations (names, null when unnamed), assertion and skip counts of one file's text, and the line (1-based) and
  * text of each counted skip marker. A skip marker on a line holding one of rules.guards (whitespace ignored) is not counted. */
@@ -329,9 +495,12 @@ export function checkWeakening(root, phaseDir, { base = "HEAD", files } = {}) {
       }
       const rules = rulesOf(kind.stack, checks);
       rules.guards = guardsOf(rules, kind.stack, checks, notes);
-      entries.push({ rel, base: was === null ? null : analyze(was, rules), now: now === null ? null : analyze(now, rules) });
+      const entry = { rel, base: was === null ? null : analyze(was, rules), now: now === null ? null : analyze(now, rules) };
+      if (kind.stack.extra && was !== null && now !== null) entry.extra = kind.stack.extra(was, now);
+      entries.push(entry);
     }
     found.push(...weakenings(entries));
+    for (const e of entries) for (const x of e.extra ?? []) found.push({ path: e.rel, ...x });
   }
   const { declared, answers } = permits(dir);
   const weakened = [];
@@ -367,7 +536,7 @@ export function checksStop(phaseDir, weakened) {
     reason: `checks weakened without a <check_changes> declaration or an owner allow: ${weakened.map((w) => `${w.path} (${w.kind}: ${w.detail})`).join("; ")}`,
     options: [
       ...paths.map((p) => `ph gsd allow ${ref} --path ${/\s/.test(p) ? JSON.stringify(p) : p} --reason "<why this is no weakening, or why it is accepted>", then rerun with the same args`),
-      "restore the tests, assertions, skip markers or gate settings, then rerun with the same args",
+      "restore the tests, assertions, skip markers, flags, tolerances or gate settings, then rerun with the same args",
       "declare the change in the plan's <check_changes> block (`<path>: <reason>`), have the plan reviewed, then rerun with the same args",
     ],
   };
