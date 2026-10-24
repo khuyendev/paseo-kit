@@ -541,6 +541,21 @@ export function planReplan(root, phaseDir, { run, plan, by, change } = {}) {
   });
 }
 
+/** plan-replan-drain {run, scope, pass, max}: kit feedback 115 F1/F2. Open replan marks of `scope` (a plan whose planner
+ * was asked for a change and not recorded since). `replan` while `pass` is within `max` (the run's maxSkeletonPasses);
+ * `stop` once that bound is spent and a mark is still open (the checker must not start); `clear` with nothing open.
+ * Reads plan-progress.json; it does not write. */
+export function planReplanDrain(root, phaseDir, { run, scope = [], pass = 1, max = 1 } = {}) {
+  const st = readPlanState(root, phaseDir);
+  if (st.run && run && st.run !== run) fail(`plan-replan-drain: ${PLAN_STATE_FILE} belongs to run ${st.run}, not ${run}`);
+  if (!Number.isInteger(pass) || pass < 1 || !Number.isInteger(max) || max < 1) fail(`plan-replan-drain needs pass and max counts, not ${pass} and ${max}`);
+  const want = new Set(Array.isArray(scope) ? scope.map(String) : []);
+  const open = Object.keys(st.replan).filter((id) => want.has(id)).sort();
+  if (!open.length) return { status: "ok", act: "clear", open: [] };
+  if (pass > max) return { status: "ok", act: "stop", open, reason: `${open.join(", ")} still marked for re-planning after ${max} re-plan ${max === 1 ? "pass" : "passes"} (plan-progress.json replan); the re-plan bound is spent and the checker does not start` };
+  return { status: "ok", act: "replan", open, log: `re-planning ${open.join(", ")} before the checker (pass ${pass} of ${max})` };
+}
+
 /** plan-state: the record and every part's folded view. */
 export function planState(root, phaseDir) {
   const st = readPlanState(root, phaseDir);

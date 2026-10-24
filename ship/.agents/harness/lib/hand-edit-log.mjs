@@ -61,7 +61,7 @@ export const candidateLine = (c) => `kit defect candidate: ${c.category} seen ${
 export function handEditLines(edits) {
   if (!edits.length) return [];
   const s = summarize(edits);
-  const lines = [`hand fixes ${s.logged}${s.pending ? `, ${s.pending} not logged yet (ph gsd hand-edit record <phase> <id> --category ${CATEGORIES.join("|")} --note <line>)` : ""}: ${s.byCategory.map((c) => `${c.category} ${c.count}`).join(", ") || "none logged"}`];
+  const lines = [`hand fixes ${s.logged}${s.pending ? `, ${s.pending} not logged yet (ph gsd hand-edit record <phase> <id> --category ${CATEGORIES.join("|")} --note <one line, at most 300 characters>)` : ""}: ${s.byCategory.map((c) => `${c.category} ${c.count}`).join(", ") || "none logged"}`];
   const phases = [...new Set(edits.map((e) => e.phase))].sort();
   if (phases.length > 1) for (const p of phases) {
     const mine = summarize(edits.filter((e) => e.phase === p));

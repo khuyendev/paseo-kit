@@ -663,12 +663,13 @@ error, `{status: "error", error}`); `ph gsd` verbs exit 0, 1, 66 (nothing matche
 | `plan-end` | `<phaseDir>`, `{run}` | `{status}` | `plan-progress.json` |
 | `plan-mark` | `<phaseDir>`, `{run, plans, stage: planned\|recorded}` | `{status, notes}` (the open replan notes of the plans) | `plan-progress.json` |
 | `plan-replan` | `<phaseDir>`, `{run, plan, by, change}` | `{status, plan, open}` | `plan-progress.json` (`replan`, kit feedback 99 F3) |
+| `plan-replan-drain` | `<phaseDir>`, `{run, scope, pass, max}` | `{act: clear\|replan\|stop, open, log?, reason?}`: open re-plan marks of `scope`; `replan` while `pass` ≤ `max` (`maxSkeletonPasses`), `stop` once that bound is spent (the checker does not start; answer `rerun`), `clear` with none open (kit feedback 115 F1/F2) | none (reads `plan-progress.json`) |
 | `plan-outline` | `<phaseDir>`, `{run, inputs, sha}` | `{status}` | `plan-progress.json` |
 | `plan-checker`, `plan-contracts`, `plan-realloc`, `plan-recheck` | `<phaseDir>`, `{run, part, step, ops}` | `{status, log}` | `plan-progress.json` (op log per part) |
 | `plan-args` | `{args, policy, gsd, adapter, kitLenses}` | `{status: ok, mode, ..., lanes, roles, settings, laneInputs, skeleton, schemas, ownerMarkers, knownMarkers}`, or exit 1 `{status: failed\|needs-owner, reason}` | none |
 | `plan-prompt` | `<kind>`, `{ctx, ...data}` | `{kind, text}`; exit 1 on an unknown kind, a missing template or variable | none (reads `prompts/plan-*.md`) |
 | `plan-skeleton` | `<op>`, `{sk, ...}` | `{sk, advisories, ...}` (op `first`, `route`, `add`, `pending`, `resolve`, `end`, `report`) | none |
-| `plan-probes` | `{runs: {<probe>: {code, json}}, filesPerPlan, tracerExtraFiles}` | `{found}` | none |
+| `plan-probes` | `{runs: {<probe>: {code, json}}, filesPerPlan, tracerExtraFiles, plans?: [{id, path?, text?}]}` | `{found}`; with `plans`, a `threat-id` blocker for a threat id outside that plan's range `T-<NN>-<plan index>xx` (kit feedback 115 F3) | none |
 | `plan-linked` | `{ids, scope, index, manifest, plans}` | `{linked}` | none |
 | `plan-realloc-diff` | `{before, after, named, planIds, sent}` | `{idsAfter, changed, removed, unchanged, accept}` | none |
 | `plan-validation` | `{off, approvedResearch, strategy}` | `{validation, report, warnings, log, commit}` | none |
@@ -733,7 +734,7 @@ error, `{status: "error", error}`); `ph gsd` verbs exit 0, 1, 66 (nothing matche
 | `check.evaluation-scope` | `--phase, --plan or --quick [--since] [--commits-only] [--max-commits]` | the commits and files a review or verify evaluates | none |
 | `outline.parse`, `outline.check` | `<phase>` (`outline.check`: its options) | the parsed outline; its errors | none |
 | `waves`, `handoff` | `<phase> [--plans] ...` | the execution waves; the handoff plan list (tracer split) | none |
-| `hand-edit.scan`, `hand-edit.record`, `hand-edit.list` | `<phase>` (`record`: `<HE-n, plan:<id> or file> --category --note`) | pending hand edits; the logged entry; the log | `<phase>/hand-edits.json` |
+| `hand-edit.scan`, `hand-edit.record`, `hand-edit.list` | `<phase>` (`record`: `<HE-n, plan:<id> or file> --category --note` of at most 300 characters; `--amend` replaces the note of a logged record and keeps the previous notes on `history`) | pending hand edits; the logged entry; the log | `<phase>/hand-edits.json` |
 | `revisions.record`, `revisions.check`, `revisions.hash`, `revisions.show` | `<phase> <key> [--settings]` | the key's hashes and whether its inputs changed | `<phase>/revisions.json` (`record` only, under `revisions.json.lock`) |
 | `supersede` | `<phase> --keep <ids>` | the superseded plans | the plan files of the phase |
 | `attempt.record`, `attempt.show` | `<phase> --kind gap, verify or research` (+ options or JSON) | the attempt `{attemptKey, runId, done, ...}` | `<phase>/<kind>-attempt.json` (`record` only) |

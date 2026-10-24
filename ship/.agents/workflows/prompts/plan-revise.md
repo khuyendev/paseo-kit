@@ -7,6 +7,8 @@ policy, returnNote, digest.
 
 {{revision}}
 
+Threat-id ranges (keep each plan inside its own; an id outside it belongs to another plan): {{threatRanges}}
+
 {{policy}}
 
 {{returnNote}}

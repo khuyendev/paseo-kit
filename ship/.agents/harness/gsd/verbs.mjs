@@ -220,9 +220,9 @@ export const verbHandlers = {
   handoff: { usage: "ph gsd handoff <phase> [--plans <ids>] [--prefix <text>] [--no-tracer-split]", options: { plans: "string", prefix: "string", "no-tracer-split": "bool" }, run: (g, a, o) => handoff(g, phaseOf(g, a), { subset: subset(o, phaseOf(g, a)), prefix: o.prefix, noTracerSplit: o["no-tracer-split"] === true }) },
   "hand-edit.scan": { usage: "ph gsd hand-edit.scan <phase>", options: {}, run: (g, a) => scanHandEdits(g, phaseOf(g, a)) },
   "hand-edit.record": {
-    usage: "ph gsd hand-edit.record <phase> <HE-n|plan:<id>|file> --category <contract-drift|wrong-api|owns-reach|test-fixture|other> --note <one line>",
-    options: { category: "string", note: "string" },
-    run: (g, a, o) => recordHandEdit(g, phaseOf(g, a), a[1], { category: o.category, note: o.note }),
+    usage: "ph gsd hand-edit.record <phase> <HE-n|plan:<id>|file> --category <contract-drift|wrong-api|owns-reach|test-fixture|other> --note <one line, at most 300 characters> [--amend]",
+    options: { category: "string", note: "string", amend: "bool" },
+    run: (g, a, o) => recordHandEdit(g, phaseOf(g, a), a[1], { category: o.category, note: o.note, amend: o.amend === true }),
   },
   "hand-edit.list": { usage: "ph gsd hand-edit.list <phase>", options: {}, run: (g, a) => listHandEdits(g, phaseOf(g, a)) },
   "revisions.record": revisions("record"),

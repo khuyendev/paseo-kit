@@ -22,6 +22,8 @@ Carried warnings:
 Blockers from earlier checker iterations, still open? Judge each against the plans as they are now. Repeat it in issues (same plan, dimension and required_property) while it holds; list its id in resolved, with evidence, once it is fixed. An id you do not list stays open.
 {{earlier}}
 
+Threat-id ranges (a threat id outside its plan's range is a blocker, dimension threat-id; the deterministic probe lists the ones it found, so do not repeat those): {{threatRanges}}
+
 Return JSON {issues: [{plan (null for phase-level), dimension, severity (blocker|warning|info), required_property (the invariant that must hold), description (the evidence it does not), fix_hint}], resolved: [{id, evidence}] (only ids of the still-open blockers above)}.
 
 {{policy}}

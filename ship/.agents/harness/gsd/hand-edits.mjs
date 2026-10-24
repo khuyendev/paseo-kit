@@ -313,7 +313,7 @@ export function scanHandEdits(g, phase) {
     flowMade: flowMadeNow,
     ...(dropped.length ? { dropped } : {}),
     candidates: candidatesOf(g),
-    ...(pending.length ? { ask: `say why each was changed: ph gsd hand-edit record ${phase.number} <id> --category ${CATEGORIES.join("|")} --note "<one line>"` } : {}),
+    ...(pending.length ? { ask: `say why each was changed: ph gsd hand-edit record ${phase.number} <id> --category ${CATEGORIES.join("|")} --note "<one line, at most ${NOTE_MAX} characters>"` } : {}),
   });
 }
 
@@ -334,12 +334,16 @@ function manualEdit(g, phase, ref) {
   throw fail(`no pending hand edit ${ref} (ph gsd hand-edit list ${phase.number}); give an id, a plan:<id> key or a file of the project`);
 }
 
-export function recordHandEdit(g, phase, ref, { category, note }) {
+export function recordHandEdit(g, phase, ref, { category, note, amend = false } = {}) {
   if (!ref) throw fail("hand-edit record needs an id (HE-<n>), a plan:<id> key or a file");
-  if (!CATEGORIES.includes(category)) throw fail(`--category is one of ${CATEGORIES.join(", ")}`);
   const line = String(note ?? "").trim();
   if (!line) throw fail("--note needs one line: what was changed and why");
-  if (/[\r\n]/.test(line) || line.length > NOTE_MAX) throw fail(`--note is one line of at most ${NOTE_MAX} characters`);
+  if (/[\r\n]/.test(String(note ?? "")) || line.length > NOTE_MAX) throw fail(`--note is one line of at most ${NOTE_MAX} characters (got ${line.length})`);
+  if (amend) {
+    if (category != null && category !== "" && !CATEGORIES.includes(category)) throw fail(`--category is one of ${CATEGORIES.join(", ")}`);
+    return amendHandEdit(g, phase, ref, { category, note: line });
+  }
+  if (!CATEGORIES.includes(category)) throw fail(`--category is one of ${CATEGORIES.join(", ")}`);
   const answered = [];
   withFileLock(`${handEditsFile(phase)}.lock`, () => {
     const edits = readStore(phase);
@@ -361,6 +365,31 @@ export function recordHandEdit(g, phase, ref, { category, note }) {
   });
   const count = summarize(projectEdits(g.codeRoot).edits).byCategory.find((c) => c.category === category)?.count ?? 0;
   return done({ phase: phase.padded, logged: answered, category, note: line, count, candidates: candidatesOf(g) });
+}
+
+// Kit feedback 113 F1: replace the note of a record that is already logged. The note it had (and each note replaced since)
+// stays on `history`, so a placeholder can be corrected. A pending edit is not a record yet: record it without --amend.
+function amendHandEdit(g, phase, ref, { category, note }) {
+  const answered = [];
+  let kept = null;
+  withFileLock(`${handEditsFile(phase)}.lock`, () => {
+    const edits = readStore(phase);
+    const hits = edits.filter((e) => CATEGORIES.includes(e.category) && (e.id === ref || e.key === ref || e.files.includes(ref)));
+    if (!hits.length) throw fail(`${ref} is not a logged hand edit (ph gsd hand-edit list ${phase.number})`);
+    for (const e of hits) {
+      const next = category || e.category;
+      if (e.note !== note || next !== e.category) {
+        const history = Array.isArray(e.history) ? e.history.slice() : [];
+        history.push({ note: e.note, at: e.loggedAt ?? e.at, category: e.category });
+        Object.assign(e, { note, category: next, loggedAt: nowIso(), history });
+      }
+      answered.push(e.id);
+      kept = e;
+    }
+    writeStore(phase, edits);
+  });
+  const count = summarize(projectEdits(g.codeRoot).edits).byCategory.find((c) => c.category === kept.category)?.count ?? 0;
+  return done({ phase: phase.padded, logged: answered, amended: true, category: kept.category, note, history: kept.history ?? [], count, candidates: candidatesOf(g) });
 }
 
 export function listHandEdits(g, phase) {
