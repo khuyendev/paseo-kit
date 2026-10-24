@@ -96,7 +96,11 @@ export const SCHEMA = obj({
       // Kit feedback 102 F2: the per-test limit the gate passes to the test runner through the argv template (`{s}` = the seconds).
       test_case_timeout_s: nullable(int(1)),
       test_case_timeout_arg: nullable(argv()),
-    }, ["smoke_builds", "test_case_timeout_s", "test_case_timeout_arg"]),
+      // Kit feedback 103: flags that extend check-weakening's strictness set. Absent from the defaults, so a kit update does
+      // not move a phase baseline's gateConfig hash. A flag named here covers a later command change only once the baseline
+      // holds the list; the comparison uses the baseline's list, not one added in the same change.
+      non_weakening_flags: arr(str({ nonEmpty: true, pattern: /^-/, patternText: "a flag starting with -" })),
+    }, ["smoke_builds", "test_case_timeout_s", "test_case_timeout_arg", "non_weakening_flags"]),
     verify_vocabulary: map(obj({
       prefix: str({ nonEmpty: true }),
       parser: nullable(str({ nonEmpty: true, repoPath: true })),
@@ -139,7 +143,10 @@ export const SCHEMA = obj({
     // Kit feedback 92: skip_guards, literal environment-guard expressions; absent from the defaults so the gate configuration
     // hash a phase baseline recorded does not move on a kit update.
     checks: obj({ enabled: bool(), paths: nullable(strs()), test_decl: nullable(strs()), assert: nullable(strs()), skip: nullable(strs()), skip_guards: arr(str({ nonEmpty: true })) }, ["enabled", "paths", "test_decl", "assert", "skip", "skip_guards"]),
-  }, ["checks"]),
+    // Kit feedback 103: globs of catalog files (besides every .json file) whose manifest signature is checked by key path.
+    // Absent from the defaults, and not part of the gate-configuration hash.
+    catalogs: strs(),
+  }, ["checks", "catalogs"]),
   gsd: obj({
     roles: map(obj({ model: str({ nonEmpty: true }), effort: effort(), reason: str() }, ["model", "effort", "reason"])),
     granularity: str({ oneOf: ["coarse", "standard", "fine"] }),
