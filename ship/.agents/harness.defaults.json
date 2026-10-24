@@ -33,7 +33,8 @@
     "Workflow"
   ],
   "agent_provider_env": {
-    "ENABLE_TOOL_SEARCH": "true"
+    "ENABLE_TOOL_SEARCH": "true",
+    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"
   },
   "main_provider_disallowed_tools": [
     "Agent",

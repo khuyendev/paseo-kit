@@ -35,7 +35,7 @@ test("INST-01 PHCL-04 tracer: install, ph doctor, spawn/watch/result round and a
   const defaults = w.project.readJson(".agents/harness.defaults.json");
   fs.writeFileSync(path.join(w.env.PASEO_HOME, "config.json"), JSON.stringify({ agents: { providers: {
     circle: { extends: "claude", disallowedTools: ["Agent", "Workflow"] },
-    "circle-agent": { extends: "claude", disallowedTools: defaults.agent_provider_disallowed_tools, env: { ENABLE_TOOL_SEARCH: "true" } },
+    "circle-agent": { extends: "claude", disallowedTools: defaults.agent_provider_disallowed_tools, env: { ENABLE_TOOL_SEARCH: "true", CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" } },
   } } }));
   const models = ["big", "mid", "small"].map((id) => ({ id, thinkingOptions: [{ id: "low" }] }));
   w.fake.setModels("circle-agent", models);

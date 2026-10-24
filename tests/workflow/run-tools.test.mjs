@@ -123,9 +123,10 @@ test("FLOW-42 --prune with 25 done, 2 failed, 1 running removes the 5 oldest don
   for (let i = 0; i < 25; i++) fixtureRun(s, `wf_done${String(i).padStart(2, "0")}`, { startedAt: stamp(i) });
   fixtureRun(s, "wf_fail1", { status: "failed", startedAt: stamp(0) });
   fixtureRun(s, "wf_fail2", { status: "failed", startedAt: stamp(1) });
-  fixtureRun(s, "wf_run", { status: "running", pid: process.pid, startedAt: stamp(0) });
+  fixtureRun(s, "wf_run", { status: "running", pid: process.pid, startedAt: new Date().toISOString() });
   const list = await s.ph(["runs"]);
-  assert.match(list.out[0], /^wf_done24 done 2026-10-03T04:00:00.000Z n$/);
+  assert.match(list.out[0], /^wf_run running /);
+  assert.ok(list.out.some((l) => /^wf_done24 done 2026-10-03T04:00:00.000Z n$/.test(l)));
   const r = await s.ph(["runs", "--prune"]);
   assert.equal(r.code, 0);
   assert.deepEqual(r.out.filter((l) => l.startsWith("removed")), ["removed wf_done04", "removed wf_done03", "removed wf_done02", "removed wf_done01", "removed wf_done00"]);

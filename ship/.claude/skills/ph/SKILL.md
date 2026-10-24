@@ -56,7 +56,7 @@ or config error (nothing done), 2 done with failed items or problems.
 | `ph compact-self [--focus TEXT] [--resume TEXT] [--agent ID]` | compacts you after this turn (see below). |
 | `ph task add\|update\|list\|get --ws D ...` | the team's shared task list `<ws>/tasks.json` (see below). |
 | `ph freeze --ws D --phase P [--check]` | sha256 record of `<ws>/P_*` files; `--check` reports `modified`, `missing`, `new` (exit 2). |
-| `ph worktrees [--prune] [--runs-dir D]` | harness git worktrees and their state; `--prune` removes only merged-and-clean and `transferred` ones (gsd-execute copied the whole delta to the main tree; its transfer record has every changed path with the same hash) and registrations whose directory is gone. `ph doctor` notes leftovers of finished runs. |
+| `ph worktrees [--prune] [--committed-phase N] [--runs-dir D]` | harness git worktrees and their state; `--prune` removes only merged-and-clean and `transferred` ones (gsd-execute copied the whole delta to the main tree; its transfer record has every changed path with the same hash), registrations whose directory is gone, and an `orphan` directory under the worktree root that git does not list (archived, links unlinked, never followed). `--committed-phase N` (with `--prune`) also removes that phase's executor worktrees once every handoff plan is committed, after saving each delta under `_workspace/worktree-archive/`. `ph doctor` notes leftovers of finished runs. |
 | `ph workflow`, `ph workflow stop`, `ph watch-run`, `ph run-stats`, `ph evolve-stats`, `ph review-stats`, `ph runs` | workflow scripts (see the workflow section). |
 | `ph gsd <verb>` | GSD state verbs used by the GSD skills. |
 
@@ -139,7 +139,7 @@ until dry, budget-aware loop, custom type + schema + effort, tier choice).
   `--detach` returns at once; follow it with `ph watch-run <runId> --quiet` under Monitor (one line when the run ends;
   without `--quiet` the watch also prints the log, phase and `agent done ... null` lines; `--all` prints every line).
 - Run directory `_workspace/_runs/<runId>/`: `script.js`, `args.json` (only when the run got args), `run.json`, `journal.jsonl`, `log.txt`,
-  `result.json`. `ph run-stats <runId>` sums time, tokens and cost; `ph runs [--prune]` lists and prunes runs;
+  `result.json`. `ph run-stats <runId>` sums time, tokens and cost; `ph runs [--prune] [--live]` lists runs (a `running` record whose runner is gone is `dead`, with its last phase and log line; `--live` lists only a live runner) and prunes done and stopped runs beyond `runs_keep` plus every dead running record;
   `ph archive --run <runId> [--reason "<why>"]` stops a run for good; the reason goes into `run.json` and the metrics
   ledger, so give one. It stops the runner with the shell commands the run started; a runner that already died leaves
   those commands running.

@@ -10,12 +10,14 @@ import { errText } from "../lib/cli.mjs";
 import { readJsonIf } from "../lib/io.mjs";
 import { policyLines } from "../lib/provider-policy.mjs";
 import { id8 } from "../lib/paths.mjs";
+import { pidAlive, processStartTimes, runnerLive } from "../lib/proc.mjs";
 import { FILE_PLUGIN_ID, MIN_CLAUDE_VERSION, NODE_REQUIREMENT, claudeVersion, nodeRuntimeProblem, paseoConfigFile, versionAtLeast } from "../platform.mjs";
 import { checkTarget, sizeTarget } from "../gsd/upstream.mjs";
 import { workflowArgProblems } from "../gsd/workflow-args.mjs";
 import { checkCompositionVerbs, problemText, WORKFLOWS_REL } from "../gsd/verb-check.mjs";
 import { compositionPolicyLines } from "../gsd/policies.mjs";
 import { DEFAULT_RUNS_DIR } from "../workflow/journal.mjs";
+import { listRuns } from "../workflow/cmd-runs.mjs";
 import { AGENTS_DIR, listAgentTypes } from "./agents.mjs";
 import { resolveModel } from "./models.mjs";
 import { leftoverWorktrees, runGit } from "./worktrees.mjs";
@@ -129,6 +131,18 @@ function adapterLines(ctx, line) {
   if (ctx.cfg.adapter.checks?.enabled === false) line("note", "warning: adapter.checks.enabled is false: gates do not check for deleted tests, removed assertions or added skips (kit feedback 87 C1); remove the key to turn the check back on");
 }
 
+// Kit feedback 118 F3: run.json still says running after the runner is gone. Prune is the answer, not a hand delete.
+function deadRunLines(ctx, line) {
+  const runs = listRuns(path.resolve(ctx.root, DEFAULT_RUNS_DIR));
+  const alive = runs.filter((r) => r.info?.status === "running" && pidAlive(r.info.pid)).map((r) => r.info.pid);
+  const starts = processStartTimes(alive);
+  const dead = runs.filter((r) => r.info?.status === "running" && !runnerLive(r.info, { starts }));
+  if (!dead.length) return;
+  const names = dead.slice(0, 8).map((r) => r.id).join(", ");
+  const more = dead.length > 8 ? `, +${dead.length - 8} more` : "";
+  line("note", `${dead.length} dead running record(s) (${names}${more}): the runner is gone; ph runs --prune removes them`);
+}
+
 // Kit feedback 75: harness worktrees of finished runs that are still on disk (603 MB over 23 of them in one project).
 function worktreeLines(ctx, line) {
   const left = leftoverWorktrees(ctx.root, ctx.cfg, { runsDir: path.resolve(ctx.root, DEFAULT_RUNS_DIR) });
@@ -209,6 +223,7 @@ export async function runDoctor(ctx, { freemem = os.freemem, commitFreeMb = read
   await guard("provider policy", () => paseoPolicyLines(ctx, line));
   await guard("adapter", () => adapterLines(ctx, line));
   await guard("worktrees", () => worktreeLines(ctx, line));
+  await guard("runs", () => deadRunLines(ctx, line));
   await guard("workflow arguments", () => workflowArgLines(ctx, line));
   await guard("self-repair", () => selfRepairLines(ctx, line));
   await guard("composition verbs", () => compositionVerbLines(ctx, line));
@@ -239,7 +254,7 @@ export async function runDoctor(ctx, { freemem = os.freemem, commitFreeMb = read
 export const doctorCommands = [
   {
     name: "doctor",
-    summary: "check node, caller, config, Paseo daemon, tiers, file mod, provider policy, adapter, workflow arguments, composition verbs, agent types and free memory",
+    summary: "check node, caller, config, Paseo daemon, tiers, file mod, provider policy, adapter, workflow arguments, composition verbs, agent types, dead runs and free memory",
     usage: "ph doctor",
     options: {},
     config: "lenient",

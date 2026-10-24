@@ -8,6 +8,7 @@ import { runArgv } from "../lib/proc.mjs";
 import { errText } from "../lib/cli.mjs";
 import { OVERLAY_REL } from "../config.mjs";
 import { readText } from "../lib/io.mjs";
+import { fileTestArgvs } from "./contract.mjs";
 
 const PROBE_TIMEOUT_S = 20;
 const TAIL_CHARS = 2000;
@@ -81,4 +82,50 @@ export async function runCommandProbes(root, cfg, { env = process.env } = {}) {
     else if (run.code !== 0) fail(`the wrapper rejects \`${probe.argv.join(" ")}\` (exit ${run.code}${output ? `: ${output}` : ""})`);
   }
   return findings;
+}
+
+const SKIP_DIR = new Set(["node_modules", ".git", ".claude", "_workspace", "dist", "build", "Binaries", "Intermediate"]);
+
+// The first test file under the project, links not followed, a few heavy directories skipped. Null when none.
+function firstTestFile(root, isTest) {
+  const stack = [root];
+  let seen = 0;
+  while (stack.length && seen < 4000) {
+    const dir = stack.pop();
+    let names;
+    try { names = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+    for (const ent of names) {
+      if (++seen > 4000) return null;
+      if (ent.isSymbolicLink?.() || ent.isSymbolicLink()) continue;
+      const abs = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        if (!SKIP_DIR.has(ent.name)) stack.push(abs);
+      } else if (ent.isFile()) {
+        const rel = abs.slice(root.length).replace(/^[/\\]/, "").replace(/\\/g, "/");
+        if (isTest(rel)) return rel;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Kit feedback 11: run test_file_args once with one test file. A quick non-zero exit is a refusal. A timeout means the
+ * command accepted the file and was still running; the process tree is killed and that is not a failure.
+ */
+export async function runTestFileProbe(root, cfg, { env = process.env, run = runArgv } = {}) {
+  const commands = cfg.adapter?.commands;
+  if (!commands?.test_file_args) return [];
+  const { isTestFile } = await import("../../workflows/lib/flow-checks.mjs");
+  const file = firstTestFile(root, (rel) => isTestFile(rel, cfg.adapter.checks ?? {}));
+  if (!file) return [{ level: "warn", file: OVERLAY_REL, line: null, msg: "adapter.commands.test_file_args is set but no test file was found to probe" }];
+  const argv = fileTestArgvs(commands, [file], commands.test ?? [])[0];
+  const missing = argv.filter((w) => /^(?:\.\/)?[\w@.-]+(?:\/[\w@.-]+)+\.(?:[cm]?js|py|sh|ps1|bat|cmd)$/i.test(w)).find((w) => !fs.existsSync(path.resolve(root, w)));
+  if (missing) return [];
+  const secs = PROBE_TIMEOUT_S;
+  const ran = await run(argv, { cwd: root, env, timeoutMs: secs * 1000, tailChars: TAIL_CHARS });
+  if (ran.timedOut || ran.code === 0) return [];
+  const output = `${ran.stderr ?? ""}${ran.stdout ?? ""}`.trim().split(/\r?\n/).find(Boolean)?.slice(0, 300);
+  const why = ran.error || ran.code === null ? `could not run: ${ran.error ? errText(ran.error) : "stopped by a signal"}` : `refuses ${file} (exit ${ran.code}${output ? `: ${output}` : ""})`;
+  return [{ level: "fail", file: OVERLAY_REL, line: null, msg: `adapter.commands.test_file_args: \`${argv.join(" ")}\` ${why}` }];
 }

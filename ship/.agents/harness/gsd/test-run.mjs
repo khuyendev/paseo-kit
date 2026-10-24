@@ -4,7 +4,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { testCommandOf } from "../adapter/contract.mjs";
+import { fileTestArgvs, testCommandOf } from "../adapter/contract.mjs";
 import { withMutex } from "../adapter/mutex.mjs";
 import { sha256 } from "../lib/hash.mjs";
 import { writeTextAtomic } from "../lib/io.mjs";
@@ -54,27 +54,35 @@ export function argvWithoutFiles(cwd, argv, files) {
 // One argv, or one process per file. `files` empty: the argv once, at timeoutS, and (when fileTimeoutS is shorter) a kill
 // once one test file has been the current one for fileTimeoutS. `files` of two or more: each file at fileTimeoutS, a hang
 // does not start the next. Returns the runArgv shape plus hungFile and runs.
-export async function runBoundedTests({ cwd, argv, files = [], timeoutS, fileTimeoutS, isTest = () => false, run = runArgv }) {
+async function runOne(run, argv, cwd, timeoutS, { watch, bound, isTest }) {
+  let hungFile = null;
+  let acc = "";
+  let current = null;
+  const r = await run(argv, {
+    cwd,
+    timeoutMs: timeoutS * 1000,
+    onData: watch ? (_stream, chunk, api) => {
+      acc = (acc + chunk).slice(-12000);
+      const file = lastTestFile(acc, isTest);
+      if (!file || file === current) return;
+      current = file;
+      api.alsoAfter(bound * 1000, () => { hungFile = file; });
+    } : undefined,
+  });
+  return { ...r, hungFile: r.timedOut ? hungFile : null, runs: [argv] };
+}
+
+export async function runBoundedTests({ cwd, argv, files = [], plans = null, timeoutS, fileTimeoutS, isTest = () => false, run = runArgv }) {
   const bound = fileTimeoutS ?? timeoutS;
-  if (files.length < 2) {
-    let hungFile = null;
-    let acc = "";
-    let current = null;
-    const watch = files.length === 0 && Number(bound) < Number(timeoutS);
-    const r = await run(argv, {
-      cwd,
-      timeoutMs: timeoutS * 1000,
-      onData: watch ? (_stream, chunk, api) => {
-        acc = (acc + chunk).slice(-12000);
-        const file = lastTestFile(acc, isTest);
-        if (!file || file === current) return;
-        current = file;
-        api.alsoAfter(bound * 1000, () => { hungFile = file; });
-      } : undefined,
-    });
-    return { ...r, hungFile: r.timedOut ? hungFile : null, runs: [argv] };
+  // plans: argvs from test_file_args. One plan is one invocation even when it covers several files (a `{files}` template).
+  const many = plans?.length >= 2 || (!plans && files.length >= 2);
+  if (!many) {
+    const one = plans?.length === 1 ? plans[0] : argv;
+    const watch = !plans && files.length === 0 && Number(bound) < Number(timeoutS);
+    return runOne(run, one, cwd, timeoutS, { watch, bound, isTest });
   }
-  const base = argvWithoutFiles(cwd, argv, files);
+  const per = plans ?? files.map((file) => [...argvWithoutFiles(cwd, argv, files), file]);
+  const labels = plans ? files : files;
   const perFile = Math.min(Number(timeoutS) || bound, Number(bound) || timeoutS);
   let stdout = "";
   let stderr = "";
@@ -83,8 +91,9 @@ export async function runBoundedTests({ cwd, argv, files = [], timeoutS, fileTim
   let code = 0;
   let error = null;
   const runs = [];
-  for (const file of files) {
-    const one = [...base, file];
+  for (let i = 0; i < per.length; i++) {
+    const one = per[i];
+    const file = labels[i] ?? one.at(-1);
     runs.push(one);
     const r = await run(one, { cwd, timeoutMs: perFile * 1000 });
     stdout += `\n--- ${file} ---\n${r.stdout ?? ""}`;
@@ -138,12 +147,14 @@ export async function testRun(g, files = []) {
   const lock = testLockName(root, cfg);
   const dir = runDirOf(root, g.env);
   fs.mkdirSync(dir, { recursive: true });
-  const argvs = list.length ? list.map((f) => [...command, f]) : [command];
+  // test_file_args maps files to the runner's arguments; otherwise each path is appended (kit feedback 11).
+  const raw = list.length ? fileTestArgvs(cmds, list, command) : [command];
+  const argvs = raw.map((a) => testCommandOf(cfg, a).argv ?? a);
   const rows = [];
   let waited = false;
   await withMutex(lock, async () => {
     for (const [i, argv] of argvs.entries()) {
-      const file = list[i] ?? null;
+      const file = argvs.length === 1 && list.length > 1 ? list.join(",") : (list[i] ?? null);
       const r = await runBoundedTests({ cwd: root, argv, files: [], timeoutS, fileTimeoutS: fileTimeout, isTest });
       const named = file || r.hungFile || (r.timedOut ? lastTestFile(`${r.stdout ?? ""}\n${r.stderr ?? ""}`, isTest) : null);
       const text = `${r.stdout ?? ""}\n${r.stderr ?? ""}${r.error ? `\n${r.error}` : ""}${r.timedOut && named ? `\nhung test file: ${named} (killed after ${timeoutS}s)\n` : ""}`;
@@ -165,7 +176,7 @@ export async function testRun(g, files = []) {
   }, { log: () => { waited = true; } });
   const hung = rows.filter((row) => row.outcome === "hung").map((row) => row.file).filter(Boolean);
   const failed = rows.some((row) => row.outcome !== "passed");
-  const lines = [`test-run ${rows.length} file(s), lock ${lock}${waited ? " (waited)" : ""}${caseTimeoutS ? `, per-test timeout ${caseTimeoutS}s` : ""}`];
+  const lines = [`test-run ${list.length || rows.length} file(s), lock ${lock}${waited ? " (waited)" : ""}${caseTimeoutS ? `, per-test timeout ${caseTimeoutS}s` : ""}`];
   for (const row of rows) {
     const where = row.file ?? "(suite)";
     lines.push(row.outcome === "hung" ? `${where}: hung (killed after ${timeoutS}s)` : `${where}: ${row.outcome}${row.exitCode === null ? "" : ` (exit ${row.exitCode})`}`);

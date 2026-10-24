@@ -16,7 +16,7 @@ function paseoConfig(s, providers) {
 
 const GOOD_PROVIDERS = (cfgDenies) => ({
   circle: { extends: "claude", disallowedTools: ["Agent", "Workflow"] },
-  "circle-agent": { extends: "claude", disallowedTools: cfgDenies, env: { ENABLE_TOOL_SEARCH: "true" } },
+  "circle-agent": { extends: "claude", disallowedTools: cfgDenies, env: { ENABLE_TOOL_SEARCH: "true", CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" } },
 });
 
 async function doctor(s, { freemem = PLENTY, version = "2.1.300 (Claude Code)" } = {}) {
