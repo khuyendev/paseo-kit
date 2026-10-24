@@ -616,7 +616,7 @@ export function executeSteps(kit, run) {
     };
     for (let round = 1; !done(cur) && round <= rounds; round++) {
       // Kit feedback 112: a test tool that crashed is an environment failure. No fixer runs; the owner frees memory or
-      // bounds the suite's concurrency and reruns. A Checks failure in the same gate still wins inside owner().
+      // bounds the suite's concurrency and reruns. A Checks failure in the same gate still wins inside the owner stop.
       const crashes = (cur.failures ?? []).filter((f) => f.crash?.signature);
       if (crashes.length) return { stop: owner("Gate", `${label}: ${crashes.map((f) => `${f.step} crashed: ${f.crash.signature}`).join("; ")}; the test tool crashed (an environment failure, not a file a plan owns), so no fixer runs`, { answer: ANSWER.rerun("rerun with the same args after freeing memory or bounding test concurrency"), crashes: crashes.map((f) => ({ step: f.step, signature: f.crash.signature })), failures: cur.failures, evidence: cur.evidence }) };
       const early = await grantStop(cur);
