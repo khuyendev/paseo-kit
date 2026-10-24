@@ -15,7 +15,9 @@ import { sha256 } from "../../harness/lib/hash.mjs";
 import { producedCheck } from "../../harness/gsd/contracts.mjs";
 import { gitLines, head } from "./flow-git.mjs";
 import { contentHash, owned, ownsPrefixes, ownsScope, specificOwners } from "./flow-owns.mjs";
+import { OWNER_ANSWERS_FILE, readAnswers } from "../../harness/lib/owner-answers.mjs";
 import { checksStop, checkWeakening, isTestFile } from "./flow-checks.mjs";
+import { readState } from "./flow-state.mjs";
 
 const TIMEOUT_CODE = 124;
 const EXCERPT_LINES = 40;
@@ -76,6 +78,100 @@ function mentionedFiles(root, text, visible, { locatedOnly = false } = {}) {
     }
   }
   return [...(located.size || locatedOnly ? located : found)];
+}
+
+// A path the output names, relative to the root, when it is a visible file. Backslashes and a file:// URL are accepted.
+function visibleRel(root, raw, visible) {
+  let s = String(raw ?? "").trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/^file:\/\//, "");
+  if (/^\/[A-Za-z]:\//.test(s)) s = s.slice(1);
+  if (!s || s.startsWith("package:") || s.split("/").includes("..")) return null;
+  const abs = path.resolve(root, s);
+  const rel = toSlash(path.relative(root, abs));
+  if (!isInside(abs, root) || !visible.has(pathKey(rel)) || !fs.statSync(abs, { throwIfNoEntry: false })?.isFile()) return null;
+  return rel;
+}
+
+// Kit feedback 108 F1: files a failure report names that a path:line scan drops once any path:line exists. A failing test is a
+// progress line ending in [E] (its path is the test file); until the next progress line, a bare project path and a stack line
+// `path line:col` count (the production file an analyzer or the test printed, the test file on the stack). No such header, nothing.
+function failureReportFiles(root, text, visible) {
+  const out = new Set();
+  const add = (raw) => { const rel = visibleRel(root, raw, visible); if (rel) out.add(rel); };
+  let block = false;
+  for (const line of String(text).split(/\r?\n/)) {
+    if (/^\d{2}:\d{2}\s+[+-]\d/.test(line)) {
+      block = /\[E\]\s*$/.test(line);
+      if (block) {
+        const m = /^\d{2}:\d{2}\s+[+-][\d\s+-]*:\s+(.+?):\s+.*\[E\]\s*$/.exec(line);
+        if (m) add(m[1]);
+      }
+      continue;
+    }
+    if (!block) continue;
+    const bare = line.trim();
+    if (bare && !/\s/.test(bare) && !bare.startsWith("package:") && !bare.startsWith("#")) add(bare);
+    for (const ext of line.matchAll(/\.[A-Za-z0-9]+(?![A-Za-z0-9])/g)) {
+      const end = ext.index + ext[0].length;
+      if (!/^\s+\d+:\d+/.test(line.slice(end))) continue;
+      let lo = end;
+      while (lo > 0 && end - lo < MAX_PATH && !PATH_STOP.test(line[lo - 1])) lo--;
+      for (let s = lo; s < end; s++) {
+        if (SPACE.test(line[s]) || (s > lo && !SPACE.test(line[s - 1]))) continue;
+        add(line.slice(s, end));
+        break;
+      }
+    }
+  }
+  return [...out];
+}
+
+const squashWs = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
+// The file's stem without a trailing test/spec marker: feature_providers_test.js → feature_providers.
+function subjectOf(file) {
+  return toSlash(file).split("/").pop().replace(/\.[^.]+$/, "").replace(/(?:[._-](?:test|spec)|Test|Spec)$/i, "");
+}
+// A change names a file when its text holds the path, the subject (at least 6 characters), or a `_` prefix of the subject of at
+// least 8 characters (rpc_error names rpc_error_correlation_test).
+function namesFile(text, file) {
+  const t = squashWs(text).toLowerCase();
+  if (!t) return false;
+  if (t.includes(toSlash(file).toLowerCase())) return true;
+  const subject = subjectOf(file).toLowerCase();
+  if (subject.length >= 6 && t.includes(subject)) return true;
+  if (subject.length < 8) return false;
+  let acc = "";
+  for (const part of subject.split(/[_-]/).filter(Boolean)) {
+    acc = acc ? `${acc}_${part}` : part;
+    if (acc.length >= 8 && acc.length < subject.length && (t.includes(acc) || t.includes(acc.replace(/_/g, " ")))) return true;
+  }
+  return false;
+}
+// The change that likely broke an unowned test: a phase shared change or an owner answer (halt, decision, allow) whose path is
+// the file, else one whose text names it. Path equality wins; a shared change wins over an answer that only names the subject.
+function likelyCause(file, shared, answers) {
+  const eq = (p) => p && toSlash(p).toLowerCase() === toSlash(file).toLowerCase();
+  const blob = (rec) => [rec.path, rec.change, rec.reason].filter(Boolean).join(" ");
+  const asShared = (s) => ({ kind: "shared", id: s.id ?? null, from: s.from ?? null, path: s.path ? toSlash(s.path) : null, text: squashWs(s.change).slice(0, 240) });
+  const asAnswer = (a) => ({ kind: "decision", id: a.id ?? null, from: a.plan ?? null, path: a.path ? toSlash(a.path) : null, text: squashWs(a.reason).slice(0, 240) });
+  const sharedPath = (shared ?? []).find((s) => eq(s.path));
+  const answerPath = (answers ?? []).find((a) => eq(a.path));
+  if (answerPath) return asAnswer(answerPath);
+  if (sharedPath) return asShared(sharedPath);
+  const s = (shared ?? []).find((x) => namesFile(blob(x), file));
+  if (s) return asShared(s);
+  const a = (answers ?? []).find((x) => namesFile(blob(x), file));
+  return a ? asAnswer(a) : null;
+}
+// Kit feedback 108 F2: failing test files no plan of this gate owns (an earlier wave's plan, or none). context plans are not this
+// wave. cause is set when a shared change or an owner answer of the phase names the file or its subject.
+function unownedTestsOf(root, phaseDir, plans, failures, prefixes) {
+  const files = [...new Set(failures.flatMap((f) => f.tests ?? []).filter((file) => !specificOwners(file, plans, prefixes).length))];
+  if (!files.length) return [];
+  let shared = [];
+  try { shared = readState(root, phaseDir).shared ?? []; } catch { shared = []; }
+  let answers = [];
+  try { answers = readAnswers(path.join(resolveInside(root, phaseDir), OWNER_ANSWERS_FILE)).answers.filter((a) => ["halt", "decision", "allow"].includes(a.kind)); } catch { answers = []; }
+  return files.map((file) => ({ file, cause: likelyCause(file, shared, answers) }));
 }
 
 // Kit feedback 102: the visible files an argv names (a word that is a path to one, relative to the root or absolute inside it).
@@ -365,7 +461,9 @@ export async function gate(root, phaseDir, input) {
     const h = hung.find((x) => x.step === s.name);
     return `${s.name} timed out after its limit (exit ${TIMEOUT_CODE})${h?.files.length ? `; hung test file(s) ${h.files.join(", ")} (${h.source === "argv" ? "named by its command" : "named last in its output"})${h.blocked.length ? `; blocked by hang in this pass: ${h.blocked.join(", ")}` : ""}` : ""}`;
   });
-  return { green: failures.length === 0, evidence: toSlash(path.relative(root, evidenceFile)), notes, timedOut, ...(hung.length ? { hung } : {}), ...(suiteArgv ? { testCommand: suiteArgv, caseTimeoutS } : {}), failures, failureCount: failures.length, checks: weak.summary, ...attribution };
+  // Kit feedback 108 F2: failing test files no plan of this gate owns, with the change that likely broke them when one names the file.
+  const unownedTests = unownedTestsOf(root, phaseDir, input.plans ?? [], failures, prefixes);
+  return { green: failures.length === 0, evidence: toSlash(path.relative(root, evidenceFile)), notes, timedOut, ...(hung.length ? { hung } : {}), ...(suiteArgv ? { testCommand: suiteArgv, caseTimeoutS } : {}), failures, failureCount: failures.length, checks: weak.summary, ...attribution, ...(unownedTests.length ? { unownedTests } : {}) };
 }
 
 // A failed step as the fixers see it: the files its output names, and the test files a fixer may run to see it (kit feedback 102
@@ -373,7 +471,7 @@ export async function gate(root, phaseDir, input) {
 // files and the files its output reports at a position; a file only mentioned (a progress line of a test that ran) is none.
 function stepFailure(root, s, visible, checks) {
   const hungOnes = s.hang?.files ?? s.blockedByHang?.files ?? [];
-  const files = [...new Set([...mentionedFiles(root, s.text, visible, { locatedOnly: hungOnes.length > 0 }), ...hungOnes])];
+  const files = [...new Set([...mentionedFiles(root, s.text, visible, { locatedOnly: hungOnes.length > 0 }), ...failureReportFiles(root, s.text, visible), ...hungOnes])];
   const tests = [...new Set([...argvFiles(root, s.argv, visible), ...files].filter((f) => isTestFile(f, checks)))];
   return { step: s.name, plan: s.plan ?? null, outcome: s.outcome, excerpt: excerpt(s.text), log: s.log, files, ...(tests.length ? { tests } : {}) };
 }
