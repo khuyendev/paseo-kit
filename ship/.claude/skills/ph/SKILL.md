@@ -40,7 +40,7 @@ or config error (nothing done), 2 done with failed items or problems.
 
 | command | does |
 | --- | --- |
-| `ph doctor` | checks node, `PASEO_AGENT_ID`, config, Paseo CLI and daemon, every tier's model, the default tier, the overlay, the harness-files mod, the provider policy, adapter files, the skeleton lane lenses the gsd workflows refuse, the flow and gsd verbs the workflow compositions call (`problem` for one the kit does not serve), agent types and RAM; `ok`/`problem`/`note` lines, exit 2 on a problem. Run it first when agents misbehave. |
+| `ph doctor` | checks node, `PASEO_AGENT_ID`, config, Paseo CLI and daemon, every tier's model, the default tier, the overlay, the harness-files mod, the provider policy, adapter files, the skeleton lane lenses the gsd workflows refuse, the flow and gsd verbs the workflow compositions call (`problem` for one the kit does not serve), agent types and RAM; a note when free commit is under 4096 MB (or free memory is under 2048 MB where commit cannot be read); `ok`/`problem`/`note` lines, exit 2 on a problem. Run it first when agents misbehave. |
 | `ph config` | the effective config (kit defaults + `.agents/harness.config.json`) with file provenance. |
 | `ph spawn --name N (--prompt T \| --prompt-file F) [--count K] [--type T] [--role R] [--model M] [--effort E] [--read-only] [--cwd D] [--ws D] [--worktree]` | starts persistent named teammates (`N-1..N-K` with `--count`), prints `<id> <name>` per agent and the `next:` wait line, returns at once. |
 | `ph fanout --file F [--type] [--role] [--model] [--effort] [--read-only] [--cwd] [--ws]` | one teammate per `=== <name>` block of F, started together. |

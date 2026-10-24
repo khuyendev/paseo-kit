@@ -333,7 +333,9 @@ A workflow can run for a long time, so start it detached and watch its log:
    and a `next:` line, and returns.
 2. Watch with the Monitor tool (re-arm after its timeout; a Monitor timeout does not stop the workflow):
    `ph watch-run <runId> [<runId> ...]`, which prints the log, phase, failure and workflow lines and exits when every
-   run has ended (a `tail -f` watcher never exits and keeps the Monitor alive until its timeout).
+   run has ended (a `tail -f` watcher never exits and keeps the Monitor alive until its timeout). On Windows a
+   `tail -F` watcher outlives the expired Monitor (the tail process keeps running after the timeout), so waiting on a
+   run is `ph watch-run`, never a tail.
    Progress lines: `workflow start <runId> <runDir>`, `phase <title>`, `log <message>`,
    `agent start #<n> <label> <id8> <model>`, `agent done #<n> <label> ok|null (<reason>) tokens=<n> cost=<usd|?> <s>s`,
    `agent cached #<n> <label>`, `shell start|done #<n> ...`, and the final `workflow done <runId>:

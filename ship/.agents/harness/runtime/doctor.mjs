@@ -20,8 +20,12 @@ import { AGENTS_DIR, listAgentTypes } from "./agents.mjs";
 import { resolveModel } from "./models.mjs";
 import { leftoverWorktrees, runGit } from "./worktrees.mjs";
 import { setupEntries, setupGaps, setupProblems } from "./worktree-setup.mjs";
+import { readCommitFreeMb } from "../lib/memory.mjs";
 
 const MB_PER_AGENT = 350;
+// Kit feedback 112 F3: below this, a suite that starts a server per test can crash the test tool. A note, not a problem.
+const LOW_COMMIT_MB = 4096;
+const LOW_PHYSICAL_MB = 2048;
 
 async function daemonLines(ctx, line) {
   let session = null;
@@ -165,7 +169,7 @@ async function gsdUpstreamLines(ctx, line) {
   line(r.problems.length ? "problem" : "ok", `gsd upstream check: ${r.problems.length} problems, ${r.warnings.length} warnings; ${r.references} references followed, ${r.verbs} verbs mapped`);
 }
 
-export async function runDoctor(ctx, { freemem = os.freemem, claudeVersionText = () => claudeVersion(ctx.env) } = {}) {
+export async function runDoctor(ctx, { freemem = os.freemem, commitFreeMb = readCommitFreeMb, claudeVersionText = () => claudeVersion(ctx.env) } = {}) {
   let problems = 0;
   const line = (kind, text) => {
     if (kind === "problem") problems++;
@@ -212,6 +216,13 @@ export async function runDoctor(ctx, { freemem = os.freemem, claudeVersionText =
   });
   const needMb = ctx.cfg.max_subagents * MB_PER_AGENT;
   const freeMb = Math.round(freemem() / 2 ** 20);
+  let commitMb = null;
+  try {
+    const n = commitFreeMb();
+    if (Number.isFinite(n) && n >= 0) commitMb = Math.round(n);
+  } catch { commitMb = null; }
+  if (commitMb != null && commitMb < LOW_COMMIT_MB) line("note", `free commit ${commitMb} MB is below ${LOW_COMMIT_MB} MB; a suite that starts servers can crash the test tool (free memory, or bound its concurrency)`);
+  else if (commitMb == null && freeMb < LOW_PHYSICAL_MB) line("note", `free memory ${freeMb} MB is below ${LOW_PHYSICAL_MB} MB; a suite that starts servers can crash the test tool (free memory, or bound its concurrency)`);
   if (freeMb < needMb) line("note", `free RAM ${freeMb} MB is below max_subagents ${ctx.cfg.max_subagents} x ${MB_PER_AGENT} MB = ${needMb} MB; lower max_subagents or free memory`);
   line("note", "this check does not verify tools loaded into a running session (restart the session after changing the mod or the provider config)");
   return problems ? 2 : 0;
@@ -220,7 +231,7 @@ export async function runDoctor(ctx, { freemem = os.freemem, claudeVersionText =
 export const doctorCommands = [
   {
     name: "doctor",
-    summary: "check node, caller, config, Paseo daemon, tiers, file mod, provider policy, adapter, workflow arguments, composition verbs and agent types",
+    summary: "check node, caller, config, Paseo daemon, tiers, file mod, provider policy, adapter, workflow arguments, composition verbs, agent types and free memory",
     usage: "ph doctor",
     options: {},
     config: "lenient",
