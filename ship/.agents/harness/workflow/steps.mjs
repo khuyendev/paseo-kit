@@ -979,7 +979,7 @@ export function executeSteps(kit, run) {
     return { files, removed: oc.json.removed, integration: oc.json.integration, unowned: oc.json.unowned };
   }
   // CR-GSF-06: a code commit that fails, or whose commits.json record fails, stops the run; nothing is tracked.
-  async function commitOne(subject, ids, wave, pf, withIntegration) {
+  async function commitOne(subject, ids, wave, pf, withIntegration, gaps = null) {
     await warnProtected();
     const files = [...new Set([...ids.flatMap((id) => pf.files[id] ?? []), ...(withIntegration ? pf.integration : [])])];
     const removed = [...new Set(ids.flatMap((id) => pf.removed[id] ?? []))];
@@ -988,6 +988,8 @@ export function executeSteps(kit, run) {
     if (!c.json?.committed) return { stop: owner("Commit", `code commit of ${ids.join(",")} failed: ${c.json?.error ?? c.json?.reason ?? `exit ${c.code}`}; nothing tracked`, { answer: ANSWER.tree("fix the cause (hook, identity, index), then rerun with the same args"), recovery, options: ["fix the cause (hook, identity, index) and rerun with the same args", "stop"] }) };
     ownCommits.add(c.json.hash);
     const entry = { sha: c.json.hash, phase: N, wave, plans: Object.fromEntries(ids.map((id) => [id, [...(pf.files[id] ?? []), ...(pf.removed[id] ?? [])]])) };
+    // Kit feedback 110: a gap-closure commit names the gap-closure plan ids it closes. `wave` stays the numeric key.
+    if (gaps?.length) entry.gaps = [...gaps];
     if (withIntegration && pf.integration.length) entry.integration = pf.integration;
     const jp = await flow(["json-push", `${phaseDir}/commits.json`], entry);
     if (jp.code !== 0) return { stop: owner("Commit", `commit ${c.json.hash} made but ${phaseDir}/commits.json was not updated: ${jp.json?.error ?? `exit ${jp.code}`}`, { answer: ANSWER.rerun("rerun with the same args; the resume gate reconciles the commit"), recovery: { ...recovery, entry } }) };
@@ -1049,6 +1051,16 @@ export function executeSteps(kit, run) {
     if (!left.length) return null;
     return owner("Commit", `cross-plan change requests lack acknowledged resolution${note}`, { answer: ANSWER.request(left[0].plan, slashPath(left[0].q.path)), requests: left.map((x) => x.q), options: [...left.map(({ plan, q }) => `ph gsd request clear ${N} --plan ${plan} --path ${slashPath(q.path)} --reason "<why it is satisfied>", then rerun with the same args`), "make the change in the file, then rerun with the same args"] });
   }
+  // Kit feedback 110: the subject comes from the wave id. A gap-closure wave (`waveId` `gap-w<k>`, or any wave of a
+  // gaps-only run) is `fix(<N>-gap<k>)`, never the same subject as the real wave k. Per-plan keeps `feat(<id>)` for a
+  // real plan and uses `fix(<id>)` for a gap plan. The number is the one the wave id names, else the wave key.
+  const gapKOf = (w) => {
+    const id = String(w.waveId ?? "");
+    const named = /^gap-w(\d+)$/.exec(id);
+    if (named) return named[1];
+    if (id.startsWith("gap")) return (/(\d+)$/.exec(id) ?? [null, String(w.k)])[1];
+    return String(prefix).startsWith("gap") ? String(w.k) : null;
+  };
   // The commit transaction of waves [{w, tasks}]: open requests settled, the manifest, a commit per wave or plan (gsd.commit_policy),
   // commits.json, the plans recorded committed, their landed worktrees discarded.
   async function commitWaves(list, verify, evidence) {
@@ -1061,9 +1073,12 @@ export function executeSteps(kit, run) {
     let withIntegration = true;
     for (const { w, tasks } of list) {
       const ids = tasks.map((t) => t.plan);
-      const units = cfg.gsd.commit_policy.code === "per-plan" ? ids.map((id) => [`feat(${id}): phase ${N} plan ${id}`, [id]]) : [[`feat(${N}-w${w.k}): phase ${N} wave ${w.k}`, ids]];
+      const gapK = gapKOf(w);
+      const units = cfg.gsd.commit_policy.code === "per-plan"
+        ? ids.map((id) => [`${gapK ? "fix" : "feat"}(${id}): phase ${N} plan ${id}`, [id]])
+        : [[gapK ? `fix(${N}-gap${gapK}): phase ${N} gap wave ${gapK}` : `feat(${N}-w${w.k}): phase ${N} wave ${w.k}`, ids]];
       for (const [subject, unit] of units) {
-        const c = await commitOne(subject, unit, w.k, pf, withIntegration);
+        const c = await commitOne(subject, unit, w.k, pf, withIntegration, gapK ? unit : null);
         if (c.stop) return c;
         withIntegration = false;
         for (const id of unit) {

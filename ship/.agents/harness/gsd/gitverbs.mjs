@@ -1,5 +1,6 @@
 // Commit and commit-scope verbs: commit (GSDC-38), evaluation-scope (GSDC-39), select-revert-commits (GSDC-40).
-// Subjects carry the conventional scope `type(<phase>-<plan>)` or `type(<phase>-w<k>)`; commits.json maps wave commits to plans.
+// Subjects carry the conventional scope `type(<phase>-<plan>)`, `type(<phase>-w<k>)` or `type(<phase>-gap<k>)`
+// (a gap-closure wave, kit feedback 110); commits.json maps wave commits to plans.
 import path from "node:path";
 import { readJsonIf } from "../lib/io.mjs";
 import { done, fail, rel, unavailable, withFileLock } from "./common.mjs";
@@ -40,13 +41,17 @@ function commitIndex(g, message, files, removed) {
   return done({ committed: true, hash: gitOk(g.codeRoot, ["rev-parse", "HEAD"]).trim(), files: stage, removed, skipped_ignored: files.filter((f) => !stage.includes(f)) });
 }
 
-// `feat(02.1-w1): x` -> {phase: "02.1", unit: "w1"}; anything else -> null.
+// `feat(02.1-w1): x` -> {phase: "02.1", unit: "w1"}; `fix(04-gap1): x` -> {phase: "04", unit: "gap1"}.
+// A scope that is not `type(<phase>-<unit>)` returns phase null (the old "anything else" path).
 export function subjectScope(subject) {
   const m = /^[a-z]+\(([^)]+)\)!?:/i.exec(subject);
   if (!m) return null;
-  const s = /^(\d+(?:\.\d+)*)-(w\d+|\d+)$/.exec(m[1].trim());
+  const s = /^(\d+(?:\.\d+)*)-(w\d+|gap\d+|\d+)$/.exec(m[1].trim());
   return s ? { raw: m[1].trim(), phase: padPhase(s[1]), unit: s[2], plan: /^\d+$/.test(s[2]) ? normPlanId(`${s[1]}-${s[2]}`) : null } : { raw: m[1].trim(), phase: null, unit: null, plan: null };
 }
+
+// A wave commit: a real wave `w<k>` or a gap-closure wave `gap<k>` (kit feedback 110). Plan units are digits only.
+const waveUnit = (unit) => /^(?:w|gap)\d+$/.test(unit ?? "");
 
 // A range or since value is passed after --end-of-options, so a value starting with a dash can never become a git
 // option such as --output (G065). `max` null walks the whole range.
@@ -92,7 +97,7 @@ export function evaluationScope(g, { phase: phaseRef, plan, quick, since, commit
     if (!s?.phase || s.phase !== phaseNum) continue;
     if (!planId) own.push({ ...c, files: null });
     else if (s.plan === planId) own.push({ ...c, files: null });
-    else if (s.unit?.startsWith("w")) {
+    else if (waveUnit(s.unit)) {
       const plans = mappedPlans(map, c.sha);
       if (plans && Object.hasOwn(plans, planId)) own.push({ ...c, files: plans[planId] });
     }
@@ -135,7 +140,7 @@ export function selectRevertCommits(g, { phase: phaseRef, plan, range }) {
       continue;
     }
     if (s.plan === planId) picked.push({ sha: c.sha, subject: c.subject, scope: s.raw, shared: false, siblings: [] });
-    else if (s.unit?.startsWith("w")) {
+    else if (waveUnit(s.unit)) {
       const plans = mappedPlans(map, c.sha);
       if (plans && Object.hasOwn(plans, planId)) {
         const siblings = Object.keys(plans).filter((p) => p !== planId);
