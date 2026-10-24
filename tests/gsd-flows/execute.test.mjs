@@ -89,7 +89,9 @@ test("GSDF-42 executor prompts carry the rule blocks and the stack skill; Rule 4
   const w = makeExecWorld({ waves: [[task("01-01")]], overlay: { adapter: { stack_skill: "stack-x" } } });
   const r4 = await exec(w, {}, { "exec-": () => ({ taskResults: [{ task: "1", status: "partial", evidence: "needs a schema change" }], deviations: [{ rule: 4, note: "pick a schema" }], requests: [] }) });
   const p = r4.calls[0].prompt;
-  for (const s of ["Rules 1-3", "at most 3 auto-fix attempts per task", "Rule 3 never covers package installs", "Rule 4 (architectural change)", "Stack skill to follow: .claude/skills/stack-x/SKILL.md", "Never commit, stage or stash", "do not run them yourself", "Write your SUMMARY to exactly: .planning/phases/01-core/01-01-SUMMARY.md"]) assert.ok(p.includes(s), s);
+  // Kit feedback 117: the deviation, commit and test rules live in the executor overlay, once. The brief keeps the per-call bindings.
+  for (const s of ["Stack skill to follow: .claude/skills/stack-x/SKILL.md", "Write your SUMMARY to exactly: .planning/phases/01-core/01-01-SUMMARY.md", "A change needed in a file you do not own"]) assert.ok(p.includes(s), s);
+  assert.doesNotMatch(p, /Deviation rules \(the kit adapter|Never commit, stage or stash|do not run them yourself/);
   assert.doesNotMatch(p, /<tasks>/);
   assert.deepEqual([r4.result.status, r4.result.stage], ["needs-owner", "Execute"]);
   assert.match(r4.result.reason, /pick a schema/);

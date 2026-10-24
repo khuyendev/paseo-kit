@@ -148,7 +148,10 @@ export const SCHEMA = obj({
     // Kit feedback 103: globs of catalog files (besides every .json file) whose manifest signature is checked by key path.
     // Absent from the defaults, and not part of the gate-configuration hash.
     catalogs: strs(),
-  }, ["checks", "catalogs"]),
+    // Kit feedback 117 F3: doc tools the project actually has (for example "ctx7"). Absent = the generated roles
+    // drop documentation_lookup. A non-empty list keeps it; regenerate with `ph gsd upstream build`.
+    doc_tools: strs(),
+  }, ["checks", "catalogs", "doc_tools"]),
   gsd: obj({
     roles: map(obj({ model: str({ nonEmpty: true }), effort: effort(), reason: str() }, ["model", "effort", "reason"])),
     granularity: str({ oneOf: ["coarse", "standard", "fine"] }),

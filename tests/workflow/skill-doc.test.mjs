@@ -13,7 +13,7 @@ const defaults = () => JSON.parse(fs.readFileSync(path.join(SHIP_DIR, ".agents",
 
 test("FLOW-22 the ph skill lists every log line type", { skip }, () => {
   const t = text();
-  for (const kind of ["workflow start", "phase", "log warning:", "log nested workflow", "log watchdog:", "agent start", "agent done", "agent cached", "shell start", "shell done", "workflow done", "workflow failed"]) assert.ok(t.includes(kind), kind);
+  for (const kind of ["workflow start", "phase", "log warning:", "log nested workflow", "log watchdog:", "agent start", "agent prompt", "agent done", "agent cached", "shell start", "shell done", "workflow done", "workflow failed"]) assert.ok(t.includes(kind), kind);
 });
 
 test("FLOW-38 every watchdog number in the ph skill equals the shipped default", { skip }, () => {

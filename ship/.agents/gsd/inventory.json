@@ -1,5 +1,5 @@
 {
-  "_notes": "Every installed GSD method file (GSDC-53). source = path in the upstream snapshot .agents/gsd/upstream, or kit-authored. ph gsd upstream build generates the agent and skill-workflow entries (upstream body unchanged except the three path rewrites, D-111); ph gsd upstream check compares them. Overlays are kit-authored and applied after the upstream text through include (they win on conflict). extra_verbs: rows a project or a bump adds to the not-ported verb table.",
+  "_notes": "Every installed GSD method file (GSDC-53). source = path in the upstream snapshot .agents/gsd/upstream, or kit-authored. ph gsd upstream build generates the agent and skill-workflow entries (upstream body unchanged except the three path rewrites, D-111); ph gsd upstream check compares them. Overlays are kit-authored and applied after the upstream text through include (they win on conflict). extra_verbs: rows a project or a bump adds to the not-ported verb table. replaces and spans (kit feedback 117): ph gsd upstream build drops those sections from the generated role and leaves one comment line; documentation_lookup is kept only when adapter.doc_tools is a non-empty list. An include taken from the same upstream file does not repeat a section the role still holds.",
   "v": 1,
   "snapshot": ".agents/gsd/upstream",
   "entries": [
@@ -17,6 +17,25 @@
         ".agents/gsd/overlays/kit-core.md",
         ".agents/gsd/overlays/gsd-planner.md",
         ".agents/gsd/generated/plan-phase-contracts.md"
+      ],
+      "replaces": [
+        {
+          "section": "documentation_lookup",
+          "unless": "doc_tools"
+        },
+        "step:load_project_state",
+        "step:update_roadmap",
+        "step:git_commit"
+      ],
+      "spans": [
+        {
+          "id": "agent_skills",
+          "line": "**agent_skills:** self-load per @~/.claude/gsd-core/references/agent-skills-bootstrap.md (agent type: `gsd-planner`)"
+        },
+        {
+          "id": "task_count",
+          "line": "- Decompose phases into parallel-optimized plans with 2-3 tasks each"
+        }
       ]
     },
     {
@@ -32,6 +51,21 @@
       "include": [
         ".agents/gsd/overlays/kit-core.md",
         ".agents/gsd/overlays/gsd-plan-checker.md"
+      ],
+      "replaces": [],
+      "spans": [
+        {
+          "id": "agent_skills",
+          "line": "**agent_skills:** self-load per @~/.claude/gsd-core/references/agent-skills-bootstrap.md (agent type: `gsd-plan-checker`)"
+        },
+        {
+          "id": "task_thresholds",
+          "line": "Thresholds: 2-3 tasks/plan good, 4 warning, 5+ blocker (split required)."
+        },
+        {
+          "id": "files_per_plan",
+          "line": "| Files/plan | 5-8 | 10 | 15+ |"
+        }
       ]
     },
     {
@@ -48,6 +82,24 @@
         ".agents/gsd/overlays/kit-core.md",
         ".agents/gsd/overlays/gsd-phase-researcher.md",
         ".agents/workflows/overlays/gsd-phase-researcher.md"
+      ],
+      "replaces": [
+        {
+          "section": "documentation_lookup",
+          "unless": "doc_tools"
+        },
+        "tool_strategy",
+        "package_legitimacy_protocol"
+      ],
+      "spans": [
+        {
+          "id": "agent_skills",
+          "line": "**agent_skills:** self-load per @~/.claude/gsd-core/references/agent-skills-bootstrap.md (agent type: `gsd-phase-researcher`)"
+        },
+        {
+          "id": "package_provenance",
+          "line": "**Package name provenance rule:** A package name discovered via WebSearch, training data, or any non-authoritative source must be tagged `[ASSUMED]` regardless of whether `npm view` confirms it exists on the registry. Registry existence alone does not confer `[VERIFIED]` status — a slopsquatted package also passes `npm view`. Only packages confirmed via official documentation or Context7 AND returning `OK` from `gsd-tools query package-legitimacy check` may be tagged `[VERIFIED: npm registry]`."
+        }
       ]
     },
     {
@@ -62,8 +114,41 @@
       "description": "Executes one GSD plan inside its owned files and writes the plan SUMMARY to the granted path.",
       "include": [
         ".agents/gsd/overlays/kit-core.md",
-        ".agents/gsd/overlays/gsd-executor.md",
-        ".agents/gsd/generated/executor-rules.md"
+        ".agents/gsd/overlays/gsd-executor.md"
+      ],
+      "replaces": [
+        {
+          "section": "documentation_lookup",
+          "unless": "doc_tools"
+        },
+        "step:load_project_state",
+        "worktree_metadata_capture",
+        "auto_mode_detection",
+        "checkpoint_return_format",
+        "continuation_handling",
+        "task_commit_protocol",
+        "state_updates",
+        "final_commit",
+        "completion_format"
+      ],
+      "spans": [
+        {
+          "id": "role_identity",
+          "line": "You are a GSD plan executor. You execute PLAN.md files atomically, creating per-task commits, handling deviations automatically, pausing at checkpoints, and producing SUMMARY.md files."
+        },
+        {
+          "id": "role_job",
+          "line": "Your job: Execute the plan completely, commit each task, create SUMMARY.md, update STATE.md."
+        },
+        {
+          "id": "agent_skills",
+          "line": "**agent_skills:** self-load per @~/.claude/gsd-core/references/agent-skills-bootstrap.md (agent type: `gsd-executor`)"
+        },
+        {
+          "id": "mvp_tdd_gate",
+          "from": "## MVP+TDD Gate",
+          "until": "<task_commit_protocol>"
+        }
       ]
     },
     {
@@ -79,6 +164,13 @@
       "include": [
         ".agents/gsd/overlays/kit-core.md",
         ".agents/gsd/overlays/gsd-verifier.md"
+      ],
+      "replaces": [],
+      "spans": [
+        {
+          "id": "agent_skills",
+          "line": "**agent_skills:** self-load per @~/.claude/gsd-core/references/agent-skills-bootstrap.md (agent type: `gsd-verifier`)"
+        }
       ]
     },
     {
@@ -95,6 +187,17 @@
         ".agents/gsd/overlays/kit-core.md",
         ".agents/gsd/overlays/gsd-debugger.md",
         ".agents/workflows/overlays/gsd-debugger.md"
+      ],
+      "replaces": [
+        "knowledge_base_protocol",
+        "step:archive_session",
+        "checkpoint_behavior"
+      ],
+      "spans": [
+        {
+          "id": "agent_skills",
+          "line": "**agent_skills:** self-load per @~/.claude/gsd-core/references/agent-skills-bootstrap.md (agent type: `gsd-debugger`)"
+        }
       ]
     },
     {
@@ -110,6 +213,13 @@
       "include": [
         ".agents/gsd/overlays/kit-core.md",
         ".agents/gsd/overlays/gsd-codebase-mapper.md"
+      ],
+      "replaces": [],
+      "spans": [
+        {
+          "id": "agent_skills",
+          "line": "**agent_skills:** self-load per @~/.claude/gsd-core/references/agent-skills-bootstrap.md (agent type: `gsd-codebase-mapper`)"
+        }
       ]
     },
     {
@@ -125,6 +235,19 @@
       "include": [
         ".agents/gsd/overlays/kit-core.md",
         ".agents/gsd/overlays/gsd-project-researcher.md"
+      ],
+      "replaces": [
+        {
+          "section": "documentation_lookup",
+          "unless": "doc_tools"
+        },
+        "tool_strategy"
+      ],
+      "spans": [
+        {
+          "id": "agent_skills",
+          "line": "**agent_skills:** self-load per @~/.claude/gsd-core/references/agent-skills-bootstrap.md (agent type: `gsd-project-researcher`)"
+        }
       ]
     },
     {
@@ -140,6 +263,34 @@
       "include": [
         ".agents/gsd/overlays/kit-core.md",
         ".agents/gsd/overlays/gsd-research-synthesizer.md"
+      ],
+      "replaces": [],
+      "spans": [
+        {
+          "id": "agent_skills",
+          "line": "**agent_skills:** self-load per @~/.claude/gsd-core/references/agent-skills-bootstrap.md (agent type: `gsd-research-synthesizer`)"
+        },
+        {
+          "id": "role_commit",
+          "line": "- Commit ALL research files (researchers write but don't commit — you commit everything)"
+        },
+        {
+          "id": "commit_step",
+          "from": "## Step 7: Commit All Research",
+          "until": "## Step 8: Return Summary"
+        },
+        {
+          "id": "written_committed",
+          "line": "When SUMMARY.md is written and committed:"
+        },
+        {
+          "id": "summary_committed",
+          "line": "SUMMARY.md committed. Orchestrator can proceed to requirements definition."
+        },
+        {
+          "id": "file_committed",
+          "line": "- [ ] File committed to git"
+        }
       ]
     },
     {
@@ -156,6 +307,26 @@
         ".agents/gsd/overlays/kit-core.md",
         ".agents/gsd/overlays/gsd-roadmapper.md",
         ".agents/workflows/overlays/gsd-roadmapper.md"
+      ],
+      "replaces": [],
+      "spans": [
+        {
+          "id": "agent_skills",
+          "line": "**agent_skills:** self-load per @~/.claude/gsd-core/references/agent-skills-bootstrap.md (agent type: `gsd-roadmapper`)"
+        },
+        {
+          "id": "init_state",
+          "line": "- Initialize STATE.md (project memory)"
+        },
+        {
+          "id": "write_state",
+          "line": "- Write ROADMAP.md and STATE.md immediately (durability — artifacts persist even if context is lost), then return a structured summary for the orchestrator to present; approval is the orchestrator's gate, revision is a re-run (#3797)"
+        },
+        {
+          "id": "write_files",
+          "from": "## Step 7: Write Files Immediately",
+          "until": "## Step 8: Return Summary"
+        }
       ]
     },
     {
@@ -171,6 +342,13 @@
       "include": [
         ".agents/gsd/overlays/kit-core.md",
         ".agents/gsd/overlays/gsd-code-reviewer.md"
+      ],
+      "replaces": [],
+      "spans": [
+        {
+          "id": "agent_skills",
+          "line": "**agent_skills:** self-load per @~/.claude/gsd-core/references/agent-skills-bootstrap.md (agent type: `gsd-code-reviewer`)"
+        }
       ]
     },
     {
@@ -186,6 +364,59 @@
       "include": [
         ".agents/gsd/overlays/kit-core.md",
         ".agents/gsd/overlays/gsd-code-fixer.md"
+      ],
+      "replaces": [
+        "step:setup_worktree",
+        "step:write_fix_report"
+      ],
+      "spans": [
+        {
+          "id": "role_job",
+          "line": "Your job: Read REVIEW.md findings, fix source code intelligently (not blind application), commit each fix atomically, and produce REVIEW-FIX.md report."
+        },
+        {
+          "id": "role_spawned",
+          "line": "Spawned by `/gsd:code-review --fix` workflow. You produce REVIEW-FIX.md artifact in the phase directory."
+        },
+        {
+          "id": "agent_skills",
+          "line": "**agent_skills:** self-load per @~/.claude/gsd-core/references/agent-skills-bootstrap.md (agent type: `gsd-code-fixer`)"
+        },
+        {
+          "id": "commit_fix",
+          "from": "**f. Commit fix atomically:**",
+          "until": "**g. Record result:**"
+        },
+        {
+          "id": "worktree_rules",
+          "from": "**ALWAYS run inside the isolated worktree** — set up via `branch=$(git branch --show-current)` + `main_repo=\"$(git worktree list --porcelain | awk '/^worktree / { sub(/^worktree /, \"\"); print; exit }')\"` + `wt=\"$main_repo/.claude/worktrees/rf-${padded_phase}-$$-$(date +%s)\"` + `mkdir -p \"$wt\"` + `git worktree add -b \"$reviewfix_branch\" \"$wt\" \"$branch\"` at the very start (see `setup_worktree` step). The worktree path is repo-relative under `.claude/worktrees/` (the same dir the harness-managed executor worktrees use — gitignored via `.claude/`, inside the session's permission scope); the `$$`-PID + epoch suffix ensures concurrent runs do not collide (#2647 — a hardcoded `/tmp` path landed outside the project tree and prompted on every read). Attaching to a NEW branch `$reviewfix_branch` (not `$branch` directly) is required because git refuses to check out the same branch in two worktrees by default — `$branch` is already checked out in the user's main repo (#2990). Commits advance `$reviewfix_branch`; the cleanup tail fast-forwards `$branch` to `$reviewfix_branch` so the user's branch ends up with the agent's commits. Every file read, edit, and commit must happen inside `$wt`. Run the four-step cleanup tail when done (treat it as a finally block) — but only when a worktree was actually created; when `workflow.use_worktrees` is `false` the cleanup early-exits (no worktree to remove). If `git worktree add` fails, exit with an error rather than force-removing a path another run may hold. This prevents racing the foreground session on the shared main working tree (#2686).",
+          "until": "**ALWAYS use the Write tool to create files** — never use `Bash(cat << 'EOF')` or heredoc commands for file creation."
+        },
+        {
+          "id": "do_commit",
+          "line": "**DO commit each fix atomically** — one commit per finding, listing ALL modified file paths after the commit message."
+        },
+        {
+          "id": "uncommitted",
+          "line": "**DO NOT leave uncommitted changes** — if commit fails after successful edit, rollback the change and mark as skipped."
+        },
+        {
+          "id": "partial_commits",
+          "from": "Fixes are committed **per-finding**. This has operational implications:",
+          "until": "**Idempotency:**"
+        },
+        {
+          "id": "success_commit",
+          "line": "- [ ] Each fix committed atomically with `fix({padded_phase}): {id} {description}` format"
+        },
+        {
+          "id": "success_files",
+          "line": "- [ ] All modified files listed after each commit message (multi-file fix support)"
+        },
+        {
+          "id": "success_partial",
+          "line": "- [ ] No partial or uncommitted changes remain after execution"
+        }
       ]
     },
     {
