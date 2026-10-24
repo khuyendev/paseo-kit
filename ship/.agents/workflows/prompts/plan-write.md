@@ -21,6 +21,8 @@ Open skeleton warnings for this plan:
 
 {{contract}}
 
+Threat ids in this plan use only {{threatRange}} (for example {{threatExample}}). Any other T-<phase>-<number> id belongs to another plan.
+
 {{policy}}
 
 {{returnNote}}

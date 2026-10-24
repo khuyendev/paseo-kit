@@ -181,7 +181,7 @@ const KINDS = {
   outline: (root, ctx, d, p) => renderPlanTemplate(root, "plan-outline", { context: planningContext(root, ctx, "outline"), specless: renderPlanTemplate(root, "plan-specless", {}), outline: p.OUTLINE, manifest: p.MANIFEST, contracts: ctx.contractsOn ? renderPlanTemplate(root, "plan-outline-contracts", {}) : "", ph: PH, checkArgs: d.checkArgs.join(" "), ...PLANNER_TAIL(root, ctx, { key: "inputs", digest: d.digest }) }),
   "outline-fix": (root, ctx, d, p) => renderPlanTemplate(root, "plan-outline-fix", { outline: p.OUTLINE, manifest: p.MANIFEST, errors: `\n${bullets(d.errors)}`, ...PLANNER_TAIL(root, ctx, { key: "inputs", digest: d.digest }) }),
   // A revision of plans (or of the outline): the planning context in revision mode and the issues to answer.
-  revise: (root, ctx, d) => renderPlanTemplate(root, "plan-revise", { context: planningContext(root, ctx, "revision"), revision: revisionContext(root, d.plans, d.issues, d.shows), ...PLANNER_TAIL(root, ctx, d) }),
+  revise: (root, ctx, d) => renderPlanTemplate(root, "plan-revise", { context: planningContext(root, ctx, "revision"), revision: revisionContext(root, d.plans, d.issues, d.shows), threatRanges: threatRangesText(d.plans), ...PLANNER_TAIL(root, ctx, d) }),
   write: (root, ctx, d, p) => {
     const quotes = (d.wiringText ?? "").split(/\r?\n/).filter((l) => l.includes(d.id)).slice(0, 40);
     const wiring = d.wiringText ? renderPlanTemplate(root, "plan-write-wiring", { id: d.id, wiring: p.WIRING, quotes: quotes.map((l) => `> ${l}`).join("\n") || "> (none name this plan)" }) : "No WIRING contract for this phase.";
@@ -190,9 +190,10 @@ const KINDS = {
     const mine = (s?.show?.produces ?? []).filter((x) => x.structured).map(({ symbol, kind, file, signature }) => ({ symbol, kind, file, signature }));
     const used = (s?.show?.consumes ?? []).filter((c) => c.entry).map((c) => ({ plan: c.plan, ...c.entry }));
     const contract = s ? renderPlanTemplate(root, "plan-write-contract", { produces: mine.length ? json(mine) : "", consumes: used.length ? json(used) : "" }) : "";
-    return renderPlanTemplate(root, "plan-write", { context: planningContext(root, ctx, "standard"), specless: renderPlanTemplate(root, "plan-specless", {}), plan: p.planPath(d.id), id: d.id, manifest: p.MANIFEST, entry: json(d.entry), owns: json(d.entry?.owns ?? []), wiring, carried: bullets(d.carried ?? []), contract, ...PLANNER_TAIL(root, ctx, { key: "freeze", digest: d.digest }) });
+    const range = threatRangeOf(d.id);
+    return renderPlanTemplate(root, "plan-write", { context: planningContext(root, ctx, "standard"), specless: renderPlanTemplate(root, "plan-specless", {}), plan: p.planPath(d.id), id: d.id, manifest: p.MANIFEST, entry: json(d.entry), owns: json(d.entry?.owns ?? []), wiring, carried: bullets(d.carried ?? []), contract, threatRange: range?.range ?? "", threatExample: range?.example ?? "", ...PLANNER_TAIL(root, ctx, { key: "freeze", digest: d.digest }) });
   },
-  fix: (root, ctx, d, p) => renderPlanTemplate(root, "plan-fix", { plan: p.planPath(d.id), errors: `\n${bullets(d.errors)}`, ...PLANNER_TAIL(root, ctx, { key: "freeze", digest: d.digest }) }),
+  fix: (root, ctx, d, p) => { const range = threatRangeOf(d.id); return renderPlanTemplate(root, "plan-fix", { plan: p.planPath(d.id), errors: `\n${bullets(d.errors)}`, threatRange: range?.range ?? "", threatExample: range?.example ?? "", ...PLANNER_TAIL(root, ctx, { key: "freeze", digest: d.digest }) }); },
   realloc: (root, ctx, d, p) => renderPlanTemplate(root, "plan-realloc", {
     context: planningContext(root, ctx, "revision"), revision: revisionContext(root, [p.OUTLINE, p.MANIFEST], d.sent.map(({ plan, probe, dimension, description }) => ({ plan, dimension: dimension || probe || "", severity: "blocker", description }))),
     round: String(d.round), named: d.named.join(", "), whose: d.named.length > 1 ? "their" : "its", lines: d.lines ? ` (plan size lines: warning at ${d.lines.warning}+, blocker at ${d.lines.blocker}+ files)` : "",
@@ -220,6 +221,7 @@ const KINDS = {
       filesWarning: f ? String(f.warning) : "", filesBlocker: f ? String(f.blocker) : "", tracerWarning: t ? String(f.warning + d.tracerExtraFiles) : "", tracerBlocker: t ? String(f.blocker + d.tracerExtraFiles) : "",
       sendBackFile: d.sendBack ? d.probeFile : "", probeFile: d.probeFile, carried: bullets(d.carried ?? []),
       earlier: d.earlier?.length ? json(issueView(d.earlier, ["id", "plan", "dimension", "required_property", "description", "fix_hint"])) : "",
+      threatRanges: threatRangesText(d.live),
       policy: policyBlock(ctx.approvedResearch ?? null), freezeDigest: digestLine("freeze", d.freeze), checkedDigest: digestLine("checked", d.checked),
     });
   },
@@ -344,6 +346,33 @@ export function planSkeleton(root, op, input = {}) {
   return { sk, advisories, ...out };
 }
 
+// ---- threat-id ranges (kit feedback 115 F3): the outline's plan id is the assignment ----
+// Plan NN-MM (each numeric part padded to 2) may use only T-NN-MMxx: that prefix plus exactly two digits.
+// 05-10 (T-05-10 + 2 digits) and 05-100 (T-05-100 + 2 digits) do not share an id.
+const PLAN_REF = /^(\d+(?:\.\d+)?)-(\d+)$/;
+const pad2 = (s) => (/^\d+$/.test(s) && s.length < 2 ? s.padStart(2, "0") : s);
+const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+export function threatRangeOf(id) {
+  const base = String(id ?? "").split(/[/\\]/).pop().replace(/-PLAN\.md$/, "");
+  const m = PLAN_REF.exec(base);
+  if (!m) return null;
+  const prefix = `T-${pad2(m[1])}-${pad2(m[2])}`;
+  return { id: base, range: `${prefix}xx`, prefix, example: `${prefix}01`, pattern: `^${escRe(prefix)}\\d{2}$` };
+}
+export const threatRangesText = (refs) => (refs ?? []).map((r) => threatRangeOf(r)).filter(Boolean).map((r) => `${r.id} ${r.range}`).join(", ");
+const THREAT_ID = /\bT-\d+(?:\.\d+)?-\d+\b/g;
+export function threatFindings(plans) {
+  const out = [];
+  for (const p of plans ?? []) {
+    const range = threatRangeOf(p.id);
+    if (!range) continue;
+    const outside = [...new Set([...String(p.text ?? "").matchAll(THREAT_ID)].map((m) => m[0]))].filter((t) => !new RegExp(range.pattern).test(t));
+    if (!outside.length) continue;
+    out.push({ probe: "threat-id", plan: range.id, severity: "blocker", dimension: "threat-id", required_property: `threat ids inside ${range.range}`, description: `${range.id} uses threat id ${outside.join(", ")} outside its range ${range.range}`, fix_hint: `use only ids ${range.range} (for example ${range.example})` });
+  }
+  return out;
+}
+
 // ---- plan-probes: the checker's deterministic probes (GSDF-26) ----
 const PROBES = [["verify-command-paths", "warning"], ["verify-failure-directions", "warning"], ["owns", "blocker"]];
 export const PROBE_NAMES = Object.freeze(PROBES.map(([p]) => p));
@@ -362,7 +391,7 @@ function filesPerPlanProbes(owns, tracerExtraFiles) {
   return out;
 }
 /** Flow verb `plan-probes` {runs: {<probe>: {code, json}}, filesPerPlan, tracerExtraFiles} -> {found}. */
-export function planProbes(root, { runs = {}, filesPerPlan = false, tracerExtraFiles } = {}) {
+export function planProbes(root, { runs = {}, filesPerPlan = false, tracerExtraFiles, plans } = {}) {
   const found = [];
   for (const [probe, defaultSev] of PROBES) {
     const r = runs[probe] ?? { code: 69, json: null };
@@ -376,6 +405,8 @@ export function planProbes(root, { runs = {}, filesPerPlan = false, tracerExtraF
     }
   }
   if (filesPerPlan) found.push(...filesPerPlanProbes(runs.owns?.json, tracerExtraFiles));
+  // Kit feedback 115 F3: a plan's threat ids must be inside the range its plan id assigns.
+  if (Array.isArray(plans)) found.push(...threatFindings(plans.map((p) => ({ id: p?.id, text: typeof p?.text === "string" ? p.text : (p?.path ? read(root, p.path).text ?? "" : "") }))));
   return { found };
 }
 

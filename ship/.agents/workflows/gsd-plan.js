@@ -511,8 +511,7 @@ async function waveOf(ids, plan, onKept = null) {
   return { todo, outcomes: await parallel(todo.map((id) => () => plan(id))) };
 }
 function failedOf({ todo, outcomes }) { const i = outcomes.findIndex((o) => !o || o.stop); return i >= 0 ? outcomes[i]?.stop ?? failedCall(`planner ${todo[i]}`, null) : null; }
-// The staged flow: wave by wave; returns the stop, or null. The checker's reallocation runs it again. G015: the plans that finished are
-// recorded before the batch stops, so a failed sibling does not drop them.
+// The staged flow: wave by wave; returns the stop, or null. The checker's reallocation runs it again. G015: the plans that finished are recorded before the batch stops, so a failed sibling does not drop them.
 const stagedWaves = () => eachWave(async (ids) => {
   const w = await waveOf(ids, planOne);
   const recorded = await recordEach(w.todo.filter((_, i) => w.outcomes[i]?.ok), false);
@@ -522,6 +521,8 @@ if (!streamed) {
   const stop = await stagedWaves();
   if (stop) return stop;
 }
+// Kit feedback 115: re-plan every plan marked since this pass, before the checker, at most maxSkeletonPasses times.
+for (let pass = 1; ; pass++) { const d = await flow(["plan-replan-drain", phaseDir], { run: runId, scope: planIds, pass, max: maxSkeletonPasses }); if (d.code !== 0) return result("failed", { reason: `plan-replan-drain: ${d.json?.error ?? d.json?.reason ?? `exit ${d.code}`}` }); if (d.json?.act === "clear") break; if (d.json?.act !== "replan") return owner("Plans", d.json?.reason ?? "re-plan bound spent", { replan: d.json?.open ?? [], answer: answers.rerun("") }); for (const id of d.json.open) marks.delete(id); log(d.json.log); const outcomes = await parallel(d.json.open.map((id) => () => planOne(id))); const bad = outcomes.findIndex((o) => !o?.ok); if (bad >= 0) return outcomes[bad]?.stop ?? failedCall(`planner ${d.json.open[bad]}`, null); const recorded = await recordEach(d.json.open, false); if (recorded) return recorded; }
 // O65 (kit-feedback 65): the planner waves keep their order (GSDF-24), but each plan is structure-checked and recorded on its own and
 // its review stream (gsd-plan-review with `stream`) starts as soon as its planner returns. O67: the next wave's planners start once
 // every stream of this wave froze; a frozen plan whose interface its stream changed passes the change on to its dependents.
@@ -707,7 +708,7 @@ return await handoffStage(planIds, docPaths, checked.override);
 async function countProbes(scopeIds, gapScoped) {
   const plans = gapScoped ? ["--plans", scopeIds.join(",")] : [];
   const runs = { "verify-command-paths": await gsd(["check", "verify-command-paths", N, ...plans]), "verify-failure-directions": await gsd(["check", "verify-failure-directions", N, ...plans]), owns: await gsd(["check", "owns", N, ...plans]) };
-  return (await flow(["plan-probes"], { runs, filesPerPlan: Boolean(reallocRounds) && !gapScoped, tracerExtraFiles })).json?.found ?? [];
+  return (await flow(["plan-probes"], { runs, filesPerPlan: Boolean(reallocRounds) && !gapScoped, tracerExtraFiles, plans: scopeIds.map((id) => ({ id, path: planPath(id) })) })).json?.found ?? [];
 }
 // One fresh read-only checker over the plans `live` (GSDF-26), with the probe file and the still-open blockers `earlier`. In the
 // streams flow the carried warnings are sorted, so the order in which the plan streams finished does not change the prompt.
