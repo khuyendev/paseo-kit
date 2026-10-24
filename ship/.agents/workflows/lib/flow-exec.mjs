@@ -388,16 +388,21 @@ export function execVerdict({ reply, plan = null, requests = {}, shared = [], pe
 }
 
 // exec-fixers: who fixes a red gate. {gate, plans (ids of the round), worktreeMode, trees (plans with an executor worktree),
-// verifies (the composition's gsd.fixer_verifies_itself)} -> {plans: [{id, kind: executor | fixer (a plan resumed without its
+// verifies (the composition's gsd.fixer_verifies_itself), also (plan ids a same-wave request was routed to last round, kit
+// feedback 102 F4: dispatched even when this gate did not attribute a failure to them)} -> {plans: [{id, kind: executor | fixer (a plan resumed without its
 // worktree is fixed in the main tree), failures, tests?}], placed (the failures no plan owns that name files, G064), files (theirs,
 // for the integration fixer), tests, fileless (failures naming no file)}. Kit feedback 102 F3: tests are the test files of a
 // fixer's failures it may run itself (the gate's failure tests); none when it does not verify itself.
-export function execFixers({ gate, plans = [], worktreeMode = false, trees = [], verifies = false }) {
+export function execFixers({ gate, plans = [], worktreeMode = false, trees = [], verifies = false, also = [] }) {
   const placed = (gate.unplaced ?? []).filter((f) => (f.files ?? []).length);
   const testsOf = (failures) => (verifies ? [...new Set(failures.flatMap((f) => f.tests ?? []))] : []);
   const withTests = (failures) => (testsOf(failures).length ? { tests: testsOf(failures) } : {});
+  const row = (id, failures) => ({ id, kind: worktreeMode && !trees.includes(id) ? "fixer" : "executor", failures, ...withTests(failures) });
+  const fromGate = Object.entries(gate.byPlan ?? {}).filter(([id]) => plans.includes(id));
+  const seen = new Set(fromGate.map(([id]) => id));
+  const extra = [...new Set(also)].filter((id) => plans.includes(id) && !seen.has(id));
   return {
-    plans: Object.entries(gate.byPlan ?? {}).filter(([id]) => plans.includes(id)).map(([id, failures]) => ({ id, kind: worktreeMode && !trees.includes(id) ? "fixer" : "executor", failures, ...withTests(failures) })),
+    plans: [...fromGate.map(([id, failures]) => row(id, failures)), ...extra.map((id) => row(id, []))],
     placed,
     files: [...new Set(placed.flatMap((f) => f.files ?? []))],
     tests: testsOf(placed),

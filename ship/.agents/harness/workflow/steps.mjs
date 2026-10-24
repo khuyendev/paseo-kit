@@ -331,6 +331,7 @@ export function executeSteps(kit, run) {
     for (const { plan, q } of r.routes ?? []) {
       if (plan && progress.plans[plan]?.commit === undefined) {
         const routed = await state("request", { op: "route", plan, ...q, base: P.requestCheck !== "off" });
+        if (routed.merged) log(`request for ${q.path} merged; requesters: ${(routed.requesters ?? []).join(", ")}`);
         if (!routed.refused) continue;
         log(`request of ${t.plan} for ${q.path}: ${routed.refused}; held as a shared change`);
       }
@@ -585,17 +586,37 @@ export function executeSteps(kit, run) {
   // 28/30); an owner decision of a fixer (kit-feedback 51) waits for the transfers and the rerun (exec-round-end, with the stall
   // rule). opts: rounds (the composition's bound, gsd.max_verify_rounds); graph schedule: gate() reruns the gate (default: these
   // plans), done(gate) ends the rounds early (default: green).
+  // Kit feedback 108 F2: a failing test file no plan of this wave owns, named by a shared change or an owner decision, stops
+  // here — before any fixer of the round — with `ph gsd grant`. Kit feedback 102 F4: a request routed to a same-wave owner
+  // dispatches that owner's fixer in this round (one follow-up; a request that follow-up creates waits for the next round).
   async function fixRounds(waveId, tasks, first, label, tail, { rounds, gate = () => runGate(waveId, tasks), done = (x) => x.green } = {}) {
     let cur = first;
     let stall = { prev: first.failureCount, noDrop: 0 };
+    const owed = new Set();
+    const reqKeys = () => new Set(Object.entries(pendingRequests).flatMap(([plan, list]) => (list ?? []).map((q) => `${plan}\0${q.from ?? ""}\0${q.path}\0${q.change}`)));
+    const grantStop = async (gateResult) => {
+      const named = (gateResult.unownedTests ?? []).filter((t) => t.cause);
+      if (!named.length) return null;
+      const owners = (await flow(["owners"], { paths: named.map((t) => t.file), plans: allTasks.map(asPlan) })).json?.owners ?? {};
+      const earlier = (file) => (owners[file] ?? []).find((id) => !tasks.some((t) => t.plan === id)) ?? null;
+      const lines = named.map((t) => `${t.file}${earlier(t.file) ? ` (owned by ${earlier(t.file)}, not this wave)` : " (no plan of this wave owns it)"} — likely broken by ${t.cause.kind} ${t.cause.id ?? ""} ${t.cause.from ? `from ${t.cause.from} ` : ""}${t.cause.path ? `${t.cause.path}: ` : ""}${t.cause.text}`);
+      return owner("Gate", `${label}: failing test file(s) no plan of this wave owns, so no fix round runs until they are granted: ${lines.join("; ")}`, { answer: ANSWER.grant(named[0].file, earlier(named[0].file)), unownedTests: named, failures: gateResult.failures, evidence: gateResult.evidence, options: named.map((t) => `ph gsd grant ${N} --path ${t.file}${earlier(t.file) ? ` --plan ${earlier(t.file)}` : ""}, then rerun with the same args`) });
+    };
     for (let round = 1; !done(cur) && round <= rounds; round++) {
+      const early = await grantStop(cur);
+      if (early) return { stop: early };
       const red = (why, extra = {}) => ({ stop: owner("Gate", `${label} is red after fix round ${round}: ${why}${tail}`, { answer: GATE_RED, failures: cur.failures, evidence: cur.evidence, blockedBy: cur.blockedBy, ...extra }) });
       // Fixer routing (exec-fixers): a plan's failures go to its executor session, or to a main-tree fixer when the plan resumed
       // without its worktree (a new one would start from HEAD); G064: an integration fixer owns exactly the files of the failures
-      // no plan owns; a failure naming no file has no owner.
-      const route = (await flow(["exec-fixers"], { gate: cur, plans: tasks.map((t) => t.plan), worktreeMode, trees: Object.keys(worktrees).filter((id) => worktrees[id]), verifies: P.fixer.verifies })).json;
-      const fixes = route.plans.map(({ id, kind, failures, tests }) => async () => {
+      // no plan owns; a failure naming no file has no owner. `also`: plans a request was routed to after the previous round.
+      const also = [...owed];
+      owed.clear();
+      if (also.length) log(`fix round ${round} dispatches ${also.join(", ")} (a request routed last round)`);
+      const trees = Object.keys(worktrees).filter((id) => worktrees[id]);
+      const route = (await flow(["exec-fixers"], { gate: cur, plans: tasks.map((t) => t.plan), also, worktreeMode, trees, verifies: P.fixer.verifies })).json;
+      const job = ({ id, kind, failures, tests }) => async () => {
         const t = tasks.find((x) => x.plan === id);
+        if (!t) return null;
         const reqs = pendingRequests[id] ?? [];
         const dg = digestLine(`fix:${id}`, await digestOf({ owns: t.owns ?? [] }));
         if (kind === "fixer") {
@@ -605,7 +626,8 @@ export function executeSteps(kit, run) {
         const prompt = await renderPrompt("executor-fix", { round, plan: id, failures: failureText(failures), requests: reqs.length ? JSON.stringify(reqs) : "", evidence: String(cur.evidence), ...fixRuntime(tests), digest: dg });
         const fix = () => call(prompt, execOpts(t, `fix-${id}-${round}`));
         return { id, kind, t, ...(await (worktreeMode ? fix() : writeTree(fix))) };
-      });
+      };
+      const fixes = route.plans.map(job);
       if (route.files.length) {
         // Kit feedback 83: written before the fixer runs, so a run that dies in it still knows the files it may have changed.
         await state("integration", { op: "add", files: route.files, why: `integration fix of ${waveId} round ${round}` });
@@ -622,31 +644,68 @@ export function executeSteps(kit, run) {
         await defectEvent("gate-failure", redGate);
         return red(route.fileless ? `${route.fileless} gate failure(s) name no file of any plan, so no fixer can own them` : "no fixer owns the failing files");
       }
-      const results = await parallel(fixes);
-      const roundDefects = [];
-      for (const r of results) if (r) roundDefects.push(...(await defectEvent("fix-round", { wave: waveId, round, label, plan: r.id ?? null, fixer: r.kind }, { reply: r.result })));
-      await defectEvent("gate-failure", redGate, { defects: roundDefects });
-      const soft = [];
-      const decisions = [];
-      for (const r of results) {
-        if (!r) return red("a fix call failed to run");
-        const who = r.id ? `plan ${r.id}` : "the integration fixer";
-        if (r.result === null) {
-          if (fatal(r.reason)) return { stop: owner("Gate", `fix call of ${who} failed: ${r.reason}`, { answer: ANSWER.rerun("rerun after the reset"), failure: classify(r.reason), evidence: cur.evidence }) };
-          soft.push({ id: r.id, why: `fix call of ${who} returned nothing${r.reason ? ` (${r.reason})` : ""}` });
-          continue;
+      const runs = new Map(route.plans.map((p) => [p.id, 1]));
+      const absorb = async (results, recordGate) => {
+        const roundDefects = [];
+        for (const r of results) if (r) roundDefects.push(...(await defectEvent("fix-round", { wave: waveId, round, label, plan: r.id ?? null, fixer: r.kind }, { reply: r.result })));
+        if (recordGate) await defectEvent("gate-failure", redGate, { defects: roundDefects });
+        const soft = [];
+        const decisions = [];
+        for (const r of results) {
+          if (!r) return { stop: red("a fix call failed to run") };
+          const who = r.id ? `plan ${r.id}` : "the integration fixer";
+          if (r.result === null) {
+            if (fatal(r.reason)) return { stop: owner("Gate", `fix call of ${who} failed: ${r.reason}`, { answer: ANSWER.rerun("rerun after the reset"), failure: classify(r.reason), evidence: cur.evidence }) };
+            soft.push({ id: r.id, why: `fix call of ${who} returned nothing${r.reason ? ` (${r.reason})` : ""}` });
+            continue;
+          }
+          await routeRequests(r.t ?? { plan: r.id ?? "integration" }, r.result);
+          if (stateError) return { stop: red("could not persist pending change requests") };
+          if (r.kind === "executor") {
+            const { decision } = await verdict(r.result, r.id);
+            if (decision) decisions.push({ id: r.id, decision });
+          } else if (r.result.status !== "fixed") soft.push({ id: r.id, why: `${who} unresolved (${r.result.remaining_failures ?? "?"} failures remain)${r.result.evidence ? `: ${r.result.evidence}` : ""}` });
+          if (r.id) await clearResolved(r.id, r.result);
         }
-        await routeRequests(r.t ?? { plan: r.id ?? "integration" }, r.result);
-        if (stateError) return red("could not persist pending change requests");
-        if (r.kind === "executor") {
-          const { decision } = await verdict(r.result, r.id);
-          if (decision) decisions.push({ id: r.id, decision });
-        } else if (r.result.status !== "fixed") soft.push({ id: r.id, why: `${who} unresolved (${r.result.remaining_failures ?? "?"} failures remain)${r.result.evidence ? `: ${r.result.evidence}` : ""}` });
-        if (r.id) await clearResolved(r.id, r.result);
+        if (stateError) return { stop: red("could not persist pending change requests") };
+        return { soft, decisions };
+      };
+      let seen = reqKeys();
+      const firstFix = await absorb(await parallel(fixes), true);
+      if (firstFix.stop) return firstFix;
+      let soft = firstFix.soft;
+      let decisions = firstFix.decisions;
+      // One follow-up batch: owners a fixer just routed a request to. A request that follow-up itself routes waits for the next
+      // round (or is named in the log when this is the last round and the per-plan cap of two dispatches is spent).
+      let followed = false;
+      for (let guard = tasks.length * 2; guard > 0; guard--) {
+        const fresh = [];
+        for (const [plan, list] of Object.entries(pendingRequests)) for (const q of list ?? []) if (!seen.has(`${plan}\0${q.from ?? ""}\0${q.path}\0${q.change}`)) fresh.push(plan);
+        seen = reqKeys();
+        const wave = (id) => tasks.some((t) => t.plan === id);
+        const todo = [...new Set(fresh)].filter((id) => wave(id) && (runs.get(id) ?? 0) < 2);
+        const later = [...new Set(fresh)].filter((id) => wave(id) && (runs.get(id) ?? 0) >= 2);
+        if (!todo.length) {
+          if (later.length) log(`request routed to ${later.join(", ")}; ${round < rounds ? "fixer next round" : "no fixer left in this round"}`);
+          for (const id of later) if (round < rounds) owed.add(id);
+          break;
+        }
+        if (followed && round < rounds) {
+          log(`request routed to ${todo.join(", ")}; fixer next round`);
+          for (const id of todo) owed.add(id);
+          break;
+        }
+        followed = true;
+        log(`request routed to ${todo.join(", ")}; fixer dispatched this round`);
+        const more = (await flow(["exec-fixers"], { gate: cur, plans: tasks.map((t) => t.plan), also: todo, worktreeMode, trees, verifies: P.fixer.verifies })).json;
+        for (const id of todo) runs.set(id, (runs.get(id) ?? 0) + 1);
+        const next = await absorb(await parallel(more.plans.filter((p) => todo.includes(p.id)).map(job)), false);
+        if (next.stop) return next;
+        soft = soft.concat(next.soft);
+        decisions = decisions.concat(next.decisions);
       }
-      if (stateError) return red("could not persist pending change requests");
       if (worktreeMode) {
-        const live = tasks.filter((t) => cur.byPlan?.[t.plan] && worktrees[t.plan]);
+        const live = tasks.filter((t) => (cur.byPlan?.[t.plan] || runs.has(t.plan)) && worktrees[t.plan]);
         const hs = haltStop(await integrate(live.map((t) => ({ plan: t.plan, ok: true, wt: worktrees[t.plan] })), live, true), "Gate");
         if (hs) return { stop: hs };
       }
@@ -659,9 +718,10 @@ export function executeSteps(kit, run) {
       const end = (await flow(["exec-round-end"], { decisions, soft, gate: cur, done: done(cur), stall })).json;
       for (const l of end.logs) log(l);
       if (end.stuck) return { stop: owner("Gate", end.stuck.reason, { answer: ANSWER.tree("make the decision in the plan's files, then rerun with the same args"), decision: end.stuck.decision, evidence: cur.evidence }) };
-      if (end.still) return red(end.still);
-      stall = end.stall;
-      if (end.stalled) return { stop: owner("Gate", `verify-fix stalled: ${cur.failureCount} failures did not drop over 2 rounds`, { answer: GATE_RED, failures: cur.failures, evidence: cur.evidence }) };
+      if (owed.size && (end.still || end.stalled)) log(`fix round ${round}: ${[...owed].join(", ")} still owed a fixer; the round does not stop`);
+      if (end.still && !owed.size) return red(end.still);
+      stall = owed.size && end.stalled ? { prev: cur.failureCount, noDrop: 0 } : end.stall;
+      if (end.stalled && !owed.size) return { stop: owner("Gate", `verify-fix stalled: ${cur.failureCount} failures did not drop over 2 rounds`, { answer: GATE_RED, failures: cur.failures, evidence: cur.evidence }) };
     }
     return { gate: cur };
   }

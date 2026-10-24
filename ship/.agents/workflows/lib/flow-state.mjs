@@ -244,7 +244,19 @@ export function stateRequest(root, phaseDir, input) {
       if (gen.missing) return refuseGenerated(gen.missing);
       const q = { from: input.from ?? null, path: p, change: String(input.change), ...(input.reason !== undefined ? { reason: input.reason } : {}), ...gen.extra };
       const key = requestKey(plan, q);
-      if ((st.requests[plan] ?? []).some((x) => requestKey(plan, x) === key)) return { routed: false, duplicate: true };
+      const open = st.requests[plan] ?? [];
+      if (open.some((x) => requestKey(plan, x) === key)) return { routed: false, duplicate: true };
+      // Kit feedback 108 F3: the same target file and the same change text (whitespace squashed) from another fixer is one request.
+      // The first change text stays; requesters lists every from. A record written before this has no requesters until one merges.
+      const squash = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
+      const same = open.find((x) => slash(x.path) === p && squash(x.change) === squash(q.change));
+      if (same) {
+        const who = q.from ?? null;
+        const had = same.requesters ?? (same.from ? [same.from] : []);
+        if (!who || had.includes(who)) return { routed: false, duplicate: true, ...(same.requesters ? { requesters: same.requesters } : {}) };
+        same.requesters = [...had, who];
+        return { routed: false, merged: true, requesters: same.requesters };
+      }
       (st.requests[plan] ??= []).push(q);
       if (input.base === true) st.requestBase[key] = digestOf(root, p);
       return { routed: true };
