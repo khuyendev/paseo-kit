@@ -1,5 +1,5 @@
 {
-  "_notes": "Every installed GSD method file (GSDC-53). source = path in the upstream snapshot .agents/gsd/upstream, or kit-authored. ph gsd upstream build generates the agent and skill-workflow entries (upstream body unchanged except the three path rewrites, D-111); ph gsd upstream check compares them. Overlays are kit-authored and applied after the upstream text through include (they win on conflict). extra_verbs: rows a project or a bump adds to the not-ported verb table. replaces and spans (kit feedback 117): ph gsd upstream build drops those sections from the generated role and leaves one comment line; documentation_lookup is kept only when adapter.doc_tools is a non-empty list. An include taken from the same upstream file does not repeat a section the role still holds.",
+  "_notes": "Every installed GSD method file (GSDC-53). source = path in the upstream snapshot .agents/gsd/upstream, or kit-authored. ph gsd upstream build generates the agent and skill-workflow entries (upstream body unchanged except the three path rewrites, D-111, and an @-to-backtick rewrite inside templates); ph gsd upstream check compares them. Overlays are kit-authored and applied after the upstream text through include (they win on conflict). extra_verbs: rows a project or a bump adds to the not-ported verb table. replaces and spans (kit feedback 117): ph gsd upstream build drops those sections from the generated role and leaves one comment line. unless keeps the cut when the project config can use it: doc_tools (adapter.doc_tools non-empty), tdd_mode, mvp_mode, validation_strategy. Graphify steps are dropped with no unless: the kit does not support graphify. Absent tdd_mode and mvp_mode drop (the kit cannot turn those modes on). validation_strategy defaults true, so Nyquist stays unless the project sets false. templates: @path inside that from/until range is written as a backticked path (the planner copies it into PLAN.md; it is not a load). An include taken from the same upstream file does not repeat a section the role still holds.",
   "v": 1,
   "snapshot": ".agents/gsd/upstream",
   "entries": [
@@ -25,7 +25,14 @@
         },
         "step:load_project_state",
         "step:update_roadmap",
-        "step:git_commit"
+        "step:git_commit",
+        "step:load_graph_context",
+        "step:inject_global_learnings",
+        "step:validate_plan",
+        {
+          "section": "tdd_integration",
+          "unless": "tdd_mode"
+        }
       ],
       "spans": [
         {
@@ -35,6 +42,33 @@
         {
           "id": "task_count",
           "line": "- Decompose phases into parallel-optimized plans with 2-3 tasks each"
+        },
+        {
+          "id": "history_digest",
+          "from": "**Step 1 — Generate digest index:**",
+          "until": "**Step 2 — Select relevant phases (typically 2-4):**"
+        },
+        {
+          "id": "tdd_enabled",
+          "unless": "tdd_mode",
+          "line": "**When `workflow.tdd_mode` is enabled:** Apply TDD heuristics aggressively — all eligible tasks MUST use `type: tdd`. Read @~/.claude/gsd-core/references/tdd.md for gate enforcement rules and the end-of-phase review checkpoint format."
+        },
+        {
+          "id": "tdd_composition",
+          "unless": "tdd_mode",
+          "line": "**TDD composition (`workflow.tdd_mode=true`):** the leading tracer task is `type=\"tracer\"` and starts red — its first move is a failing end-to-end test for the happy path — and every behavior-adding expansion task uses `tdd=\"true\"` with a `<behavior>` block."
+        },
+        {
+          "id": "mvp_enrichment",
+          "unless": "mvp_mode",
+          "line": "**MVP enrichment (`MVP_MODE=true`):** layered on top of the tracer-first ordering above (MVP no longer *turns on* vertical slices — that is now the default). It adds: (1) frame the phase goal as a user story at the top of `PLAN.md`, sourced from the ROADMAP `**Goal:**` line, bolding `**As a**` / `**I want to**` / `**so that**` (Read `~/.claude/gsd-core/references/user-story-template.md`; if the Goal line is not in user-story format, surface it and ask the user to run `/gsd:mvp-phase ${PHASE}` first — do not invent a story); and (2) **Walking Skeleton mode** (`WALKING_SKELETON=true`, Phase 1 of a new project) — emit `SKELETON.md` from `~/.claude/gsd-core/references/skeleton-template.md` alongside `PLAN.md`. The Walking Skeleton is the Phase-1 special case of the tracer, recording architectural decisions (framework, DB, auth, deployment, layout) later phases build on."
+        }
+      ],
+      "templates": [
+        {
+          "id": "plan_md",
+          "from": "<execution_context>",
+          "until": "</context>"
         }
       ]
     },
@@ -57,6 +91,17 @@
         {
           "id": "agent_skills",
           "line": "**agent_skills:** self-load per @~/.claude/gsd-core/references/agent-skills-bootstrap.md (agent type: `gsd-plan-checker`)"
+        },
+        {
+          "id": "nyquist_dimension",
+          "unless": "validation_strategy",
+          "from": "## Dimension 8: Nyquist Compliance",
+          "until": "### Check 8f - Stated Failing Direction (#3172)"
+        },
+        {
+          "id": "resolver",
+          "from": "@~/.claude/gsd-core/references/gsd-run-resolver.md",
+          "until": "Extract from init JSON: `phase_dir`, `phase_number`, `has_plans`, `plan_count`."
         },
         {
           "id": "task_thresholds",
@@ -99,6 +144,32 @@
         {
           "id": "package_provenance",
           "line": "**Package name provenance rule:** A package name discovered via WebSearch, training data, or any non-authoritative source must be tagged `[ASSUMED]` regardless of whether `npm view` confirms it exists on the registry. Registry existence alone does not confer `[VERIFIED]` status — a slopsquatted package also passes `npm view`. Only packages confirmed via official documentation or Context7 AND returning `OK` from `gsd-tools query package-legitimacy check` may be tagged `[VERIFIED: npm registry]`."
+        },
+        {
+          "id": "load_graph_context",
+          "from": "## Step 1.3: Load Graph Context",
+          "until": "## Step 1.5: Architectural Responsibility Mapping"
+        },
+        {
+          "id": "research_plan_seam",
+          "line": "For each domain, use the `<tool_strategy>` seam (Steps A–D): build questions JSON, call `gsd_run query research-plan`, run the indicated provider per item, then cache each digest. Document findings with confidence levels as you go (use `gsd_run query classify-confidence --provider <id>` to obtain the tier)."
+        },
+        {
+          "id": "validation_template",
+          "unless": "validation_strategy",
+          "from": "## Validation Architecture",
+          "until": "## Security Domain"
+        },
+        {
+          "id": "validation_step",
+          "unless": "validation_strategy",
+          "from": "## Step 4: Validation Architecture Research (if nyquist_validation enabled)",
+          "until": "## Step 5: Quality Check"
+        },
+        {
+          "id": "commit_research",
+          "from": "## Step 7: Commit Research (optional)",
+          "until": "## Step 8: Return Structured Result"
         }
       ]
     },
@@ -129,7 +200,11 @@
         "task_commit_protocol",
         "state_updates",
         "final_commit",
-        "completion_format"
+        "completion_format",
+        {
+          "section": "tdd_execution",
+          "unless": "tdd_mode"
+        }
       ],
       "spans": [
         {
@@ -165,11 +240,21 @@
         ".agents/gsd/overlays/kit-core.md",
         ".agents/gsd/overlays/gsd-verifier.md"
       ],
-      "replaces": [],
+      "replaces": [
+        {
+          "section": "mvp_mode_verification",
+          "unless": "mvp_mode"
+        }
+      ],
       "spans": [
         {
           "id": "agent_skills",
           "line": "**agent_skills:** self-load per @~/.claude/gsd-core/references/agent-skills-bootstrap.md (agent type: `gsd-verifier`)"
+        },
+        {
+          "id": "resolver_bootstrap",
+          "from": "## Resolver Bootstrap (Every Mode)",
+          "until": "## Step 0: Check for Previous Verification"
         }
       ]
     },
@@ -197,6 +282,18 @@
         {
           "id": "agent_skills",
           "line": "**agent_skills:** self-load per @~/.claude/gsd-core/references/agent-skills-bootstrap.md (agent type: `gsd-debugger`)"
+        },
+        {
+          "id": "tdd_checkpoint",
+          "unless": "tdd_mode",
+          "from": "## TDD CHECKPOINT (tdd_mode: true, after writing failing test)",
+          "until": "See <checkpoint_behavior> section for full format."
+        },
+        {
+          "id": "tdd_mode_block",
+          "unless": "tdd_mode",
+          "from": "**tdd_mode: true** (when set in `<mode>` block by orchestrator)",
+          "until": "</modes>"
         }
       ]
     },
@@ -247,6 +344,10 @@
         {
           "id": "agent_skills",
           "line": "**agent_skills:** self-load per @~/.claude/gsd-core/references/agent-skills-bootstrap.md (agent type: `gsd-project-researcher`)"
+        },
+        {
+          "id": "research_plan_seam",
+          "line": "For each domain, use the `<tool_strategy>` seam (Steps A–D): build questions JSON, call `gsd_run query research-plan`, run the indicated provider per item, then cache each digest. Document findings with confidence levels as you go (use `gsd_run query classify-confidence --provider <id>` to obtain the tier)."
         }
       ]
     },
@@ -348,6 +449,11 @@
         {
           "id": "agent_skills",
           "line": "**agent_skills:** self-load per @~/.claude/gsd-core/references/agent-skills-bootstrap.md (agent type: `gsd-code-reviewer`)"
+        },
+        {
+          "id": "gsd_tools_shim",
+          "from": "Run:",
+          "until": "Use its `files` (the union of the phase's own commits' file sets, planning artifacts and lockfiles excluded). A `degraded` status is usable, but say so in REVIEW.md. A `status` of `unresolvable` (exit `69`, JSON still printed) means the scope could not be resolved: an empty `files` then is not a clean review — fail loudly as above."
         }
       ]
     },

@@ -205,7 +205,11 @@ export const SCHEMA = obj({
     unowned_outside_roots: str({ oneOf: ["report", "stop"] }),
     // Kit feedback 79: executor task status pending-request; a partial task that waits only for requests the run routed is no owner decision.
     pending_request_tasks: bool(),
-  }),
+    // Kit feedback 117 follow-up B: the kit does not run a TDD gate or MVP mode. Absent or false drops those
+    // role sections at upstream build; true keeps them. Not in the defaults, so an old overlay still loads.
+    tdd_mode: bool(),
+    mvp_mode: bool(),
+  }, ["tdd_mode", "mvp_mode"]),
 });
 
 export const TOP_LEVEL_KEYS = Object.freeze(Object.keys(SCHEMA.fields));
