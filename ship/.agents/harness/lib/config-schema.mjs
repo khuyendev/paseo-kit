@@ -100,7 +100,9 @@ export const SCHEMA = obj({
       // not move a phase baseline's gateConfig hash. A flag named here covers a later command change only once the baseline
       // holds the list; the comparison uses the baseline's list, not one added in the same change.
       non_weakening_flags: arr(str({ nonEmpty: true, pattern: /^-/, patternText: "a flag starting with -" })),
-    }, ["smoke_builds", "test_case_timeout_s", "test_case_timeout_arg", "non_weakening_flags"]),
+      // Kit feedback 109 F4 / 107 F3: whole-file bound. Absent = test_timeout_s (the kit kills the runner tree and names the file).
+      test_file_timeout_s: nullable(int(1)),
+    }, ["smoke_builds", "test_case_timeout_s", "test_case_timeout_arg", "non_weakening_flags", "test_file_timeout_s"]),
     verify_vocabulary: map(obj({
       prefix: str({ nonEmpty: true }),
       parser: nullable(str({ nonEmpty: true, repoPath: true })),

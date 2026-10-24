@@ -135,6 +135,8 @@ const COMMANDS = {
   "exec-branch": (root, [phaseDir]) => exec.execBranch(root, phaseDir),
   "exec-route": (root, _args, input) => exec.execRoute(root, JSON.parse(input)),
   "exec-verdict": (root, _args, input) => exec.execVerdict(JSON.parse(input)),
+  "exec-fix-allowance": (root, _args, input) => exec.fixAllowance(JSON.parse(input || "{}")),
+  "exec-fix-reply": (root, _args, input) => exec.execFixReply(JSON.parse(input || "{}")),
   "exec-fixers": (root, _args, input) => exec.execFixers(JSON.parse(input)),
   "exec-round-end": (root, _args, input) => exec.execRoundEnd(JSON.parse(input)),
   "exec-verdicts": (root, _args, input) => exec.execVerdicts(JSON.parse(input)),
@@ -150,7 +152,7 @@ export const COMMAND_NAMES = Object.keys(COMMANDS);
 
 // Verbs whose handler reads JSON or text from stdin; every other verb never touches stdin, so a person running
 // `gsd-flow.mjs remove <path>` from a shell whose stdin is an open pipe is not left waiting (G088).
-const STDIN = new Set(["write", "append", "append-new", "json-push", "summary-heal", "resume-gate", "transfer", "discard-worktree", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "test-command", "evidence-check", "check-weakening", "review-scope", "review-record", "prereview-record", "changed-lines", "forensics-path", "plan-run", "plan-mark", "plan-end", "plan-outline", "plan-checker", "plan-contracts", "plan-realloc", "plan-recheck", "state-plan", "state-shared", "state-request", "state-integration", "state-answer", "state-smoke", "prompt", "exec-args", "exec-setup", "exec-defect", "exec-handoff", "exec-records", "exec-select", "exec-route", "exec-verdict", "exec-fixers", "exec-round-end", "exec-verdicts", "exec-review", "exec-findings", "exec-pause", "exec-groups", "exec-shared-before", "exec-shared-reply", "plan-args", "plan-prompt", "plan-skeleton", "plan-probes", "plan-linked", "plan-realloc-diff", "plan-validation", "accepted-record", "plan-contract-route", "plan-contract-drift", "plan-replan-keep", "plan-replan", "plan-streams-end", "plan-checker-reply", "plan-dependents"]);
+const STDIN = new Set(["write", "append", "append-new", "json-push", "summary-heal", "resume-gate", "transfer", "discard-worktree", "owned-changes", "smoke-due", "schedule-graph", "dirty-owned", "dependency-seed", "owners", "digest", "gate", "test-command", "evidence-check", "check-weakening", "review-scope", "review-record", "prereview-record", "changed-lines", "forensics-path", "plan-run", "plan-mark", "plan-end", "plan-outline", "plan-checker", "plan-contracts", "plan-realloc", "plan-recheck", "state-plan", "state-shared", "state-request", "state-integration", "state-answer", "state-smoke", "prompt", "exec-args", "exec-setup", "exec-defect", "exec-handoff", "exec-records", "exec-select", "exec-route", "exec-verdict", "exec-fix-allowance", "exec-fix-reply", "exec-fixers", "exec-round-end", "exec-verdicts", "exec-review", "exec-findings", "exec-pause", "exec-groups", "exec-shared-before", "exec-shared-reply", "plan-args", "plan-prompt", "plan-skeleton", "plan-probes", "plan-linked", "plan-realloc-diff", "plan-validation", "accepted-record", "plan-contract-route", "plan-contract-drift", "plan-replan-keep", "plan-replan", "plan-streams-end", "plan-checker-reply", "plan-dependents"]);
 export const readsStdin = (cmd) => STDIN.has(cmd);
 
 export async function main(argv, { root = configRoot(), input = "", out = (l) => process.stdout.write(`${l}\n`), env = process.env } = {}) {
