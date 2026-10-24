@@ -442,6 +442,7 @@
     ".agents/workflows/lib/flow-exec.mjs",
     ".agents/workflows/lib/flow-execute.mjs",
     ".agents/workflows/lib/flow-files.mjs",
+    ".agents/workflows/lib/flow-gate-select.mjs",
     ".agents/workflows/lib/flow-gate.mjs",
     ".agents/workflows/lib/flow-git.mjs",
     ".agents/workflows/lib/flow-map.mjs",

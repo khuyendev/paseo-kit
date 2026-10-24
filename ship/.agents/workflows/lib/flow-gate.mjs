@@ -10,6 +10,7 @@ import { runArgv } from "../../harness/lib/proc.mjs";
 import { invokeHook } from "../../harness/adapter/hooks.mjs";
 import { withMutex } from "../../harness/adapter/mutex.mjs";
 import { evidenceVerdict, requiredSteps, executionProblem, gateStepName, obligationStepNames } from "../../harness/adapter/evidence.mjs";
+import { earlierObligations, metricHits, placeRegressions, pureTestFilter, readSuiteReport, reportVerdict } from "./flow-gate-select.mjs";
 import { fileTestArgvs, gateObligation, testCommandOf } from "../../harness/adapter/contract.mjs";
 import { sha256 } from "../../harness/lib/hash.mjs";
 import { producedCheck } from "../../harness/gsd/contracts.mjs";
@@ -512,6 +513,8 @@ export async function gate(root, phaseDir, input) {
   const logDir = evidenceFile.replace(/\.json$/, ".logs");
   const steps = [];
   const notes = [];
+  // Kit feedback 125: earlier obligations the cap did not run. Listed, never a silent skip.
+  let skippedObligations = [];
   const scopes = scopesOf(cfg, input.plans ?? [], prefixes);
   // CR-GSF-11: the identity is taken before anything runs; a change while the gate runs is a failed step.
   const inputs = inputsOf(root, scopes);
@@ -569,6 +572,33 @@ export async function gate(root, phaseDir, input) {
     }
     return runBounded(name, argv, timeoutS, extra);
   };
+  // Kit feedback 125 F3 / WildEraV6 12: a covered pure test filter is a step, not a second runner. The log starts `from suite report`.
+  const fromReport = (name, argv, verdict, meta) => {
+    const names = [...new Set(verdict.matched.map((m) => m.name))];
+    const text = ["from suite report", ...verdict.matched.map((m) => `${m.name}: ${m.status}${m.message ? ` (${m.message})` : ""}`)].join("\n");
+    const log = path.join(logDir, `${safeName(name)}.log`);
+    writeTextAtomic(log, `${text}\n`);
+    const outcome = verdict.outcome === "passed" ? "passed" : "failed";
+    return { name, argv, outcome, exitCode: outcome === "passed" ? 0 : 1, executed: { count: verdict.matched.length, targets: verdict.targets ?? [] }, log: toSlash(path.relative(root, log)), text, memory: sampleMemory(), fromSuiteReport: { tests: names }, ...meta };
+  };
+  // Regression line (F2) and numbers the adapter declared (F3). A passed regression is not worded as a failure.
+  const settle = (s, ob) => {
+    const reg = s.regression;
+    if (reg) {
+      const line = `${s.outcome === "passed" ? "regression" : "regression failure"}: wave ${reg.wave} plan ${reg.plans.join(", ")} touched ${reg.files.join(", ")}`;
+      if (!String(s.text ?? "").includes(line)) {
+        s.text = s.text ? `${s.text}\n${line}` : line;
+        if (s.log) {
+          try { fs.appendFileSync(path.join(root, s.log), `${line}\n`); } catch { /* the evidence log is the record */ }
+        }
+      }
+    }
+    const extra = s.fromSuiteReport ? (steps.find((x) => x.name === "test")?.text ?? "") : "";
+    const patterns = [...(cfg.adapter.metrics ?? []), ...(cfg.adapter.verify_vocabulary?.[ob?.kind]?.metrics ?? [])];
+    const hits = metricHits(`${s.text ?? ""}\n${extra}`, patterns);
+    if (hits.length) s.metrics = hits;
+    return s;
+  };
   // ADPT-10: the same machine-wide lock as every other adapter.mutex user.
   await withMutex(cfg.adapter.mutex, async () => {
     let gateRed = false;
@@ -594,22 +624,48 @@ export async function gate(root, phaseDir, input) {
       steps.push({ name: `contract-${c.plan}`, argv: [], outcome: c.ok ? "passed" : "failed", exitCode: c.ok ? 0 : 1, executed: { ...NOT_RUN }, log: toSlash(path.relative(root, log)), text, plan: c.plan, task: null, kind: "contract" });
       for (const n of c.notes) notes.push(`contract ${c.plan}: ${n}`);
     }
-    for (const p of input.plans ?? []) for (const [i, name] of obligationStepNames(p.id, p.verify).entries()) {
-      const ob = p.verify[i];
-      const meta = { plan: p.id, task: ob.task, kind: ob.kind };
-      if (gateRed || input.skipObligations) { steps.push(noRun(root, logDir, name, "unavailable", gateRed ? "not executed: an earlier gate failed" : "not executed: skipped", meta)); continue; }
+    // Kit feedback 125 F1: obligations of earlier plans of this wave whose files or verify targets the wave's diff touches.
+    const earlier = earlierObligations(root, cfg, { ...input, phaseDir }, obligationStepNames);
+    for (const n of earlier.notes) notes.push(n);
+    skippedObligations = earlier.skipped;
+    // WildEraV6 12: the suite report, only when the suite step finished and did not crash (102/112 stay in force otherwise).
+    const suiteStep = steps.find((s) => s.name === "test");
+    const reportSpec = cfg.adapter.test_report ?? null;
+    let report = { present: false, tests: [] };
+    if (reportSpec && input.suite !== false && suiteStep && !suiteStep.crash && (suiteStep.outcome === "passed" || suiteStep.outcome === "failed")) {
+      report = readSuiteReport(root, reportSpec);
+      if (!report.present) notes.push(`suite report ${reportSpec.path} ${report.error ? `unreadable (${report.error})` : "absent"}; test obligations run`);
+    } else if (reportSpec && input.suite !== false && suiteStep && (suiteStep.crash || (suiteStep.outcome !== "passed" && suiteStep.outcome !== "failed"))) {
+      notes.push(`suite report not used: the suite step ${suiteStep.crash ? "crashed" : suiteStep.outcome}`);
+    }
+    const jobs = [];
+    for (const p of input.plans ?? []) for (const [i, name] of obligationStepNames(p.id, p.verify).entries()) jobs.push({ name, plan: p, ob: p.verify[i] });
+    for (const job of earlier.selected) jobs.push(job);
+    for (const { name, plan: p, ob, regression } of jobs) {
+      const meta = { plan: p.id, task: ob.task, kind: ob.kind, ...(regression ? { regression } : {}) };
+      if (gateRed || input.skipObligations) { steps.push(settle(noRun(root, logDir, name, "unavailable", gateRed ? "not executed: an earlier gate failed" : "not executed: skipped", meta), ob)); continue; }
       const o = await gateObligation(cfg, { codeRoot: root, phaseDir, ...ob });
-      if (o.outcome !== "ready") { steps.push(noRun(root, logDir, name, o.outcome, o.reason, meta)); continue; }
+      if (o.outcome !== "ready") { steps.push(settle(noRun(root, logDir, name, o.outcome, o.reason, meta), ob)); continue; }
       const { argument, targets } = o;
+      const timeoutArgv = cmds.test_case_timeout_s && cmds.test_case_timeout_arg?.length ? cmds.test_case_timeout_arg.map((w) => w.split("{s}").join(String(cmds.test_case_timeout_s))) : [];
+      if (report.present && pureTestFilter(suiteArgv, o.argv, o.targets, timeoutArgv)) {
+        const verdict = reportVerdict(o.targets, report.tests);
+        if (verdict.covered) {
+          notes.push(`${name}: from suite report (${[...new Set(verdict.matched.map((m) => m.name))].join(", ")})`);
+          steps.push(settle(fromReport(name, o.argv, verdict, meta), ob));
+          checkpoint();
+          continue;
+        }
+        notes.push(`${name}: suite report does not list ${o.targets.join(", ")}; running`);
+      } else if (report.present && o.targets?.length) notes.push(`${name}: not a pure test filter; running`);
       const block = hangOf(o.argv);
       if (block) {
         block.h.blocked.push(name);
-        steps.push(noRun(root, logDir, name, "failed", `blocked by hang: ${block.files.join(", ")} timed out in step ${block.h.step} of this gate run; not run again in this pass`, { ...meta, argv: o.argv, blockedByHang: { step: block.h.step, files: block.files } }));
+        steps.push(settle(noRun(root, logDir, name, "failed", `blocked by hang: ${block.files.join(", ")} timed out in step ${block.h.step} of this gate run; not run again in this pass`, { ...meta, argv: o.argv, blockedByHang: { step: block.h.step, files: block.files } }), ob));
         continue;
       }
       const s = await runBounded(name, o.argv, o.timeoutS, meta);
       noteHang(s);
-      checkpoint();
       if (o.evidenceParser) {
         const ev = await runHook(root, cfg, o.evidenceParser, { op: "evidence", phaseDir, kind: ob.kind, argument, targets, exitCode: s.exitCode, stdoutPath: s.streams.stdout, stderrPath: s.streams.stderr });
         if (ev.error) { s.outcome = "unavailable"; s.text += `\n${ev.error}`; }
@@ -620,7 +676,8 @@ export async function gate(root, phaseDir, input) {
       } else if (!o.exitCodeSufficient) s.outcome = s.outcome === "passed" ? "unavailable" : s.outcome;
       const problem = executionProblem({ targets, executed: s.executed, exitCodeSufficient: o.exitCodeSufficient });
       if (problem) { s.outcome = "failed"; s.text += `\n${problem}`; }
-      steps.push(s);
+      steps.push(settle(s, ob));
+      checkpoint();
     }
   }, { log: (m) => notes.push(m) });
   const weak = checksStep(root, phaseDir, logDir, notes);
@@ -635,7 +692,7 @@ export async function gate(root, phaseDir, input) {
     const cls = failureClass(s.name, s.argv);
     if (cls) s.class = cls;
   }
-  const evidence = { v: 1, waveId: input.waveId, at: new Date().toISOString(), inputs, ...(input.suite === false ? { suite: false } : {}), steps: steps.map(({ text, ...s }) => s) };
+  const evidence = { v: 1, waveId: input.waveId, at: new Date().toISOString(), inputs, ...(input.suite === false ? { suite: false } : {}), ...(skippedObligations.length ? { skippedObligations } : {}), steps: steps.map(({ text, ...s }) => s) };
   writeJsonAtomic(evidenceFile, evidence);
   const visible = visibleFiles(root);
   const failures = steps.filter((s) => s.outcome !== "passed").map((s) => (s.kind === CHECKS_STEP
@@ -662,8 +719,9 @@ export async function gate(root, phaseDir, input) {
     return `${s.name} timed out after its limit (exit ${TIMEOUT_CODE})${h?.files.length ? `; hung test file(s) ${h.files.join(", ")} (${h.source === "argv" ? "named by its command" : h.source === "file" ? "killed at its whole-file bound" : "named last in its output"})${h.blocked.length ? `; blocked by hang in this pass: ${h.blocked.join(", ")}` : ""}` : ""}`;
   });
   // Kit feedback 108 F2: failing test files no plan of this gate owns, with the change that likely broke them when one names the file.
-  const unownedTests = unownedTestsOf(root, phaseDir, input.plans ?? [], failures, prefixes);
-  return { green: failures.length === 0, evidence: toSlash(path.relative(root, evidenceFile)), notes, timedOut, ...(crashed.length ? { crashed } : {}), ...(hung.length ? { hung } : {}), ...(suiteArgv ? { testCommand: suiteArgv, caseTimeoutS } : {}), failures, failureCount: failures.length, checks: weak.summary, ...attribution, ...(unownedTests.length ? { unownedTests } : {}) };
+  const unownedTests = placeRegressions(failures, attribution, steps, unownedTestsOf(root, phaseDir, input.plans ?? [], failures, prefixes));
+  const metrics = steps.flatMap((s) => (s.metrics ?? []).map((m) => ({ step: s.name, plan: s.plan ?? null, name: m.name, value: m.value, raw: m.raw })));
+  return { green: failures.length === 0, evidence: toSlash(path.relative(root, evidenceFile)), notes, timedOut, ...(crashed.length ? { crashed } : {}), ...(hung.length ? { hung } : {}), ...(suiteArgv ? { testCommand: suiteArgv, caseTimeoutS } : {}), failures, failureCount: failures.length, checks: weak.summary, ...attribution, ...(unownedTests.length ? { unownedTests } : {}), ...(skippedObligations.length ? { skippedObligations } : {}), ...(metrics.length ? { metrics } : {}) };
 }
 
 // A failed step as the fixers see it: the files its output names, and the test files a fixer may run to see it (kit feedback 102

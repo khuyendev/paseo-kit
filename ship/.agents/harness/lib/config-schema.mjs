@@ -117,7 +117,9 @@ export const SCHEMA = obj({
       runner: nullable(str({ nonEmpty: true })),
       evidence_parser: nullable(str({ nonEmpty: true, repoPath: true })),
       exit_code_sufficient: bool(),
-    })),
+      // Kit feedback 125 F3: numbers to record from this kind's output. Optional; part of the gate hash (it lives on the vocabulary).
+      metrics: arr(str({ nonEmpty: true })),
+    }, ["metrics"])),
     ownership: obj({
       owns_forms: arr(obj({ prefix: str({ nonEmpty: true }), maps_to: str({ nonEmpty: true }) })),
       shared: obj({ globs: strs(), predicate: nullable(str({ nonEmpty: true, repoPath: true })) }),
@@ -163,7 +165,12 @@ export const SCHEMA = obj({
     doc_tools: strs(),
     // Kit feedback 120: extra generated-file globs (string or {glob, source?}). Absent = none. Not a default, so an old overlay loads.
     generated: arr(globEntry()),
-  }, ["checks", "catalogs", "crash_signatures", "doc_tools", "generated"]),
+    // Kit feedback 125 F3 / WildEraV6 12. Outside commands and verify_vocabulary, so they do not move the gate hash.
+    // metrics: regexes recorded from an obligation's output (group value, or the first capture). test_report: the suite's
+    // machine-readable report; a pure test-filter obligation covered by it is not started again.
+    metrics: arr(str({ nonEmpty: true })),
+    test_report: obj({ path: str({ nonEmpty: true, repoPath: true }), format: str({ oneOf: ["junit", "json"] }) }),
+  }, ["checks", "catalogs", "crash_signatures", "doc_tools", "generated", "metrics", "test_report"]),
   gsd: obj({
     roles: map(obj({ model: str({ nonEmpty: true }), effort: effort(), reason: str() }, ["model", "effort", "reason"])),
     granularity: str({ oneOf: ["coarse", "standard", "fine"] }),
@@ -222,7 +229,9 @@ export const SCHEMA = obj({
     mvp_mode: bool(),
     // Kit feedback 121: map-drift count that stops gsd-plan and gsd-research. Absent = 10 × drift_threshold; 0 = warn only.
     map_drift_block: int(),
-  }, ["tdd_mode", "mvp_mode", "map_drift_block"]),
+    // Kit feedback 125 F1: how many earlier-plan obligations a wave gate runs, cheapest first. Absent = 3. 0 lists them and runs none.
+    wave_regression_cap: int(0),
+  }, ["tdd_mode", "mvp_mode", "map_drift_block", "wave_regression_cap"]),
 });
 
 export const TOP_LEVEL_KEYS = Object.freeze(Object.keys(SCHEMA.fields));
@@ -389,6 +398,20 @@ function checkRelations(cfg) {
       new RegExp(src);
     } catch (e) {
       throw new ConfigError(`adapter.crash_signatures[${i}]`, `invalid regular expression (${e.message})`);
+    }
+  });
+  (cfg.adapter.metrics ?? []).forEach((src, i) => {
+    try {
+      new RegExp(src);
+    } catch (e) {
+      throw new ConfigError(`adapter.metrics[${i}]`, `invalid regular expression (${e.message})`);
+    }
+  });
+  for (const [kind, entry] of Object.entries(cfg.adapter.verify_vocabulary)) (entry.metrics ?? []).forEach((src, i) => {
+    try {
+      new RegExp(src);
+    } catch (e) {
+      throw new ConfigError(`adapter.verify_vocabulary.${kind}.metrics[${i}]`, `invalid regular expression (${e.message})`);
     }
   });
 }
