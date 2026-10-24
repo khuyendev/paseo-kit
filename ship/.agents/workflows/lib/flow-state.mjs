@@ -294,7 +294,10 @@ export function stateAnswer(root, phaseDir, input) {
     let matched = 0;
     let closed = [];
     if (x.kind === "shared") {
-      const hit = st.shared.filter((s) => !s.applied && (s.wave === undefined || waveMatches(s.wave, x.wave)) && (!x.path || slash(s.path ?? "") === x.path));
+      // Kit feedback 105 F2: an answer that stores path: null (or "") clears only entries with no file. An answer a kit before
+      // this one wrote has no path key and still clears every open entry of the wave.
+      const fileless = Object.hasOwn(x, "path") && !String(x.path ?? "").trim();
+      const hit = st.shared.filter((s) => !s.applied && (s.wave === undefined || waveMatches(s.wave, x.wave)) && (fileless ? !s.path : (!x.path || slash(s.path ?? "") === x.path)));
       for (const s of hit) {
         s.applied = true;
         s.cleared = { answer: x.id, reason: x.reason };

@@ -6,7 +6,7 @@ import { sha256, textDigest } from "../lib/hash.mjs";
 import { done, fail, idList, lf, none, readIf, rel } from "./common.mjs";
 import { producesOf, producesProblems, resolveEdge } from "./contracts.mjs";
 import { balancedGlob, classify, covers, filesUnder, hasGlob, ownsPath, sharedPaths } from "./adapter-hooks.mjs";
-import { normPlanId, phaseFile, planIds, planPath, readPlans, summaryPath } from "./planning.mjs";
+import { normPlanId, phaseFile, planIds, planPath, readPlans, sharedLinePath, summaryPath } from "./planning.mjs";
 import { inheritedTests } from "./inherited-tests.mjs";
 import { filesPerPlanLines, ownershipProblems, waveOverlaps } from "./plan-checks.mjs";
 import { loadRequirements } from "./requirements.mjs";
@@ -329,8 +329,8 @@ export async function handoff(g, phase, { subset, prefix, noTracerSplit = false 
 export function sharedChangePaths(text) {
   const out = [];
   for (const line of String(text).split(/\r?\n/)) {
-    const m = /^\s*(?:[-*]\s+)?`?([^\s:`]+\.[A-Za-z0-9]+|[^\s:`]*\/[^\s:`]+)`?\s*:/.exec(line);
-    if (m && !/^[a-z]+:\/\//i.test(line.trim())) out.push(m[1].replace(/\\/g, "/").replace(/^\.\//, ""));
+    const p = sharedLinePath(line);
+    if (p) out.push(p);
   }
   return [...new Set(out)];
 }

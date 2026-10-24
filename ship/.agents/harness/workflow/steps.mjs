@@ -323,7 +323,11 @@ export function executeSteps(kit, run) {
   // owner clears; kit feedback 79: a request for the kit-feedback document is a kit note, logged and in the result.
   async function routeRequests(t, res) {
     const r = (await flow(["exec-route"], { from: t.plan, reply: res, plans: allTasks.filter((x) => x.plan !== t.plan).map(asPlan), known: kitNotes })).json ?? {};
-    for (const n of r.notes ?? []) { kitNotes.push(n); log(`kit note ${n.plan}${n.from ? ` (a request for ${n.path} was refused)` : ""}: ${n.note}`); }
+    for (const n of r.notes ?? []) {
+      kitNotes.push(n);
+      const why = n.for === "gate" ? ` (a request for ${n.path} is a note for the gate)` : n.from ? ` (a request for ${n.path} was refused)` : "";
+      log(`kit note ${n.plan}${why}: ${n.note}`);
+    }
     for (const { plan, q } of r.routes ?? []) {
       if (plan && progress.plans[plan]?.commit === undefined) {
         const routed = await state("request", { op: "route", plan, ...q, base: P.requestCheck !== "off" });
