@@ -121,7 +121,9 @@ export function kitHelpers({ shell, agent, parallel }) {
     return { code: r.code, json: lastJson(r.stdout), stderr: r.stderr };
   }
   async function loadCfg() {
-    const r = await shell(["node", PH, "config"]);
+    // Same tail as run(): the default 20000 characters cut a config that had grown past it, and every workflow
+    // then failed at its first step.
+    const r = await shell(["node", PH, "config"], { tailChars: VERB_TAIL_CHARS });
     if (r.code !== 0) throw new Error(`ph config failed: ${String(r.stderr).split(/\r?\n/)[0]}`);
     return JSON.parse(r.stdout);
   }

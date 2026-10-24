@@ -1,10 +1,13 @@
 <!--
 The finding verifier of gsd-execute (agent type finding-verifier, read-only; G081). Contract: the verdict schema of exec-setup;
 exec-verdicts merges the answers (a second verifier decides what the first left uncertain). Variables: plan, findings (JSON
-list), metrics (gsd.review_metrics: the plan-catchable tag), digest.
+list), stackSkill (adapter.stack_skill path, or empty: no line), metrics (gsd.review_metrics: the plan-catchable tag), digest.
 -->
 Verify these review findings of plan {{plan}} independently, read-only: trace each trigger through the code and answer confirmed, refuted or uncertain with evidence.
 
+{{#stackSkill}}
+Stack skill to follow: {{stackSkill}}
+{{/stackSkill}}
 Findings (JSON): {{findings}}
 
 {{#metrics}}

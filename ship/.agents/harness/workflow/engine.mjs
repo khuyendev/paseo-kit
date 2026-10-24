@@ -62,6 +62,8 @@ const shellText = (cmd) => (Array.isArray(cmd) ? cmd.map(String).join(" ") : Str
  * {roleHash, model, effort, provider, readOnly, notesHash} or {error}; it throws configuration errors.
  * host.admit(spec without n) resolves {release()} or {reason} (a named null, FLOW-14); the runner gets it as
  * spec.admission. spec.journalAgent(agentId) journals an agent as soon as it exists, so a resume can stop it (G123).
+ * spec.record(result) journals the finished call before the host archives a one-shot agent (INV-15: an archived
+ * agent cannot be read). The engine does not journal that call again.
  */
 export async function runWorkflow(o) {
   const { limits, host, out } = o;
@@ -169,6 +171,7 @@ export async function runWorkflow(o) {
     let r;
     let admission = null;
     let b = null;
+    let recorded = false;
     try {
       // Queued calls recheck at admission; only already running agents can overshoot the budget.
       checkBudget();
@@ -192,8 +195,13 @@ export async function runWorkflow(o) {
         journal({ ...b, kind: "agent", status: "start" });
         // Written before the call finishes: an agent the run is killed in the middle of stays known to the resume (G123).
         const journalAgent = (agentId) => journal({ n: b.n, kind: "agent", key, occ, label, phase, status: "created", agentId });
+        // The reply is journaled before a one-shot agent is archived (INV-15).
+        const record = (got) => {
+          finish(b, got);
+          recorded = true;
+        };
         try {
-          r = await host.runner({ ...spec(b.n), admission, journalAgent });
+          r = await host.runner({ ...spec(b.n), admission, journalAgent, record });
         } catch (e) {
           r = { status: "null", reason: `runner error: ${errText(e)}`, tokens: 0 };
         }
@@ -204,7 +212,7 @@ export async function runWorkflow(o) {
       admission?.release?.();
       state.sem.release();
     }
-    finish(b, r);
+    if (!recorded) finish(b, r);
     return reply(r);
   }
 

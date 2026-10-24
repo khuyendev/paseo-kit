@@ -137,7 +137,7 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
   }
 
   async function runner(spec) {
-    const { n, opts, identity, label, workflowName, prompt, admission, journalAgent } = spec;
+    const { n, opts, identity, label, workflowName, prompt, admission, journalAgent, record } = spec;
     const t0 = clock.now();
     const def = identity.def;
     const sel = identity.sel;
@@ -154,6 +154,9 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
     let newWorktree = false;
     let abandoned = false;
     let ok = false;
+    // The value settle journals before it archives. Usage is snapped here, while the agent can still be read (INV-15).
+    let outcome = null;
+    const deliver = (value) => (outcome = value);
     if (key !== undefined || opts.keep === true) admission?.keep?.();
 
     const usageNow = () => session.usage.get(agentId) ?? { turns: 0, input: 0, cachedInput: 0, output: 0, reportedCostUsd: null };
@@ -323,17 +326,17 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
       }
       if (!opts.schema) {
         ok = true;
-        return result("ok", { result: text });
+        return deliver(result("ok", { result: text }));
       }
       const seen = [];
       for (let attempt = 1; ; attempt++) {
         const { value, errors } = parseReply(text, opts.schema);
         if (!errors.length) {
           ok = true;
-          return result("ok", { result: value });
+          return deliver(result("ok", { result: value }));
         }
         seen.push(...errors.map((e) => `#${attempt} ${e}`));
-        if (attempt > cfg.schema_retries) return result("null", { reason: `reply did not match the schema after ${attempt} replies: ${seen.slice(0, 3).join("; ")}` });
+        if (attempt > cfg.schema_retries) return deliver(result("null", { reason: `reply did not match the schema after ${attempt} replies: ${seen.slice(0, 3).join("; ")}` }));
         text = await send(schemaRetryPrompt(errors, opts.schema));
       }
     } catch (e) {
@@ -344,7 +347,7 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
         out(`log warning: creation cleanup unconfirmed for ${agentId}; retaining its worktree`);
       }
       noteTransport(e);
-      return result("null", { reason: errText(e) });
+      return deliver(result("null", { reason: errText(e) }));
     } finally {
       wd?.disarm();
       gate?.open();
@@ -352,6 +355,8 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
     }
 
     async function settle() {
+      // Journal the reply before a one-shot archive: an archived agent cannot be read (INV-15).
+      if (outcome) record?.(outcome);
       if (!agentId) {
         if (newWorktree && abandoned) {
           out(`log warning: worktree ${worktree.path} kept: agent creation was still running at the deadline`);

@@ -21,7 +21,8 @@ import { resolveModel } from "./models.mjs";
 import { leftoverWorktrees, runGit } from "./worktrees.mjs";
 import { setupEntries, setupGaps, setupProblems } from "./worktree-setup.mjs";
 
-const MB_PER_AGENT = 350;
+// A Claude agent plus the project's MCP servers. The old note said 350 MB for the process alone.
+const MB_PER_AGENT = 700;
 
 async function daemonLines(ctx, line) {
   let session = null;
@@ -212,7 +213,9 @@ export async function runDoctor(ctx, { freemem = os.freemem, claudeVersionText =
   });
   const needMb = ctx.cfg.max_subagents * MB_PER_AGENT;
   const freeMb = Math.round(freemem() / 2 ** 20);
+  const fit = Math.max(1, Math.floor(freeMb / MB_PER_AGENT));
   if (freeMb < needMb) line("note", `free RAM ${freeMb} MB is below max_subagents ${ctx.cfg.max_subagents} x ${MB_PER_AGENT} MB = ${needMb} MB; lower max_subagents or free memory`);
+  line("note", `suggested max_live_subagents ${fit} (free RAM ${freeMb} MB / ${MB_PER_AGENT} MB per agent)`);
   line("note", "this check does not verify tools loaded into a running session (restart the session after changing the mod or the provider config)");
   return problems ? 2 : 0;
 }

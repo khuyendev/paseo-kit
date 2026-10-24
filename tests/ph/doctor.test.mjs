@@ -104,7 +104,8 @@ test("PHCL-04 doctor: a main provider without SendMessage gets no line about it;
 test("PHCL-04 doctor low-RAM note and mod lines", async () => {
   const s = setup();
   const r = await doctor(s, { freemem: () => 2 * 2 ** 30, version: null });
-  has(r, /^note free RAM 2048 MB is below max_subagents 20 x 350 MB = 7000 MB/);
+  has(r, /^note free RAM 2048 MB is below max_subagents 20 x 700 MB = 14000 MB/);
+  has(r, /^note suggested max_live_subagents 2 \(free RAM 2048 MB \/ 700 MB per agent\)$/);
   has(r, /^problem file mod missing: /);
   has(r, /^note Claude Code version unknown/);
   has(r, /^note file mod not selected/);

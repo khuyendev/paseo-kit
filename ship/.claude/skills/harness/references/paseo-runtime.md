@@ -264,7 +264,7 @@ most `max_agents_per_workflow` agents; one `parallel()`/`pipeline()` call takes 
 
 Limits learned on the owner's machine (2026-10-04, 32 GB RAM):
 
-- Each agent is a Claude Code process, about 350 MB; 30 at once left 5 GB free and the runner died out of memory.
+- Each agent is a Claude Code process plus its MCP servers, about 700 MB; 30 at once left 5 GB free and the runner died out of memory.
   Keep `max_subagents` at 20 unless RAM is free; agents of a killed runner stay alive (idle) until archived, so
   run `ph archive --run <runId>` after stopping a run.
 - A prompt above `max_prompt_bytes` is refused (`null`): the daemon closes a client socket that falls behind its

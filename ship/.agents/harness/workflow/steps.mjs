@@ -287,6 +287,8 @@ export function executeSteps(kit, run) {
     return null;
   }
   const fromMain = (rel) => (mainRoot ? `${mainRoot}/${rel}` : rel);
+  // Empty when the adapter names no stack skill, so the review templates omit the line.
+  const stackSkillArg = () => (S.stackSkill ? fromMain(S.stackSkill) : "");
 
   // ---- executors (GSDF-41..43, GSDF-45, GSDF-52) ----
   // Every call of one executor session carries the same fixed options, worktree isolation included (CR-GSF-04).
@@ -524,7 +526,7 @@ export function executeSteps(kit, run) {
   const failingTestsOf = (failures) => [...new Set((failures ?? []).flatMap((f) => f.tests ?? []))];
   const fixerPrompt = async (owns, findings, failures, requests, digest) => {
     const tests = failingTestsOf(failures);
-    return renderPrompt("fixer", { owns: JSON.stringify(owns), generated: S.generated, verifies: P.fixer.verifies, build: String(JSON.stringify(cmds.build)), tests: String(JSON.stringify(testCommand ?? testArgv)), attempts: await allowanceOf(tests), minutes: String(P.fixer.minutes), metrics: metricsOn, findings: findings.length ? JSON.stringify(findings.map(findingBrief)) : "", failures: failureText(failures), requests: requests.length ? JSON.stringify(requests) : "", digest });
+    return renderPrompt("fixer", { owns: JSON.stringify(owns), generated: S.generated, stackSkill: stackSkillArg(), verifies: P.fixer.verifies, build: String(JSON.stringify(cmds.build)), tests: String(JSON.stringify(testCommand ?? testArgv)), attempts: await allowanceOf(tests), minutes: String(P.fixer.minutes), metrics: metricsOn, findings: findings.length ? JSON.stringify(findings.map(findingBrief)) : "", failures: failureText(failures), requests: requests.length ? JSON.stringify(requests) : "", digest });
   };
   // The fixer repairs confirmed defects and failed checks in existing code, where more effort finds the edge cases its tests miss
   // (owner decision 2026-10-22): it runs at FIXER_EFFORT on its own tier's model unless gsd.roles.fixer sets an effort.
@@ -756,7 +758,7 @@ export function executeSteps(kit, run) {
     let seen = null;
     const dg = digestLine(`findings:${plan}`, await digestOf({ files: findingFiles(gated) }));
     const ask = async (list, label, second = false) => {
-      const prompt = await renderPrompt("finding-verifier", { plan, findings: JSON.stringify(list.map(findingBrief)), metrics: metricsOn, digest: dg });
+      const prompt = await renderPrompt("finding-verifier", { plan, findings: JSON.stringify(list.map(findingBrief)), stackSkill: stackSkillArg(), metrics: metricsOn, digest: dg });
       const r = await call(prompt, { label, agentType: agentFor("finding_verifier", "finding-verifier"), role: "finding_verifier", readOnly: true, schema: schemas.verdict });
       // GSDF-01: a quota, credit or auth failure is never retried.
       if (r.result === null && fatal(r.reason)) return { stop: owner("Review", `${second ? "second " : ""}finding verifier of ${plan} failed: ${r.reason}`, { answer: ANSWER.rerun("rerun after the reset"), failure: classify(r.reason), findings: gated.map(findingBrief) }) };
@@ -819,7 +821,7 @@ export function executeSteps(kit, run) {
     }
     const record = p.record;
     if (record.scope.length) {
-      const prompt = await renderPrompt("code-review", { plan: t.plan, planPath: planPath(t.plan), depth: String(P.reviewDepth), scope: record.scope.join(", "), lines: p.changedText, codeOnly, built, lenses: p.lensText, digest: digestLine(`review:${t.plan}`, record.stamp) });
+      const prompt = await renderPrompt("code-review", { plan: t.plan, planPath: planPath(t.plan), depth: String(P.reviewDepth), scope: record.scope.join(", "), lines: p.changedText, codeOnly, built, lenses: p.lensText, stackSkill: stackSkillArg(), digest: digestLine(`review:${t.plan}`, record.stamp) });
       // Each reviewer reviews the plan on its own; their findings are kept apart (ids R2-, R3-, ...), not merged.
       const replies = await parallel(P.reviewers.map((rv, k) => async () => {
         const opts = { label: `review-${t.plan}${k ? `-r${k + 1}` : ""}`, agentType: agentFor("reviewer", "gsd-code-reviewer"), role: "reviewer", readOnly: true, schema: schemas.findings, ...(rv.model ? { model: rv.model } : {}), ...(rv.effort ? { effort: rv.effort } : {}) };
