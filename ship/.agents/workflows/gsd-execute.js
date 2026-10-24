@@ -31,7 +31,7 @@ const { N, prefix, mode: execMode, worktreeMode } = S;
 // smoke builds (adapter.smoke_triggers), the branches a commit warns about (gsd.branching none, gsd.protected_branches).
 const R = executeSteps({ phaseDir, args: a, cfg, setup: S, policy: { pending: pendingOn, requestCheck: g.request_check ?? "auto", reviewLimit, reviewers, reviewDepth: g.review_depth, fixer: { verifies: Boolean(g.fixer_verifies_itself), attempts: g.fixer.max_build_attempts, minutes: g.fixer.minutes }, smokeTriggers: cfg.adapter.smoke_triggers ?? [], protectedBranches: g.branching === "none" ? g.protected_branches ?? [] : [] } });
 const { result, owner, ANSWER, GATE_RED, state, unsaved, tracked, planInfo, index, selectedTask, skipped, worktrees, inFlight, defectEvent, call, integrationPrompt, fixerOpts, classify, aloneOnTree } = R;
-const { dispatch, integrate, haltStop, haltedStop, partialStop, dirtyStop, seedTrees, acceptedStop, pendingTransfers, declareShared, codeWave, runGate, gateNow, smokeStop, strayStop, unownedStop, applyShared, fixRounds } = R;
+const { dispatch, integrate, haltStop, haltedStop, partialStop, dirtyStop, seedTrees, acceptedStop, pendingTransfers, declareShared, codeWave, resumeTransfer, runGate, gateNow, smokeStop, strayStop, unownedStop, applyShared, fixRounds } = R;
 const { reviewPlan, reviewAll, reviewFix, unverifiedStop, planFiles, commitWaves, track, trackCommitted, stopAsked, pauseBefore, paused, finish, phaseGate } = R;
 if (S.metricsOn) await defectEvent(null);
 // kit-feedback 66: the graph schedule needs per-wave commits; kit feedback 88: batch mode commits once, after the last wave, so
@@ -139,8 +139,8 @@ async function graphRun() {
     order.push(`start ${t.plan}`);
     await declareShared(w, [t.plan]);
     if (p.has_summary) {
-      inFlight.add(t.plan);
-      log(`plan ${t.plan}: SUMMARY present but not committed; it rejoins its checks, review and commit`);
+      const landed = await resumeTransfer(t); if (landed?.stop) return stopPlans([t.plan], landed.stop);
+      inFlight.add(t.plan); log(`plan ${t.plan}: SUMMARY present but not committed; it rejoins its checks, review and commit`);
     } else {
       if (worktreeMode) {
         const dirty = await flow(["dirty-owned", phaseDir], { plans: [{ id: t.plan, owns: t.owns ?? [] }] });
