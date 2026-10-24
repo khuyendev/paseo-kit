@@ -54,6 +54,11 @@ export function parseArgs(argv, spec) {
       continue;
     }
     if (i + 1 >= argv.length) throw new UsageError(`--${key} needs a value`);
+    // `list`: the same option repeats (`--path a --path b`); a string option stays last-wins.
+    if (spec[key] === "list") {
+      (opts[key] ??= []).push(argv[++i]);
+      continue;
+    }
     opts[key] = argv[++i];
   }
   return { opts, args };

@@ -343,6 +343,7 @@
     ".agents/harness/gsd/inherited-tests.mjs",
     ".agents/harness/gsd/outline.mjs",
     ".agents/harness/gsd/owner-answers.mjs",
+    ".agents/harness/gsd/owns.mjs",
     ".agents/harness/gsd/phases.mjs",
     ".agents/harness/gsd/plan-checks.mjs",
     ".agents/harness/gsd/planning.mjs",
