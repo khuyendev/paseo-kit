@@ -134,18 +134,21 @@ test("GSDF-49 CR-GSF-10 phase review still calls a reviewer for the whole phase 
   assert.match(reviews[0].prompt, /src\/01-02\/impl.js/);
 });
 
-test("GSDF-30 CR-GSF-15 the same partially completed gap wave resumes but a fresh gap run cannot", async () => {
+test("GSDF-30 CR-GSF-15 a gap wave halted before its gate is continued by a new run; one that reached the gate is capped", async () => {
   const w = makeExecWorld({ waves: [[task("01-01"), task("01-02")]], prefix: "gap-", meta: { "01-01": { gap: true }, "01-02": { gap: true } } });
   real(w, "attempt show"); real(w, "attempt record");
   await w.gsd.call(["attempt", "record", PD, "--kind", "gap"], JSON.stringify({ runId: "wf_plan", inputDigest: "a".repeat(64), before: "b".repeat(64), done: true, result: { waveExecuted: false } }));
   const first = await exec(w, { "exec-01-02": () => NULL("quota exhausted") }, { gapsOnly: true });
   assert.equal(first.result.status, "needs-owner");
   fs.rmSync(path.join(w.root, `${PD}/01-02-HALT.json`));
+  // Kit feedback W14: the halt was before the gate, so a rerun with a new run id continues the wave.
   const fresh = await exec(w, {}, { gapsOnly: true }, "wf_fresh");
-  assert.equal(fresh.calls.length, 0);
-  const resumed = await exec(w, {}, { gapsOnly: true });
-  assert.equal(resumed.result.status, "executed", JSON.stringify(resumed.result));
-  assert.deepEqual(resumed.calls.filter((c) => c.opts.label.startsWith("exec-")).map((c) => c.opts.label), ["exec-01-02"]);
+  assert.equal(fresh.result.status, "executed", JSON.stringify(fresh.result));
+  assert.deepEqual(fresh.calls.filter((c) => c.opts.label.startsWith("exec-")).map((c) => c.opts.label), ["exec-01-02"]);
+  const attempt = JSON.parse(w.read(`${PD}/gap-attempt.json`));
+  assert.equal(attempt.result.waveExecuted, true);
+  assert.equal(attempt.result.waveReached, "gate");
+  assert.equal(attempt.result.waveRunId, "wf_fresh");
 });
 
 test("GSDF-46 CR-GSF-16 fatal finding-verifier failures never retry", async () => {

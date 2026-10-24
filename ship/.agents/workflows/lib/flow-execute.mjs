@@ -286,6 +286,55 @@ export function resumeGate(root, phaseDir, { plans, integration = readState(root
   return { ok: problems.length === 0, problems, head: now.head, reconciled, accepted, ...(problems.length ? gateStop(phaseDir, problems) : {}), code: problems.length ? 1 : 0 };
 }
 
+// Move the execute baseline's head forward to `now` when `now` descends from it. The dirty snapshot and the gate
+// config stay: only the commit window moves. A sideways or older tip is left (a parallel accept already passed it).
+function advanceBase(root, phaseDir, now) {
+  const file = baselineFile(root, phaseDir);
+  const base = readJsonIf(file, null);
+  if (!base || typeof base !== "object" || base.head === now) return false;
+  if (base.head && git(root, ["merge-base", "--is-ancestor", base.head, now], { allowFail: true }).code !== 0) return false;
+  writeJsonAtomic(file, { ...base, head: now });
+  return true;
+}
+
+// Kit feedback W13: classify a HEAD move during an executor call.
+// {before, head, worktreeHead?, own?: [sha], plan, owns, waveOwns} ->
+// {kind: none|executor|foreign|accepted, reason?, commits?, head?, advanced?}.
+// executor: a new commit touches files this plan owns, the worktree branch moved off main, or the history is unrelated.
+// foreign: a commit touches a file of the running wave (reason names the commit) and the baseline stays.
+// accepted: every other new commit touches no file of the wave; the baseline head moves forward to `head`.
+// none: HEAD did not move, or every new commit is one of `own` (the orchestrator's).
+export function headMove(root, phaseDir, { before, head: now, worktreeHead = null, own = [], owns = [], waveOwns = [] } = {}) {
+  const prefixes = ownsPrefixes(root);
+  const ownSet = new Set(own);
+  const planOwns = owns ?? [];
+  const wave = waveOwns?.length ? waveOwns : planOwns;
+  const covers = (files, list) => files.some((f) => owned(f, list, prefixes));
+  if (worktreeHead && worktreeHead !== now && !ownSet.has(worktreeHead)) {
+    const onMain = Boolean(now) && git(root, ["merge-base", "--is-ancestor", worktreeHead, now], { allowFail: true }).code === 0;
+    if (!onMain) return { kind: "executor", reason: "executor committed (HEAD moved)", where: "worktree" };
+  }
+  if (!before || !now || before === now) return { kind: "none" };
+  const moved = gitLines(root, ["rev-list", "--reverse", `${before}..${now}`], { allowFail: true });
+  if (!moved.length) return { kind: "executor", reason: "executor committed (HEAD moved)", where: "unrelated" };
+  const foreign = [];
+  const accepted = [];
+  for (const sha of moved) {
+    if (ownSet.has(sha)) continue;
+    const files = commitFiles(root, sha).map((f) => toSlash(f));
+    if (covers(files, planOwns)) return { kind: "executor", reason: "executor committed (HEAD moved)", sha, files };
+    if (covers(files, wave)) foreign.push({ sha, files: files.filter((f) => owned(f, wave, prefixes)) });
+    else accepted.push({ sha, files });
+  }
+  if (foreign.length) {
+    const first = foreign[0];
+    const extra = foreign.length > 1 ? `; also ${foreign.slice(1, 3).map((c) => `${c.sha.slice(0, 7)} (${c.files.slice(0, 5).join(", ")})`).join("; ")}` : "";
+    return { kind: "foreign", reason: `foreign commit ${first.sha.slice(0, 7)} touches owned files (${first.files.slice(0, 5).join(", ")})${extra}`, commits: foreign };
+  }
+  if (!accepted.length) return { kind: "none" };
+  return { kind: "accepted", commits: accepted, head: now, advanced: advanceBase(root, phaseDir, now) };
+}
+
 // The plans of the phase with a recorded commit (execute-progress.json or a plan entry of commits.json).
 export function committedPlans(root, phaseDir, commits) {
   const st = readState(root, phaseDir);
