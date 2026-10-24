@@ -6,6 +6,34 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- Kit feedback 118-126 and WildEraV6 8-12 (owner 2026-10-25: "Check feedback r làm tiếp"; six Grok 4.7 agents, notes
+  kit-bughunt/fb12/design/<ID>.md). Gate attribution (119, 124, W10): failing files come from error lines (warnings
+  unless the argv makes them non-fatal) and failed tests, never from analyzer infos; `loading X` / failed-to-load test
+  files are not failing tests, and when the build step has errors in files this wave owns they go to those owners with
+  the analyzer excerpt; owned failures get their fix round before the unowned-test grant stop, whose answer is now a
+  grant to a plan of this wave (`ph gsd grant --plan` accepts any plan of the phase); `likely broken by` names the line
+  it matched; MSVC `file(line,col): error Cnnnn`, clang/gcc `file:line:col: error:` and `error LNK` with absolute Windows
+  paths map to repo files and owners; an unresolved integration fixer stops a round only when no placed failure still
+  has a fixer. Executors (122): optional `adapter.commands.check_files` (a static check of the executor's changed owned
+  files, `{files}`) in the executor brief; optional `gsd.executor_verifies_itself` (default false) lets executors run
+  their new test files through `ph gsd test-run`; first-gate failures are counted as `compile` / `behaviour`.
+  Obligations (125, W12): a wave gate also runs earlier plans' obligations whose files its diff touches, cheapest first
+  up to `gsd.wave_regression_cap` (default 3), and puts a failure on the plan of this wave that touched them; optional
+  `adapter.metrics` records numbers from obligation output; optional `adapter.test_report` ({path, format junit|json})
+  lets a pure test-filter obligation take its verdict from the suite's report instead of starting the runner again (a
+  missing, failed or skipped test still fails). Hand edits and halts (123, W9): a recorded hand edit to a file of an
+  already committed plan is committed as `fix(<id>): hand edit HE-n` before the wave; the unowned stop names the record
+  and the adopt command; new `ph gsd hand-edit.attach <phase> <HE-n|file> --plan <id>`; a halt cleared without
+  --resume re-runs the executor when the plan's SUMMARY is the halted attempt. Review and map (120, 121): review scope
+  drops files matching `adapter.ownership.regenerated` (entries may be {glob, source}) or optional `adapter.generated`
+  and the reviewer is told to review the source and generator; the watchdog names generated rereads; map drift is an
+  advisory in the result and final line, and gsd-plan / gsd-research stop at Preconditions past `gsd.map_drift_block`
+  (default 10 x drift_threshold; 0 = warn only; answer remap or `staleMapReason`). Runtime (118, 126, W8, W11): `ph runs`
+  shows dead runners as `dead`, `--live`, doctor names `ph runs --prune`; `ph worktrees --prune --committed-phase <N>`
+  archives each delta, unlinks junctions and symlinks, removes the worktrees; unregistered dirs are `orphan`; harness
+  agent providers get `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` (workers no longer load the main session's memory); optional
+  `adapter.commands.test_file_args` maps test files to the runner's arguments for `ph gsd test-run` and named-file gate
+  runs, checked once by `ph harness lint`.
 - Role text A + B, kit feedback 117 follow-up (owner 2026-10-24: keep the role text as upstream GSD and skills as
   upstream; "Ok làm A thôi. Giữ đúng stream. Làm B cũng dc, theo config project"; graphify "bỏ cho gọn"; one Grok 4.7
   agent, note kit-bughunt/fb11/design/RAB.md). Measured on the 2026-10-24 transcripts: the planner ran
