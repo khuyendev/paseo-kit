@@ -16,6 +16,7 @@ import { producedCheck } from "../../harness/gsd/contracts.mjs";
 import { gitLines, head } from "./flow-git.mjs";
 import { contentHash, owned, ownsPrefixes, ownsScope, specificOwners } from "./flow-owns.mjs";
 import { checksStop, checkWeakening, isTestFile } from "./flow-checks.mjs";
+import { fileTimeoutS, runBoundedTests } from "../../harness/gsd/test-run.mjs";
 
 const TIMEOUT_CODE = 124;
 const EXCERPT_LINES = 40;
@@ -195,15 +196,20 @@ function interruptedSteps(root, dir, waveId, inputs) {
 }
 
 // The combined log is the human one; stdout and stderr also go to their own files for an evidence parser (G077).
-async function step(root, logDir, name, argv, timeoutS, extra = {}) {
-  const r = await runArgv(argv, { cwd: root, timeoutMs: timeoutS * 1000 });
+// A whole-file kill sets r.hungFile; the step then names that file (source "file") instead of scanning the log.
+function recordRun(root, logDir, name, argv, r, extra = {}) {
+  const hungNote = r.hungFile ? `\nhung test file: ${r.hungFile} (killed at its whole-file bound)\n` : "";
+  const stdout = `${r.stdout ?? ""}${hungNote}`;
   const log = path.join(logDir, `${safeName(name)}.log`);
-  writeTextAtomic(log, `${r.stdout ?? ""}\n${r.stderr ?? ""}${r.error ? `\n${r.error}` : ""}`);
+  writeTextAtomic(log, `${stdout}\n${r.stderr ?? ""}${r.error ? `\n${r.error}` : ""}`);
   const streams = { stdout: path.join(logDir, `${safeName(name)}.stdout.log`), stderr: path.join(logDir, `${safeName(name)}.stderr.log`) };
-  writeTextAtomic(streams.stdout, r.stdout ?? "");
+  writeTextAtomic(streams.stdout, stdout);
   writeTextAtomic(streams.stderr, `${r.stderr ?? ""}${r.error ? `\n${r.error}` : ""}`);
   const outcome = r.timedOut ? "timeout" : r.error && r.code === null ? "unavailable" : r.code === 0 ? "passed" : "failed";
-  return { name, argv, outcome, exitCode: r.timedOut ? TIMEOUT_CODE : r.code, executed: { ...NOT_RUN }, log: toSlash(path.relative(root, log)), streams: { stdout: toSlash(path.relative(root, streams.stdout)), stderr: toSlash(path.relative(root, streams.stderr)) }, text: `${r.stdout ?? ""}\n${r.stderr ?? ""}`, ...extra };
+  return { name, argv, outcome, exitCode: r.timedOut ? TIMEOUT_CODE : r.code, executed: { ...NOT_RUN }, log: toSlash(path.relative(root, log)), streams: { stdout: toSlash(path.relative(root, streams.stdout)), stderr: toSlash(path.relative(root, streams.stderr)) }, text: `${stdout}\n${r.stderr ?? ""}`, ...extra, ...(r.hungFile ? { hang: { files: [r.hungFile], source: "file" } } : {}) };
+}
+async function step(root, logDir, name, argv, timeoutS, extra = {}) {
+  return recordRun(root, logDir, name, argv, await runArgv(argv, { cwd: root, timeoutMs: timeoutS * 1000 }), extra);
 }
 
 // A step that did not run still has the ADPT-17 shape: a log holding the reason and an outcome that never certifies.
@@ -269,8 +275,12 @@ export async function gate(root, phaseDir, input) {
   let seen = null;
   const noteHang = (s) => {
     if (s.outcome !== "timeout") return;
-    const h = hungFiles(root, s, (seen ??= visibleFiles(root)), checks);
-    if (h.files.length) s.hang = h;
+    // A whole-file kill (kit feedback 109 F4) already names its file; the output scan is the fallback (item 102).
+    if (!s.hang?.files?.length) {
+      const h = hungFiles(root, s, (seen ??= visibleFiles(root)), checks);
+      if (h.files.length) s.hang = h;
+    }
+    const h = s.hang ?? { files: [], source: null };
     hung.push({ step: s.name, files: h.files, source: h.source, blocked: [] });
   };
   const hangOf = (argv) => {
@@ -284,13 +294,25 @@ export async function gate(root, phaseDir, input) {
   // Kit feedback 102 F2: the suite runs with the per-test limit, like every obligation that runs the test command (gateObligation).
   const { argv: suiteArgv, caseTimeoutS } = testCommandOf(cfg, cmds.test ? input.testArgv ?? cmds.test : null);
   if (Boolean(cmds.test_case_timeout_s) !== Boolean(cmds.test_case_timeout_arg?.length)) notes.push(`adapter.commands.${cmds.test_case_timeout_s ? "test_case_timeout_s is set without test_case_timeout_arg" : "test_case_timeout_arg is set without test_case_timeout_s"}: the test runner gets no per-test timeout`);
+  // Kit feedback 109 F4 / 107 F3: the whole-file bound. Unset test_file_timeout_s uses test_timeout_s. A test command that
+  // names several test files runs them one at a time; a suite (no file) keeps its step cap, and a shorter file bound kills
+  // the tree once one file has been current that long.
+  const fileTimeout = fileTimeoutS(cmds);
+  const testPrefix = (argv) => Array.isArray(cmds.test) && cmds.test.length > 0 && Array.isArray(argv) && cmds.test.every((w, i) => argv[i] === w);
+  const runBounded = async (name, argv, timeoutS, extra = {}) => {
+    if (!testPrefix(argv)) return step(root, logDir, name, argv, timeoutS, extra);
+    const files = argvFiles(root, argv, (seen ??= visibleFiles(root))).filter((f) => isTestFile(f, checks));
+    if (files.length < 2 && !(files.length === 0 && fileTimeout < timeoutS)) return step(root, logDir, name, argv, timeoutS, extra);
+    const r = await runBoundedTests({ cwd: root, argv, files, timeoutS, fileTimeoutS: fileTimeout, isTest: (rel) => isTestFile(rel, checks) });
+    return recordRun(root, logDir, name, argv, r, extra);
+  };
   const run = async (name, argv, timeoutS, extra = {}) => {
     const prior = reusable.get(name);
     if (prior && JSON.stringify(prior.argv) === JSON.stringify(argv)) {
       notes.push(`${name}: passed in an interrupted gate run of the same inputs; reused`);
       return { ...prior, ...extra, reused: true, text: fs.existsSync(path.join(root, prior.log)) ? fs.readFileSync(path.join(root, prior.log), "utf8") : "" };
     }
-    return step(root, logDir, name, argv, timeoutS, extra);
+    return runBounded(name, argv, timeoutS, extra);
   };
   // ADPT-10: the same machine-wide lock as every other adapter.mutex user.
   await withMutex(cfg.adapter.mutex, async () => {
@@ -330,7 +352,7 @@ export async function gate(root, phaseDir, input) {
         steps.push(noRun(root, logDir, name, "failed", `blocked by hang: ${block.files.join(", ")} timed out in step ${block.h.step} of this gate run; not run again in this pass`, { ...meta, argv: o.argv, blockedByHang: { step: block.h.step, files: block.files } }));
         continue;
       }
-      const s = await step(root, logDir, name, o.argv, o.timeoutS, meta);
+      const s = await runBounded(name, o.argv, o.timeoutS, meta);
       noteHang(s);
       checkpoint();
       if (o.evidenceParser) {
@@ -363,7 +385,7 @@ export async function gate(root, phaseDir, input) {
   if (attribution.attributionError) notes.push(`attribution hook failed: ${attribution.attributionError}; its failures stay unplaced`);
   const timedOut = steps.filter((s) => s.outcome === "timeout").map((s) => {
     const h = hung.find((x) => x.step === s.name);
-    return `${s.name} timed out after its limit (exit ${TIMEOUT_CODE})${h?.files.length ? `; hung test file(s) ${h.files.join(", ")} (${h.source === "argv" ? "named by its command" : "named last in its output"})${h.blocked.length ? `; blocked by hang in this pass: ${h.blocked.join(", ")}` : ""}` : ""}`;
+    return `${s.name} timed out after its limit (exit ${TIMEOUT_CODE})${h?.files.length ? `; hung test file(s) ${h.files.join(", ")} (${h.source === "argv" ? "named by its command" : h.source === "file" ? "killed at its whole-file bound" : "named last in its output"})${h.blocked.length ? `; blocked by hang in this pass: ${h.blocked.join(", ")}` : ""}` : ""}`;
   });
   return { green: failures.length === 0, evidence: toSlash(path.relative(root, evidenceFile)), notes, timedOut, ...(hung.length ? { hung } : {}), ...(suiteArgv ? { testCommand: suiteArgv, caseTimeoutS } : {}), failures, failureCount: failures.length, checks: weak.summary, ...attribution };
 }

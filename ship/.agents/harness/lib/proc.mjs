@@ -124,7 +124,7 @@ export function appendTail(text, chunk, tailChars) {
   return tailChars && joined.length > 2 * tailChars ? joined.slice(-tailChars) : joined;
 }
 
-export function runArgv(argv, { cwd, env, input, timeoutMs, tailChars } = {}) {
+export function runArgv(argv, { cwd, env, input, timeoutMs, tailChars, onData } = {}) {
   return new Promise((resolve) => {
     let child;
     try {
@@ -137,12 +137,34 @@ export function runArgv(argv, { cwd, env, input, timeoutMs, tailChars } = {}) {
     let stderr = "";
     let timedOut = false;
     let spawnError = null;
-    child.stdout.setEncoding("utf8").on("data", (d) => (stdout = appendTail(stdout, d, tailChars)));
-    child.stderr.setEncoding("utf8").on("data", (d) => (stderr = appendTail(stderr, d, tailChars)));
+    // An extra bound beside timeoutMs (kit feedback 109 F4): the original timer stays. Whichever fires first kills the tree.
+    let extra = null;
+    const api = {
+      alsoAfter(ms, onFire) {
+        if (extra) clearTimeout(extra);
+        if (!ms) { extra = null; return; }
+        const handle = setTimeout(() => {
+          if (extra !== handle) return;
+          extra = null;
+          onFire?.();
+          timedOut = true;
+          killTree(child);
+        }, ms);
+        extra = handle;
+      },
+    };
+    const take = (stream, d) => {
+      if (stream === "stdout") stdout = appendTail(stdout, d, tailChars);
+      else stderr = appendTail(stderr, d, tailChars);
+      if (onData) try { onData(stream, d, api); } catch { /* a watcher fault never hides the run */ }
+    };
+    child.stdout.setEncoding("utf8").on("data", (d) => take("stdout", d));
+    child.stderr.setEncoding("utf8").on("data", (d) => take("stderr", d));
     const timer = timeoutMs ? setTimeout(() => ((timedOut = true), killTree(child)), timeoutMs) : null;
     child.on("error", (e) => (spawnError = e));
     child.on("close", (code) => {
       if (timer) clearTimeout(timer);
+      if (extra) { clearTimeout(extra); extra = null; }
       resolve({ code: spawnError ? null : code, stdout, stderr, timedOut, error: spawnError });
     });
     child.stdin.on("error", () => {});

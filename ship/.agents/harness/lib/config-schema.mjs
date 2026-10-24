@@ -96,7 +96,9 @@ export const SCHEMA = obj({
       // Kit feedback 102 F2: the per-test limit the gate passes to the test runner through the argv template (`{s}` = the seconds).
       test_case_timeout_s: nullable(int(1)),
       test_case_timeout_arg: nullable(argv()),
-    }, ["smoke_builds", "test_case_timeout_s", "test_case_timeout_arg"]),
+      // Kit feedback 109 F4 / 107 F3: whole-file bound. Absent = test_timeout_s (the kit kills the runner tree and names the file).
+      test_file_timeout_s: nullable(int(1)),
+    }, ["smoke_builds", "test_case_timeout_s", "test_case_timeout_arg", "test_file_timeout_s"]),
     verify_vocabulary: map(obj({
       prefix: str({ nonEmpty: true }),
       parser: nullable(str({ nonEmpty: true, repoPath: true })),

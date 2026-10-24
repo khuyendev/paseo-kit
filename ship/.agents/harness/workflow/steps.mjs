@@ -497,7 +497,17 @@ export function executeSteps(kit, run) {
   const failureText = (list) => list.map((f) => `- ${f.step}${f.plan ? ` (plan ${f.plan})` : ""}: ${f.outcome ?? "failed"}; full log ${f.log ?? "n/a"}\n${String(f.excerpt ?? "").split(/\r?\n/).map((l) => `    ${l}`).join("\n")}`).join("\n");
   // The fixer prompt (template fixer): G070, an edit outside the owns is never a workaround but a request; the fixer policy
   // (gsd.fixer_verifies_itself) lets it run the build and tests within the gsd.fixer limits.
-  const fixerPrompt = (owns, findings, failures, requests, digest) => renderPrompt("fixer", { owns: JSON.stringify(owns), generated: S.generated, verifies: P.fixer.verifies, build: String(JSON.stringify(cmds.build)), tests: String(JSON.stringify(testCommand ?? testArgv)), attempts: String(P.fixer.attempts), minutes: String(P.fixer.minutes), metrics: metricsOn, findings: findings.length ? JSON.stringify(findings.map(findingBrief)) : "", failures: failureText(failures), requests: requests.length ? JSON.stringify(requests) : "", digest });
+  // Kit feedback 109 F2: runs of the failing files only, at least that many plus two (exec-fix-allowance). The configured attempts stay the floor.
+  const allowanceOf = async (tests) => {
+    const r = await flow(["exec-fix-allowance"], { attempts: P.fixer.attempts, files: tests });
+    if (!Number.isInteger(r.json?.runs)) throw new Error("fix run allowance unavailable");
+    return String(r.json.runs);
+  };
+  const failingTestsOf = (failures) => [...new Set((failures ?? []).flatMap((f) => f.tests ?? []))];
+  const fixerPrompt = async (owns, findings, failures, requests, digest) => {
+    const tests = failingTestsOf(failures);
+    return renderPrompt("fixer", { owns: JSON.stringify(owns), generated: S.generated, verifies: P.fixer.verifies, build: String(JSON.stringify(cmds.build)), tests: String(JSON.stringify(testCommand ?? testArgv)), attempts: await allowanceOf(tests), minutes: String(P.fixer.minutes), metrics: metricsOn, findings: findings.length ? JSON.stringify(findings.map(findingBrief)) : "", failures: failureText(failures), requests: requests.length ? JSON.stringify(requests) : "", digest });
+  };
   // The fixer repairs confirmed defects and failed checks in existing code, where more effort finds the edge cases its tests miss
   // (owner decision 2026-10-22): it runs at FIXER_EFFORT on its own tier's model unless gsd.roles.fixer sets an effort.
   const FIXER_EFFORT = "high";
@@ -557,11 +567,11 @@ export function executeSteps(kit, run) {
   }
   // Kit feedback 102 F3: a gate fixer that verifies itself (gsd.fixer_verifies_itself) may run the failing test files of its
   // failures (exec-fixers tests) with the gate's test command, within the gsd.fixer limits; none listed, the prompt is as before.
-  const fixRuntime = (tests = []) => ({ tests: tests.length ? JSON.stringify(tests) : "", command: String(JSON.stringify(testCommand ?? testArgv)), attempts: String(P.fixer.attempts), minutes: String(P.fixer.minutes) });
+  const fixRuntime = async (tests = []) => ({ tests: tests.length ? JSON.stringify(tests) : "", command: String(JSON.stringify(testCommand ?? testArgv)), attempts: await allowanceOf(tests), minutes: String(P.fixer.minutes) });
   // The integration fixer's prompt (template integration-fix, G064): it owns exactly `files`, the files of the `placed` failures.
   async function integrationPrompt(files, placed, tests) {
     const own = tests ?? (await flow(["exec-fixers"], { gate: { unplaced: placed }, verifies: P.fixer.verifies })).json?.tests ?? [];
-    return renderPrompt("integration-fix", { files: JSON.stringify(files), failures: failureText(placed), ...fixRuntime(own), digest: digestLine("fix:integration", await digestOf({ files })) });
+    return renderPrompt("integration-fix", { files: JSON.stringify(files), failures: failureText(placed), ...(await fixRuntime(own)), digest: digestLine("fix:integration", await digestOf({ files })) });
   }
   // CR-GSF-16: every fix result is inspected before the gate reruns. A quota or a call that could not run stops the round at once;
   // a fixer that answers unresolved, or a fix call that returned nothing, is judged on a fresh gate (G066, G088, kit-feedback
@@ -585,7 +595,7 @@ export function executeSteps(kit, run) {
           const prompt = await fixerPrompt(t.owns ?? [], [], failures, reqs, dg);
           return { id, kind, ...(await writeTree(() => call(prompt, fixerOpts(`fix-${id}-${round}`)))) };
         }
-        const prompt = await renderPrompt("executor-fix", { round, plan: id, failures: failureText(failures), requests: reqs.length ? JSON.stringify(reqs) : "", evidence: String(cur.evidence), ...fixRuntime(tests), digest: dg });
+        const prompt = await renderPrompt("executor-fix", { round, plan: id, failures: failureText(failures), requests: reqs.length ? JSON.stringify(reqs) : "", evidence: String(cur.evidence), ...(await fixRuntime(tests ?? [])), digest: dg });
         const fix = () => call(prompt, execOpts(t, `fix-${id}-${round}`));
         return { id, kind, t, ...(await (worktreeMode ? fix() : writeTree(fix))) };
       });
@@ -624,7 +634,16 @@ export function executeSteps(kit, run) {
         if (r.kind === "executor") {
           const { decision } = await verdict(r.result, r.id);
           if (decision) decisions.push({ id: r.id, decision });
-        } else if (r.result.status !== "fixed") soft.push({ id: r.id, why: `${who} unresolved (${r.result.remaining_failures ?? "?"} failures remain)${r.result.evidence ? `: ${r.result.evidence}` : ""}` });
+          else for (const t of r.result.taskResults ?? []) {
+            const c = (await flow(["exec-fix-reply"], { reply: t })).json;
+            if (c?.unverifiedOnly) { log(`fix of ${who}: last edit unverified; the next gate verifies it`); break; }
+          }
+        } else if (r.result.status !== "fixed") {
+          // Kit feedback 109 F3: an unverified last edit goes to the next gate. An explicit owner ask still stops with the gate.
+          const c = (await flow(["exec-fix-reply"], { reply: r.result })).json ?? {};
+          if (c.unverifiedOnly) log(`fix of ${who}: last edit unverified; the next gate verifies it`);
+          else soft.push({ id: r.id, why: `${c.explicit ? "owner decision needed: " : ""}${who} unresolved (${r.result.remaining_failures ?? "?"} failures remain)${r.result.evidence ? `: ${r.result.evidence}` : ""}` });
+        }
         if (r.id) await clearResolved(r.id, r.result);
       }
       if (stateError) return red("could not persist pending change requests");

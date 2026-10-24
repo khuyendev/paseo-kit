@@ -352,6 +352,7 @@
     ".agents/harness/gsd/shared-changes.mjs",
     ".agents/harness/gsd/state.mjs",
     ".agents/harness/gsd/status.mjs",
+    ".agents/harness/gsd/test-run.mjs",
     ".agents/harness/gsd/tools.mjs",
     ".agents/harness/gsd/upstream.mjs",
     ".agents/harness/gsd/validation-strategy.mjs",

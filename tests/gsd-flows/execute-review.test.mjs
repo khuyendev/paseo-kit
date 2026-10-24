@@ -89,7 +89,8 @@ test("GSDF-50 the fixer runtime block follows fixer_verifies_itself; unresolved 
     assert.equal(fx.opts.timeoutS, (60 + 5) * 60);
     assert.equal(fx.opts.role, "fixer");
   }
-  assert.match(prompts[true], /run the build \(\[.*\]\) and the tests \(.*\) yourself, at most 3 times and within 60 minutes; stop early when two consecutive attempts do not reduce the failure count/);
+  assert.match(prompts[true], /run the build \(\[.*\]\) and the tests through `ph gsd test-run` at most 3 times and within 60 minutes/);
+  assert.match(prompts[true], /Stop early when two consecutive attempts do not reduce the failure count/);
   assert.match(prompts[false], /Do not run the build or the tests: the orchestrator's gate verifies/);
   const w = makeExecWorld({ waves: [[task("01-01")]] });
   const un = await exec(w, {}, { "review-": () => ({ findings: [finding("F1")] }), "fix-review": () => ({ status: "unresolved", attempts: 3, remaining_failures: 2, evidence: "build red" }) });

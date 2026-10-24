@@ -302,11 +302,32 @@ function waitsOnRouted(x, routed, pending) {
   return others.length ? null : hit;
 }
 
+// Kit feedback 109 F3: an unverified last edit is the next gate's to check, not an owner decision by itself. A Rule 4
+// deviation, a checkpoint, or a reply that asks for an owner decision still is one.
+const UNVERIFIED_MARK = /\[UNVERIFIED\]|\bUNVERIFIED\b/;
+const EXPLICIT_ASK = /\b(?:owner decision|needs-owner|needs owner|rule\s*4|checkpoint)\b/i;
+const replyText = (x) => `${x?.note ?? ""}\n${x?.evidence ?? ""}`;
+export const explicitOwnerAsk = (x) => Boolean(x && typeof x === "object" && (Number(x.rule) === 4 || x.kind === "checkpoint" || EXPLICIT_ASK.test(replyText(x))));
+export const unverifiedEdit = (x) => Boolean(x && typeof x === "object" && (x.lastEdit === "unverified" || UNVERIFIED_MARK.test(replyText(x))));
+export const unverifiedOnly = (x) => unverifiedEdit(x) && !explicitOwnerAsk(x);
+
+// exec-fix-allowance (kit feedback 109 F2): runs of the failing files a fixer may spend. {attempts (gsd.fixer.max_build_attempts),
+// files} -> {runs: at least files.length + 2, and at least attempts, files}. A run of anything else does not count.
+export function fixAllowance({ attempts, files } = {}) {
+  const n = Array.isArray(files) ? files.filter((f) => typeof f === "string" && f.trim()).length : 0;
+  const cap = Number(attempts);
+  return { runs: Math.max(Number.isFinite(cap) ? cap : 0, n + 2), files: n };
+}
+
+// exec-fix-reply: how a fixer-schema reply treats its last edit. {reply} -> {unverified, explicit, unverifiedOnly}.
+export const execFixReply = ({ reply } = {}) => ({ unverified: unverifiedEdit(reply), explicit: explicitOwnerAsk(reply), unverifiedOnly: unverifiedOnly(reply) });
+
 // exec-verdict: the verdict on an executor reply. {reply, plan, requests, shared (the run's state), pending
 // (gsd.pending_request_tasks), hasSummary?, taskCount?, summary?} -> {decision (Rule 4, a checkpoint, a partial, blocked or
 // pending-request task that names no request this plan routed), pending: [tasks accepted because they wait only for routed
 // requests, kit feedback 79], halt?: {why, decision?}}. With hasSummary also G058 (one result per plan task; a skipped task is
-// no finished plan) and the SUMMARY.
+// no finished plan) and the SUMMARY. Kit feedback 109 F3: a partial or blocked task whose evidence is only an unverified edit
+// is not a decision.
 export function execVerdict({ reply, plan = null, requests = {}, shared = [], pending = true, ...checks }) {
   const res = reply ?? {};
   const out = { decision: null, pending: [] };
@@ -315,6 +336,7 @@ export function execVerdict({ reply, plan = null, requests = {}, shared = [], pe
   if (dev) out.decision = dev;
   else for (const x of res.taskResults ?? []) {
     if (x.status !== "partial" && x.status !== "blocked" && x.status !== "pending-request") continue;
+    if ((x.status === "partial" || x.status === "blocked") && unverifiedOnly(x)) continue;
     const on = x.status === "blocked" ? null : waitsOnRouted(x, routed, pending);
     if (on) {
       out.pending.push({ plan, task: x.task, blockedBy: on, via: Array.isArray(x.blockedBy) && x.blockedBy.length ? "blockedBy" : "evidence" });

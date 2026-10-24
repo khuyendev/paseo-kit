@@ -34,15 +34,17 @@ test("W102 F3 the executor-fix and integration-fix templates hold the runtime bl
   const run = { command: JSON.stringify(["flutter", "test", "--timeout", "30s"]), attempts: "3", minutes: "20" };
   const fix = async (tests) => (await flow(root, ["prompt", "executor-fix"], { round: 1, plan: "01-01", failures: "- test: failed", requests: "", evidence: "e.json", tests, ...run, digest: "D" })).json.text;
   const on = await fix(JSON.stringify(["test/a_test.dart"]));
-  assert.match(on, /^Fix round 1 for plan 01-01: the gate failed on your owned files\. Fix only inside your owns\.\n<kit_fix_runtime>\nYou may run the failing test files of these failures yourself: \["test\/a_test\.dart"\]\. Run them with \["flutter","test","--timeout","30s"\] followed by those files, and nothing else/);
+  assert.match(on, /^Fix round 1 for plan 01-01: the gate failed on your owned files\. Fix only inside your owns\.\n<kit_fix_runtime>\nYou may run the failing test files of these failures yourself: \["test\/a_test\.dart"\]\. Run them only through `ph gsd test-run`/);
+  assert.ok(on.includes('["flutter","test","--timeout","30s"]'), on);
   assert.match(on, /At most 3 runs within 20 minutes/);
+  assert.match(on, /Read the failures from that file, never from a truncated terminal/);
   assert.match(on, /an uncaught exception at dispose/);
   assert.match(on, /Every file outside your owns stays read-only/);
   const off = await fix("");
   assert.match(off, /^Fix round 1 for plan 01-01: the gate failed on your owned files\. Fix only inside your owns; do not run the build or the tests\.\n\n- test: failed/);
   assert.doesNotMatch(off, /kit_fix_runtime/);
   const integ = async (tests) => (await flow(root, ["prompt", "integration-fix"], { files: '["test/lib_test.dart"]', failures: "- test: failed", tests, ...run, digest: "D" })).json.text;
-  assert.match(await integ('["test/lib_test.dart"]'), /You own exactly these files: \["test\/lib_test\.dart"\]\.\n<kit_fix_runtime>\nYou may run the failing test files of these failures yourself: \["test\/lib_test\.dart"\]/);
+  assert.match(await integ('["test/lib_test.dart"]'), /You own exactly these files: \["test\/lib_test\.dart"\]\.\n<kit_fix_runtime>\nYou may run the failing test files of these failures yourself: \["test\/lib_test\.dart"\]\. Run them only through `ph gsd test-run`/);
   assert.equal(await integ(""), 'Integration fix: these gate failures belong to no plan. You own exactly these files: ["test/lib_test.dart"].\n\n- test: failed\n\nReturn JSON {status: fixed|unresolved, attempts, remaining_failures, evidence}.\n\nD');
 });
 
@@ -73,7 +75,7 @@ test("W102 F3 a fix round of a failing test file lets the executor run it with t
   assert.equal(r.result.status, "executed", JSON.stringify(r.result));
   const fix = promptOf(r, "fix-01-01-1");
   assert.match(fix, /<kit_fix_runtime>\nYou may run the failing test files of these failures yourself: \["src\/01-01\/a\.test\.js"\]\./);
-  assert.ok(fix.includes(`Run them with ${JSON.stringify([NODE, "tools/run.mjs", "--timeout", "5s"])} followed by those files`), fix);
+  assert.ok(fix.includes(`ph gsd test-run`) && fix.includes(JSON.stringify([NODE, "tools/run.mjs", "--timeout", "5s"])), fix);
   assert.doesNotMatch(fix, /do not run the build or the tests/);
 
   const quiet = world({ verifies: false });
@@ -87,12 +89,12 @@ test("W102 F3 the integration fixer of a round and of the batch may run the fail
   const w = world();
   const r = await exec(w, { "exec-01-01": failingExecutor(w, "01-01", "test/lib.test.js:1", false) });
   assert.equal(r.result.status, "executed", JSON.stringify(r.result));
-  assert.match(promptOf(r, "integration-fix-1"), /You own exactly these files: \["test\/lib\.test\.js"\]\.\n<kit_fix_runtime>\nYou may run the failing test files of these failures yourself: \["test\/lib\.test\.js"\]/);
+  assert.match(promptOf(r, "integration-fix-1"), /You own exactly these files: \["test\/lib\.test\.js"\]\.\n<kit_fix_runtime>\nYou may run the failing test files of these failures yourself: \["test\/lib\.test\.js"\]\. Run them only through `ph gsd test-run`/);
 
   const b = world({ batch: true, waves: [[task("01-01"), task("01-02")]] });
   const rb = await exec(b, { "exec-01-02": failingExecutor(b, "01-02", "test/lib.test.js:1", false) });
   assert.equal(rb.result.status, "executed", JSON.stringify(rb.result));
-  assert.match(promptOf(rb, "integration-fix-batch"), /<kit_fix_runtime>\nYou may run the failing test files of these failures yourself: \["test\/lib\.test\.js"\]/);
+  assert.match(promptOf(rb, "integration-fix-batch"), /<kit_fix_runtime>\nYou may run the failing test files of these failures yourself: \["test\/lib\.test\.js"\]\. Run them only through `ph gsd test-run`/);
   assert.ok(promptOf(rb, "integration-fix-batch").includes(JSON.stringify([NODE, "tools/run.mjs", "--timeout", "5s"])));
 
   const quiet = world({ batch: true, verifies: false, waves: [[task("01-01"), task("01-02")]] });
