@@ -56,6 +56,15 @@ const current = checkedEvidence.filter((e) => e.status === "current").map((e) =>
 // Kit feedback 97: partial evidence proves every obligation but the stale ones it names.
 const partial = checkedEvidence.filter((e) => e.status === "partial");
 const stale = checkedEvidence.filter((e) => e.status !== "current" && e.status !== "partial");
+// Kit feedback 111 F2: every file stale means a later phase moved the covered files. The verifier would turn the
+// success criteria into human items. Stop and name the refresh verb. Partial (97), a mix, or invalid stays below.
+if (evidence.length && checkedEvidence.every((e) => e.status === "stale")) {
+  return tagged(needsOwner("Evidence", `every gate evidence file is stale (inputs differ from the current code): ${checkedEvidence.map((e) => `${e.path} (${e.reason ?? "stale"})`).join("; ")}`, {
+    evidence: checkedEvidence,
+    answer: { verb: "evidence.refresh", command: `ph gsd evidence refresh ${N}` },
+    options: [`ph gsd evidence refresh ${N}, then rerun gsd-verify with the evidence path it prints`, "stop"],
+  }));
+}
 const checkedHash = (await gsd(["revisions", "hash", phaseDir, "checked"])).json?.hash ?? "none";
 const evidenceIdentities = [];
 for (const e of checkedEvidence) evidenceIdentities.push({ ...e, sha: await fileSha(e.path) });

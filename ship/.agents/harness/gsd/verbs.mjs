@@ -25,6 +25,7 @@ import { stateVerb } from "./state.mjs";
 import { fingerprint, researchStatus, verificationParts, verificationStatusVerb } from "./status.mjs";
 import { health, normalizeTestCommand, runWithTimeout } from "./tools.mjs";
 import { testRun } from "./test-run.mjs";
+import { evidenceRefresh } from "./evidence-refresh.mjs";
 import { upstreamVerb } from "./upstream.mjs";
 
 const phaseOf = (g, args) => {
@@ -296,6 +297,8 @@ export const verbHandlers = {
   "normalize-test-command": { usage: "ph gsd normalize-test-command <command...>", help: false, options: null, run: (g, a) => done({ command: normalizeTestCommand(a.join(" ")) }) },
   // Kit feedback 109 / 107: the fixer's test run. Files are positional; none runs the configured suite once.
   "test-run": { usage: "ph gsd test-run [files...]", options: {}, run: (g, a) => testRun(g, a) },
+  // Kit feedback 111: `ph gsd evidence refresh <N>` resolves to this verb (commands.mjs joins the two tokens).
+  "evidence.refresh": { usage: "ph gsd evidence.refresh <phase>", options: {}, run: (g, a) => evidenceRefresh(g, a[0]) },
   health: { usage: "ph gsd health [--repair]", options: { repair: "bool" }, run: (g, a, o) => health(g, o.repair) },
   "debug.create": { usage: "ph gsd debug.create (stdin JSON)", options: {}, run: (g) => debugCreate(g, json(g.stdin())) },
   "debug.status": { usage: "ph gsd debug.status <slug>", options: {}, run: (g, a) => debugStatus(g, a[0]) },

@@ -334,6 +334,7 @@
     ".agents/harness/gsd/debug.mjs",
     ".agents/harness/gsd/decisions.mjs",
     ".agents/harness/gsd/draft.mjs",
+    ".agents/harness/gsd/evidence-refresh.mjs",
     ".agents/harness/gsd/git.mjs",
     ".agents/harness/gsd/gitverbs.mjs",
     ".agents/harness/gsd/grants.mjs",
