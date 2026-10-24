@@ -287,7 +287,9 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
         // The earlier run already ended this agent: start the session fresh with the full prompt (PCLI-16).
         out(`log warning: session agent ${id8(agentId)} of an earlier run is no longer live; started fresh with the full prompt`);
         agentId = null;
-        await create(fullPrompt(), undefined);
+        const freshPrompt = fullPrompt();
+        out(`agent prompt #${n} ${label} ${freshPrompt.length} chars`);
+        await create(freshPrompt, undefined);
         text = await waitReply(0);
       } else if (prior) {
         await session.usage.track([agentId]);
@@ -296,8 +298,10 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
         const before = session.turnsOf(agentId);
         // Later prompts of a session carry the run tag so run-stats attributes the turn to this run (FLOW-48).
         const continuation = `${task.trim()}\n\nRun ${runId} #${n} (bookkeeping only; ignore).`;
-        const fresh = { sel, prompt: fullPrompt(), title: `${workflowName}:${label}`, name: label, swarm: workflowName, run: runId, cwd, readOnly };
+        const resumedPrompt = fullPrompt();
+        const fresh = { sel, prompt: resumedPrompt, title: `${workflowName}:${label}`, name: label, swarm: workflowName, run: runId, cwd, readOnly };
         const r = await bounded(session.resumeSend(agentId, { sel, prompt: continuation, create: fresh }), (started) => started.then((x) => x.created && archiveLate(x.agent.id), archiveLateError));
+        out(`agent prompt #${n} ${label} ${(r.created ? resumedPrompt : continuation).length} chars`);
         admission?.started?.(r.agent.id);
         if (r.created) {
           wd?.disarm();
@@ -314,12 +318,16 @@ export function createPaseoHost({ session, cfg, runtime, root, runId, parentRunI
       } else {
         if (cfg.warmup && def) gate = await passGate(def, identity);
         if (primed) {
-          await create(runtime.rolePrompt({ def, readOnly, worktree, workdir, cfg }), undefined);
+          const roleText = runtime.rolePrompt({ def, readOnly, worktree, workdir, cfg });
+          out(`agent prompt #${n} ${label} ${roleText.length} chars`);
+          await create(roleText, undefined);
           await waitReply(0);
           gate?.open();
           text = await send(fullPrompt());
         } else {
-          await create(fullPrompt(), native ? opts.schema : undefined);
+          const firstText = fullPrompt();
+          out(`agent prompt #${n} ${label} ${firstText.length} chars`);
+          await create(firstText, native ? opts.schema : undefined);
           if (gate) gate.timer = clock.setTimeout(gate.open, cfg.warmup_s * 1000);
           text = await waitReply(0);
         }

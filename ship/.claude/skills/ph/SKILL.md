@@ -201,6 +201,7 @@ not hold lines back, and match both forms: `ph watch-run RUNID --all | grep --li
 | `phase <title>` | the script called `phase()` |
 | `log <message>` | the script's `log()`; also `log warning: ...`, `log nested workflow <path>`, `log watchdog: ...` |
 | `agent start #<n> <label> <id8> <model>` | a call created its agent |
+| `agent prompt #<n> <label> <chars> chars` | the first prompt of a call, and how long it is (kit feedback 117) |
 | `agent done #<n> <label> ok\|null (<reason>) tokens=<n> cost=<usd\|?> <s>s` | a call finished |
 | `agent cached #<n> <label>` | a resumed run reused a recorded result |
 | `shell start #<n> <command>` / `shell done #<n> code=<c> <s>s` | a `shell()` call |

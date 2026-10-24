@@ -8,7 +8,7 @@ description: "Executes a planned GSD phase wave by wave through the gsd-execute 
 <!-- PASEO-HARNESS-KIT START: kit-owned; project text belongs outside these markers -->
 ## Kit contract
 
-Method text: the orchestration of upstream `execute-phase` is the workflow script below; for each plan follow `.agents/gsd/generated/workflows/execute-plan.md` (generated upstream text, unchanged; the executor's deviation rules, `.agents/gsd/generated/executor-rules.md`, reach it through its role include), then apply `.agents/workflows/gsd-overlay.md` and the project section below (overlays win).
+Method text: the orchestration of upstream `execute-phase` is the workflow script below; for each plan follow `.agents/gsd/generated/workflows/execute-plan.md` (generated upstream text, unchanged; the executor's deviation rules are in the role body once, and `.agents/gsd/generated/executor-rules.md` does not repeat them), then apply `.agents/workflows/gsd-overlay.md` and the project section below (overlays win).
 
 The workflow is the project's composition `.agents/workflows/gsd-execute.js`: a script of kit verbs and kit steps (the engine global `executeSteps`: the steps its schedules share, each returning its stop with the answer) that the project owns and evolves. This block is the kit's contract for every composition; the project section below the markers describes what this project's script takes and returns.
 

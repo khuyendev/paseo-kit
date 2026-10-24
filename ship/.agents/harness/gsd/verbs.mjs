@@ -314,6 +314,7 @@ export const verbHandlers = {
   },
   "upstream.vendor": { usage: "ph gsd upstream.vendor --from <clone> [--commit <sha>] [--target <checkout>]", options: null, run: (g, a) => upstreamVerb(g, "vendor", a) },
   "upstream.build": { usage: "ph gsd upstream.build [--target <checkout>]", options: null, run: (g, a) => upstreamVerb(g, "build", a) },
+  "upstream.size": { usage: "ph gsd upstream.size [--target <checkout>]", options: null, run: (g, a) => upstreamVerb(g, "size", a) },
   "upstream.check": { usage: "ph gsd upstream.check [--target <checkout>] [--verbose]", options: null, run: (g, a) => upstreamVerb(g, "check", a) },
   "upstream.bump": { usage: "ph gsd upstream.bump --from <clone> --commit <sha> [--target <checkout>] [--verbose]", options: null, run: (g, a) => upstreamVerb(g, "bump", a) },
   verbs: { usage: "ph gsd verbs", options: {}, run: () => done({ ported: Object.keys(verbHandlers).sort() }) },

@@ -11,7 +11,7 @@ import { readJsonIf } from "../lib/io.mjs";
 import { policyLines } from "../lib/provider-policy.mjs";
 import { id8 } from "../lib/paths.mjs";
 import { FILE_PLUGIN_ID, MIN_CLAUDE_VERSION, NODE_REQUIREMENT, claudeVersion, nodeRuntimeProblem, paseoConfigFile, versionAtLeast } from "../platform.mjs";
-import { checkTarget } from "../gsd/upstream.mjs";
+import { checkTarget, sizeTarget } from "../gsd/upstream.mjs";
 import { workflowArgProblems } from "../gsd/workflow-args.mjs";
 import { checkCompositionVerbs, problemText, WORKFLOWS_REL } from "../gsd/verb-check.mjs";
 import { compositionPolicyLines } from "../gsd/policies.mjs";
@@ -168,6 +168,11 @@ async function gsdUpstreamLines(ctx, line) {
   }
   for (const problem of r.problems) line("problem", `gsd upstream ${problem}`);
   line(r.problems.length ? "problem" : "ok", `gsd upstream check: ${r.problems.length} problems, ${r.warnings.length} warnings; ${r.references} references followed, ${r.verbs} verbs mapped`);
+  try {
+    for (const row of sizeTarget(ctx.root)) line("ok", `gsd upstream ${row.line}`);
+  } catch (e) {
+    line("note", `gsd upstream size not run: ${errText(e)}`);
+  }
 }
 
 export async function runDoctor(ctx, { freemem = os.freemem, commitFreeMb = readCommitFreeMb, claudeVersionText = () => claudeVersion(ctx.env) } = {}) {

@@ -18,6 +18,7 @@ const LINE = {
   phase: /^phase .+$/,
   log: /^log .+$/,
   agentStart: /^agent start #\d+ \S.* [0-9a-f-]{8} \S+\/\S+( prime:two-turn)?$/,
+  agentPrompt: /^agent prompt #\d+ \S.* \d+ chars$/,
   agentDone: /^agent done #\d+ \S.* (ok|null \(.+\)) tokens=\d+ cost=(\?|[\d.]+) (\d+|\?)s$/,
   agentCached: /^agent cached #\d+ .+$/,
   shell: /^shell (start|done) #\d+ .+$/,

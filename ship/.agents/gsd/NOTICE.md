@@ -1,6 +1,6 @@
 # GSD core in paseo-kit
 
-The GSD method text under `.agents/gsd/upstream/` is a trimmed, unmodified snapshot of open-gsd/gsd-core (branch `next`, commit pinned in `.agents/gsd/upstream/UPSTREAM.json`, MIT licence: `.agents/gsd/upstream/LICENSE`, also `LICENSES/gsd-core-MIT.txt` in the kit). The generated agents in `.agents/agents/` and the texts in `.agents/gsd/generated/` are that text with only three path rewrites into the snapshot. The kit code (`ph gsd`, workflow scripts, overlays) is written by the kit; no upstream code is carried.
+The GSD method text under `.agents/gsd/upstream/` is a trimmed, unmodified snapshot of open-gsd/gsd-core (branch `next`, commit pinned in `.agents/gsd/upstream/UPSTREAM.json`, MIT licence: `.agents/gsd/upstream/LICENSE`, also `LICENSES/gsd-core-MIT.txt` in the kit). The generated agents in `.agents/agents/` and the texts in `.agents/gsd/generated/` are that text with three path rewrites into the snapshot. A generated role also drops the sections and spans its inventory entry lists under `replaces` and `spans` (kit feedback 117): each dropped span is one line, `<!-- kit: <id> replaced by the kit overlay -->`, and every other line is the upstream line. `documentation_lookup` stays only when the project adapter sets `adapter.doc_tools`. An include extracted from the same file as a role does not repeat a section the role still holds. The kit code (`ph gsd`, workflow scripts, overlays) is written by the kit; no upstream code is carried.
 
 ## Departures from upstream (adapter layer)
 

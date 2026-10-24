@@ -151,7 +151,10 @@ export const SCHEMA = obj({
     // Kit feedback 112: extra runtime-crash regexes for the gate. Absent from the defaults, and not part of the
     // gate-configuration hash (that is commands, verify_vocabulary and checks).
     crash_signatures: arr(str({ nonEmpty: true })),
-  }, ["checks", "catalogs", "crash_signatures"]),
+    // Kit feedback 117 F3: doc tools the project actually has (for example "ctx7"). Absent = the generated roles
+    // drop documentation_lookup. A non-empty list keeps it; regenerate with `ph gsd upstream build`.
+    doc_tools: strs(),
+  }, ["checks", "catalogs", "crash_signatures", "doc_tools"]),
   gsd: obj({
     roles: map(obj({ model: str({ nonEmpty: true }), effort: effort(), reason: str() }, ["model", "effort", "reason"])),
     granularity: str({ oneOf: ["coarse", "standard", "fine"] }),
