@@ -1,6 +1,7 @@
 // map-codebase plumbing: doc check, secrets scan, map stamp and the warn-only drift gate (GSDF-05, GSDF-06).
 import fs from "node:fs";
 import path from "node:path";
+import { loadConfig } from "../../harness/config.mjs";
 import { readText, writeTextAtomic } from "../../harness/lib/io.mjs";
 import { resolveInside } from "../../harness/lib/paths.mjs";
 import { git, gitLines, head } from "./flow-git.mjs";
@@ -123,8 +124,48 @@ export function drift(root, threshold) {
     }
     const count = newDirs.size + changedInside.length;
     const status = count >= threshold ? "drift" : "ok";
-    return { status, count, threshold, baseline: base, newDirs: [...newDirs].sort(), changedInside: changedInside.length };
+    const paths = [...new Set([...changedInside, ...newDirs])].sort();
+    return { status, count, threshold, baseline: base, newDirs: [...newDirs].sort(), changedInside: changedInside.length, paths };
   } catch (e) {
     return { status: "skipped", reason: `drift check failed: ${String(e.message ?? e).split("\n")[0]}` };
   }
+}
+
+// Absent gsd.map_drift_block means 10× the warn threshold. 0 keeps the old warn-only behaviour (kit feedback 121).
+const BLOCK_FACTOR = 10;
+
+// map-drift {reason?}: the drift report plus the advisory and, over the block threshold, the Preconditions stop.
+// gsd-plan and gsd-research honour `stop`; gsd-execute only keeps the advisory and `paths` (remap). `drift` itself stays warn-only.
+export function mapDrift(root, { reason = null } = {}) {
+  let cfg = null;
+  try { cfg = loadConfig(root); } catch { cfg = null; }
+  const threshold = Number.isInteger(cfg?.gsd?.drift_threshold) ? cfg.gsd.drift_threshold : 3;
+  const blockRaw = cfg?.gsd?.map_drift_block;
+  const block = blockRaw === undefined || blockRaw === null ? threshold * BLOCK_FACTOR : Number(blockRaw);
+  const report = drift(root, threshold);
+  const paths = report.paths ?? [];
+  const logs = [];
+  if (report.status === "skipped") logs.push(`drift check skipped: ${report.reason}`);
+  if (report.status !== "drift") return { ...report, block, paths, logs, advisory: null, stop: null, line: null };
+  const listed = paths.length ? paths.join(",") : "(none named)";
+  const line = `codebase map drift: ${report.count} changes since ${report.baseline} (threshold ${report.threshold}); gsd-map-codebase --paths ${listed}`;
+  logs.push(`warning: ${line}`);
+  const advisory = { lane: "map", severity: "warning", description: line, paths };
+  const stale = typeof reason === "string" ? reason.trim() : "";
+  let stop = null;
+  if (block > 0 && report.count >= block) {
+    if (!stale) {
+      stop = {
+        stage: "Preconditions",
+        reason: `${line}; drift ${report.count} is over the block threshold ${block}`,
+        answer: {
+          verb: "workflow",
+          args: { paths: listed },
+          command: `remap with gsd-map-codebase --paths ${listed} (args {"paths":${JSON.stringify(listed)}}), then rerun with the same args; or set staleMapReason to why this map is still good enough and rerun`,
+        },
+        options: [`gsd-map-codebase --paths ${listed}`, "rerun with staleMapReason"],
+      };
+    } else logs.push(`stale map accepted: ${stale}`);
+  }
+  return { ...report, block, paths, logs, advisory, stop, line, ...(stale ? { staleMapReason: stale } : {}) };
 }

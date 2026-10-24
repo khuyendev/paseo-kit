@@ -10,7 +10,7 @@ import path from "node:path";
 import { readJsonIf, writeJsonAtomic } from "../lib/io.mjs";
 import { sha256, textDigest } from "../lib/hash.mjs";
 import { isInside, toSlash } from "../lib/paths.mjs";
-import { matchesGlob } from "../adapter/contract.mjs";
+import { asGlob, matchesGlob } from "../adapter/contract.mjs";
 import { DEFAULT_RUNS_DIR, RUN_FILES } from "../workflow/journal.mjs";
 import { done, fail, isFile, nowIso, rel, withFileLock } from "./common.mjs";
 import { GIT_TIMEOUT_MS, git } from "./git.mjs";
@@ -195,7 +195,7 @@ function flowEvidence(g, phase, labels) {
   const records = Object.entries(readRevisions(phase).keys ?? {}).filter(([, r]) => r?.parts);
   let runs = null;
   const of = (label, kind, digest, before = null) => {
-    if (generated.some((glob) => matchesGlob(label, glob))) return "regenerated";
+    if (generated.some((glob) => { const g = asGlob(glob); return Boolean(g) && matchesGlob(label, g); })) return "regenerated";
     if (kind === "owned") {
       const list = committed.get(label) ?? [];
       const hit = before === null ? list.slice(-1).find((c) => c.digests.includes(digest)) : list.find((c) => c.at !== null && c.at <= before && c.digests.includes(digest));

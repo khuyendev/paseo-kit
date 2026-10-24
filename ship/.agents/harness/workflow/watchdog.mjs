@@ -1,6 +1,7 @@
 // Model-time watchdog of workflow agents (FLOW-29..FLOW-39). Armed only by the workflow runner, never for spawn or
 // fanout teammates (FLOW-39). Message texts are shipped prompt text (D-35): change only with owner review.
 import path from "node:path";
+import { generatedMatch, generatedRules } from "../adapter/contract.mjs";
 import { errText } from "../lib/cli.mjs";
 import { id8 } from "../lib/paths.mjs";
 import { SEARCH_TOOLS, SHELL_TOOLS, inputKey, inputOf, inputReady, readPaths, toolKind } from "./tools.mjs";
@@ -10,6 +11,8 @@ export const NUDGE_TEXT = (min) => `Harness watchdog: you have used ${min} minut
 export const SIGNAL_TEXT = {
   loop: (s) => `Harness watchdog: you called ${s.tool} with the same input ${s.count} times since the last prompt. That is a loop. Do not repeat it: use the result you already have or change the approach (for example one shell grep -rn with alternation), then finish the whole task; this is not a reason to stop early or return an empty result.`,
   reread: (s) => `Harness watchdog: you read ${s.file} ${s.count} times since the last prompt. Read a file once and keep what you need from it; do not open it again for one more detail. Then finish the whole task.`,
+  // Kit feedback 120: generated output is named on its own, so its reread cost is not mixed with authored files.
+  "reread-generated": (s) => `Harness watchdog: generated file(s) read again: ${s.files.map((f) => `${f.file} ${f.count} times${f.from ? ` (generated from ${f.from})` : ""}`).join("; ")}. Review the source and the generator command, not the output. Do not open a generated file again.`,
   piecemeal: (s) => `Harness watchdog: you made ${s.count} reads or searches without writing anything. Stop reading piece by piece: get everything you still need in one batched read (or one script), then produce the complete result.`,
 };
 export const STUCK_TEXT = (tool) => `Harness watchdog: your ${tool} call did not return and was interrupted. Check what it already changed (re-read the affected files), then continue the task with smaller calls (at most 3 files per batch call).`;
@@ -54,6 +57,7 @@ function stuckLimitS(cfg, name) {
 
 export function createWatchdog({ session, cfg, clock, out, root }) {
   const c = watchdogConfig(cfg);
+  const genRules = generatedRules(cfg);
   const states = new Map();
   const rootSlash = `${path.resolve(root).split(path.sep).join("/").replace(/\/$/, "")}/`.toLowerCase();
   let unsubscribe = null;
@@ -86,7 +90,7 @@ export function createWatchdog({ session, cfg, clock, out, root }) {
     unsubscribe ??= session.onAgentStream((p) => hub.onEvent(p));
     const st = {
       agentId, label, promptAt: clock.now(), nudged: false, signals: new Set(), calls: new Map(), finished: new Set(),
-      toolSpans: [], repeats: new Map(), fileReads: new Map(), readsSinceWrite: 0,
+      toolSpans: [], repeats: new Map(), fileReads: new Map(), readsSinceWrite: 0, generatedNoted: new Set(),
       stuckInterrupted: false, retry: null, retryBase: 0, stopped: false, stopReason: null, archived: false,
     };
     const tag = () => `log watchdog: ${label} ${id8(agentId)}`;
@@ -103,6 +107,7 @@ export function createWatchdog({ session, cfg, clock, out, root }) {
       st.signals.clear();
       st.repeats.clear();
       st.fileReads.clear();
+      st.generatedNoted.clear();
     };
     st.disarm = () => {
       states.delete(agentId);
@@ -170,6 +175,7 @@ export function createWatchdog({ session, cfg, clock, out, root }) {
       st.readsSinceWrite = 0;
       st.fileReads.clear();
       st.repeats.clear();
+      st.generatedNoted.clear();
     }
     if (kind === "read") {
       st.readsSinceWrite++;
@@ -188,7 +194,24 @@ export function createWatchdog({ session, cfg, clock, out, root }) {
       st.repeats.set(repeatKey, count);
       if (c.repeatCalls > 0 && count >= c.repeatCalls) st.signal("loop", { tool: it.name, count });
     }
-    if (c.sameFileReads > 0) for (const e of st.fileReads.values()) if (e.count >= c.sameFileReads) st.signal("reread", { file: e.file, count: e.count });
+    if (c.sameFileReads > 0) {
+      const over = [...st.fileReads.values()].filter((e) => e.count >= c.sameFileReads);
+      const gen = [];
+      const plain = [];
+      for (const e of over) {
+        const hit = generatedMatch(genRules, e.file);
+        if (hit) gen.push({ file: e.file, count: e.count, ...(hit.source ? { from: hit.source } : {}) });
+        else plain.push(e);
+      }
+      const fresh = gen.filter((e) => !st.generatedNoted.has(e.file.toLowerCase()));
+      if (fresh.length) {
+        for (const e of fresh) st.generatedNoted.add(e.file.toLowerCase());
+        const text = fresh.map((f) => `${f.file} ${f.count} times${f.from ? ` (generated from ${f.from})` : ""}`).join("; ");
+        if (st.signals.has("reread-generated")) out(`log watchdog: ${st.label} ${id8(st.agentId)} reread generated: ${text}`);
+        else st.signal("reread-generated", { files: fresh });
+      }
+      if (plain.length) st.signal("reread", { file: plain[0].file, count: plain[0].count });
+    }
     if (c.readsWithoutWrite > 0 && st.readsSinceWrite >= c.readsWithoutWrite) st.signal("piecemeal", { count: st.readsSinceWrite });
   }
 

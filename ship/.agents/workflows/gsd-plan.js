@@ -71,8 +71,8 @@ const agents = Object.fromEntries(Object.entries({ planner: "gsd-planner", check
 // strategy, the plans sent back to the outline, the incremental recheck scope and the contract gate (parts of plan-progress.json).
 const [warnings, advisories, dependents, reallocated, sharedChanges] = [[], [], [], [], []];
 const contractReport = { checks: 0, rounds: 0, issues: 0, changes: [] };
-let [flowReport, streamed, handEdits, validationReport, recheckReport, manifestFresh, contractDirty, depRounds, inputsAt] = [null, null, null, null, null, null, false, 0, null];
-const result = (status, extra = {}) => ({ status, phaseDir, mode, warnings, advisories, ...(flowReport ?? {}), ...(handEdits ? { handEdits } : {}), ...(validationReport ? { validation: validationReport } : {}), ...(reallocated.length ? { reallocated } : {}), ...(recheckReport ? { recheck: recheckReport } : {}), ...(contractReport.checks ? { contracts: contractReport } : {}), ...extra });
+let [flowReport, streamed, handEdits, validationReport, recheckReport, manifestFresh, contractDirty, depRounds, inputsAt, mapDrift] = [null, null, null, null, null, null, false, 0, null, null];
+const result = (status, extra = {}) => ({ status, phaseDir, mode, warnings, advisories, ...(mapDrift?.advisory ? { mapDrift } : {}), ...(flowReport ?? {}), ...(handEdits ? { handEdits } : {}), ...(validationReport ? { validation: validationReport } : {}), ...(reallocated.length ? { reallocated } : {}), ...(recheckReport ? { recheck: recheckReport } : {}), ...(contractReport.checks ? { contracts: contractReport } : {}), ...extra });
 const owner = (stage, reason, extra = {}) => result("needs-owner", { stage, reason, ...extra });
 const failedCall = (what, reason) => result("failed", { reason: `${what}${reason ? `: ${reason}` : " returned nothing"}` });
 // Kit feedback 98 F3, 99 F1, 101 F3: a conflict with the planner's contract_changes answers `contracts change`; any other marker answers
@@ -127,9 +127,9 @@ if (mode === "plan") {
 const roadmapPhase = (await gsd(["roadmap", "get-phase", N])).json ?? {};
 const reqIds = roadmapPhase.requirements ?? [];
 if (!reqIds.length) log(`warning: ROADMAP lists no requirement IDs for phase ${N}; the coverage gate decides later`);
-const drift = (await flow(["drift", String(g.drift_threshold)])).json;
-if (drift?.status === "drift") log(`warning: codebase map drift: ${drift.count} changes since ${drift.baseline} (threshold ${drift.threshold}); consider gsd-map-codebase --paths`);
-else if (drift?.status === "skipped") log(`drift check skipped: ${drift.reason}`);
+mapDrift = (await flow(["map-drift"], { reason: a.staleMapReason ?? null })).json ?? {};
+for (const l of mapDrift.logs ?? []) log(l); if (mapDrift.advisory) advisories.push(mapDrift.advisory);
+if (mapDrift.stop) return owner("Preconditions", mapDrift.stop.reason, { answer: mapDrift.stop.answer, paths: mapDrift.paths, options: mapDrift.stop.options });
 // F50: with adapter.commands.smoke_builds, every declared verification target builds once before any planner runs.
 if (cfg.adapter.commands.smoke_builds?.length) {
   phase("Smoke build");
