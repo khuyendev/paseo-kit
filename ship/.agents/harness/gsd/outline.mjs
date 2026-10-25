@@ -4,7 +4,7 @@ import path from "node:path";
 import { writeJsonAtomic } from "../lib/io.mjs";
 import { sha256, textDigest } from "../lib/hash.mjs";
 import { done, fail, idList, lf, none, readIf, rel } from "./common.mjs";
-import { producesOf, producesProblems, resolveEdge } from "./contracts.mjs";
+import { producesOf, resolveEdge } from "./manifest.mjs";
 import { balancedGlob, classify, covers, filesUnder, hasGlob, ownsPath, sharedPaths } from "./adapter-hooks.mjs";
 import { normPlanId, phaseFile, planIds, planPath, readPlans, sharedLinePath, summaryPath } from "./planning.mjs";
 import { inheritedTests } from "./inherited-tests.mjs";
@@ -149,12 +149,6 @@ export async function outlineCheck(g, phase, { tracer = true, plansPerPhase, wav
         }
       }
       ownedOf.set(id, [...(ownedOf.get(id) ?? []), ...paths]);
-      // Kit feedback 67: a produced symbol is {symbol, kind, file, signature} with its file inside the plan's owns.
-      if (g.cfg.gsd.contract_check) {
-        const pp = producesProblems(p, paths);
-        errors.push(...pp.errors);
-        warnings.push(...pp.warnings);
-      }
       const row = byId.get(id);
       if (row && JSON.stringify([...(p.requirements ?? [])].sort()) !== JSON.stringify([...row.requirements].sort())) warnings.push(`${id}: manifest requirements differ from the outline row`);
       for (const v of p.verify ?? []) if (classify(v, g.cfg.adapter.verify_vocabulary).kind === "unknown") warnings.push(`${id}: verify obligation outside the vocabulary: ${v}`);

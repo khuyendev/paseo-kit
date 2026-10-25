@@ -1,10 +1,11 @@
-// `ph gsd owns add` and `ph gsd owns handover` (kit feedback W16): an owns-only answer to a planner SOURCE AUDIT.
-// The manifest's owns change; `owns_outline` keeps the owns the skeleton reviewed, so the freeze hash does not move
-// (manifestFreezeText) and only the plans whose owns changed are planned again. The answer is logged in owner-answers.json.
+// `ph gsd owns add` and `ph gsd owns handover` (kit feedback W16): the owner's edit of the outline's owns allocation. A planner
+// needs neither: it adds the paths its tasks change to its own plan's owns (upstream files_modified). The manifest's owns change;
+// `owns_outline` keeps the owns the skeleton reviewed, so the freeze hash does not move (manifestFreezeText) and only the plans whose
+// owns changed are planned again. The answer is logged in owner-answers.json. As upstream, only plans of one wave must not overlap.
 import { writeJsonAtomic } from "../lib/io.mjs";
 import { covers, hasGlob, ownsPath, overlaps, pathKey, repoPath } from "./adapter-hooks.mjs";
 import { asArray, done, fail, rel, withFileLock } from "./common.mjs";
-import { readManifest } from "./contracts.mjs";
+import { readManifest } from "./manifest.mjs";
 import { readOutline } from "./outline.mjs";
 import { answersFile, appendAnswer } from "./owner-answers.mjs";
 import { normPlanId } from "./planning.mjs";
@@ -64,10 +65,11 @@ export function ownsAdd(g, phase, { plan, paths, reason }) {
     const forms = g.cfg.adapter.ownership.owns_forms;
     const entry = findEntry(entriesOf(fresh), id, "owns add");
     const want = asPaths(paths).map((p) => parsePath(forms, p));
+    const waves = waveOf(phase);
     const added = [];
     for (const item of want) {
-      const others = othersOwning(entriesOf(fresh), forms, item.mapped, entry.id);
-      if (others.length) throw fail(`owns add rejected: ${item.mapped} is owned by ${others.join(", ")}; hand it over with ph gsd owns handover <phase> --from <id> --to ${entry.id} --path ${item.mapped} --reason <text>`);
+      const others = othersOwning(entriesOf(fresh), forms, item.mapped, entry.id).filter((pid) => waves(pid) === waves(entry.id));
+      if (others.length) throw fail(`owns add rejected: ${item.mapped} is owned by ${others.join(", ")} of the same wave; that plan makes the change, or the outline moves the path (ph gsd decide --outline)`);
       if (coveredBy(entry.owns, forms, item.mapped)) continue;
       added.push(item.entry);
     }

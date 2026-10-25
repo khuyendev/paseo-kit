@@ -37,7 +37,7 @@ test("GSDF-03 an input change changes the planner prompt digest; an unsafe phase
 
 test("GSDF-15 argument validation fails before any agent; defaults come from the gsd overlay", async () => {
   const w = makeWorld();
-  for (const args of [{ maxCheckIterations: 4 }, { maxSkeletonPasses: 0 }, { skeletonLanes: [] }, { skeletonLanes: [{ lens: " " }] }, { wiring: "sometimes" }, { skeletonLanes: [{ lens: "nope" }] }]) {
+  for (const args of [{ maxCheckIterations: 4 }, { maxSkeletonPasses: 0 }, { skeletonLanes: [{ lens: " " }] }, { wiring: "sometimes" }, { skeletonLanes: [{ lens: "nope" }] }]) {
     const r = await plan(w, args);
     assert.equal(r.result.status, "failed", JSON.stringify(args));
     assert.equal(r.calls.length, 0);
@@ -45,6 +45,11 @@ test("GSDF-15 argument validation fails before any agent; defaults come from the
   const w2 = makeWorld({ overlay: { gsd: { skeleton_lanes: [{ lens: "fidelity" }] } } });
   const r = await plan(w2);
   assert.deepEqual(labels(r).filter((l) => l.startsWith("skeleton-")), ["skeleton-L1"]);
+  // No lane is no skeleton review (the kit default, as upstream GSD): the outline is frozen as its check passed it.
+  const off = await plan(makeWorld(), { skeletonLanes: [] });
+  assert.equal(off.result.status, "planned", JSON.stringify(off.result));
+  assert.deepEqual(labels(off).filter((l) => l.startsWith("skeleton-") || l.startsWith("resolve-")), []);
+  assert.ok(off.logs.includes("log skeleton review off (gsd.skeleton_lanes is empty)"));
 });
 
 test("GSDF-16 research preconditions: missing research and an empty skip reason stop, a skip with reason proceeds", async () => {
@@ -186,7 +191,7 @@ test("GSDF-23 OUTLINE-REVIEW is written in every outcome; an unchanged rerun spa
   assert.match(w2.read(`${PHASE_DIR}/01-OUTLINE-REVIEW.md`), /Status: needs-owner/);
 });
 
-test("GSDF-24 a rerun after a crash in wave 2 keeps the wave-1 plan and plans only wave 2; an outline edit replans all", async () => {
+test("GSDF-24 a rerun after a crash in wave 2 keeps the wave-1 plan and plans only wave 2; an outline edit replans only the plans whose row changed", async () => {
   const w = makeWorld();
   const crash = await plan(w, {}, { "plan-01-02": () => NULL("agent error: rate limit") });
   assert.equal(crash.result.status, "failed");
@@ -196,9 +201,14 @@ test("GSDF-24 a rerun after a crash in wave 2 keeps the wave-1 plan and plans on
   assert.ok(rerun.logs.includes("log plan 01-01 kept: unchanged since recorded"));
   const order = labels(crash);
   assert.ok(order.indexOf("plan-01-01") < order.indexOf("plan-01-02"));
+  // Upstream chunked planning keeps a written plan: the skeleton is reviewed again, and only 01-01, whose row changed, is planned again.
   w.write(`${PHASE_DIR}/01-PLAN-OUTLINE.md`, w.read(`${PHASE_DIR}/01-PLAN-OUTLINE.md`).replace("do it", "do it better"));
   const edited = await plan(w);
-  assert.deepEqual(labels(edited).filter((l) => l.startsWith("plan-")), ["plan-01-01", "plan-01-02"]);
+  assert.ok(labels(edited).includes("skeleton-L1"), labels(edited).join(", "));
+  assert.deepEqual(labels(edited).filter((l) => l.startsWith("plan-")), ["plan-01-01"]);
+  assert.ok(edited.logs.includes("log plan 01-02 kept: unchanged since recorded"));
+  const replan = await plan(w, { replan: true });
+  assert.deepEqual(labels(replan).filter((l) => l.startsWith("plan-")), ["plan-01-01", "plan-01-02"], "replan plans every plan again");
 });
 
 test("GSDF-25 the structure fixer gets the exact error list once; a second failure fails the run", async () => {

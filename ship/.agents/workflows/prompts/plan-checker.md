@@ -12,7 +12,7 @@ Files per plan: warning at {{filesWarning}}+, blocker at {{filesBlocker}}+ (use 
 
 Tracer files per plan (a plan with a type="tracer" task): warning at {{tracerWarning}}+, blocker at {{tracerBlocker}}+.
 
-Files per plan is judged by a deterministic probe ({{sendBackFile}}): do not raise a Files/plan issue. Give an issue "outcome": "reallocate" only when its only fix is a different split of the owned paths between plans (the plan's owns, which a revision of the plan cannot change); every other issue has outcome "revise".
+Files per plan is judged by a deterministic probe ({{sendBackFile}}): do not raise a Files/plan issue. Give an issue "outcome": "reallocate" only when its only fix is a different split of the work between plans or waves (a revision can add paths to its own plan's owns, but cannot take a path another plan of its wave owns); every other issue has outcome "revise".
 
 Deterministic probe results are in {{probeFile}}: they are already counted; do not re-derive them, do not repeat them as issues.
 

@@ -11,12 +11,11 @@
 //   force          the run's forceProceed {reason, issues}
 //   plans          per plan, the instance whose planner last wrote it (forceProceed never accepts it there, item 40) and the one that
 //                  last recorded it (a resumed run keeps a plan this run recorded and its own steps changed since) (plan-mark)
-//   logs           per part (a checker loop, the streams join, the dependency checks, the contract gate, the reallocation rounds,
-//                  the recheck scope), the instance's op log; its fold is the part's state (plan-checker, plan-contracts,
-//                  plan-realloc, plan-recheck)
+//   logs           per part (a checker loop, the streams join, the dependency checks, the reallocation rounds, the recheck scope),
+//                  the instance's op log; its fold is the part's state (plan-checker, plan-realloc, plan-recheck). A `contracts` log of
+//                  the former contract gate is kept and never read
 //   seen, accepted the forceProceed issues the instance met, and what its override accepted (item 71)
-//   changes        the contract changes the run applied (all its instances): a resumed reviser's `contracts change` answers
-//                  `already`, and this says it was the run's own change, so its consumers are still revised (item 67)
+//   changes        the former contract gate's changes of the run; cleared by a new run, never written
 //   replan         per plan, the changes other planners asked of it (a reply's plan_changes, item 99 F3) and the instance whose
 //                  planner was given them; open across runs until a planner was given them and the plan was recorded (plan-replan)
 // A verb call names {run, part, step, ops}; `step` is an id the workflow gives in a fixed order, so the fold of a log is a function
@@ -31,7 +30,7 @@ import { resolveInside } from "../../harness/lib/paths.mjs";
 export const PLAN_STATE_FILE = "plan-progress.json";
 export const PLAN_STATE_VERSION = 1;
 export const PLAN_STAGES = Object.freeze(["planned", "recorded"]);
-const PART = /^(checker(:[A-Za-z0-9._-]+)?|gaps|join|dependents|contracts|realloc|recheck)$/;
+const PART = /^(checker(:[A-Za-z0-9._-]+)?|gaps|join|dependents|realloc|recheck)$/;
 const PLAN_ID = /^\d+(\.\d+)?-\d+$/;
 
 export const isPlanStateFile = (rel) => path.basename(String(rel ?? "").replace(/\\/g, "/")) === PLAN_STATE_FILE;
@@ -326,43 +325,6 @@ const CHECKER_OPS = {
   view: (st, s) => ({ findings: s.ledger.findings(), stuck: stuckView(s), dependents: s.dependents }),
 };
 
-// ---- the contract gate (kit feedback 67): changes applied in this run, dirty until the next gate, checks and rounds ----
-function contractsFold() {
-  return { checks: 0, rounds: 0, issues: 0, changes: [], dirty: false };
-}
-const contractReport = (s) => ({ checks: s.checks, rounds: s.rounds, issues: s.issues, changes: s.changes });
-const CONTRACT_OPS = {
-  // A reviser's CONTRACT_CHANGE as `ph gsd contracts change` answered it (outcome). An `already` answer is this run's change when an
-  // earlier instance of the run applied it (the resume of a reviser's reply), else a change of an earlier run.
-  change: (st, s, o) => {
-    if (![o.symbol, o.new].every((v) => typeof v === "string" && v.trim())) fail("a contract change needs symbol and new");
-    const out = o.outcome ?? {};
-    const same = (c) => c.plan === out.plan && c.symbol === o.symbol && c.new === out.signature;
-    const known = !out.changed && out.already ? st.changes.find(same) : null;
-    if (!out.changed && !known) return { changed: false, dirty: s.dirty, report: contractReport(s) };
-    const entry = known ? { ...known, reason: o.reason } : { plan: out.plan, symbol: o.symbol, old: out.old, new: out.signature, reason: o.reason, consumers: out.consumers ?? [] };
-    if (!st.changes.some(same)) st.changes.push(entry);
-    s.changes.push(entry);
-    s.dirty = true;
-    return { changed: true, entry, dirty: s.dirty, report: contractReport(s) };
-  },
-  // One `ph gsd verify contracts` of a gate round; `errors` is its error count when it did not pass.
-  check: (st, s, o) => {
-    s.checks++;
-    if (o.errors) s.issues = Math.max(s.issues, o.errors);
-    return { dirty: s.dirty, report: contractReport(s) };
-  },
-  round: (st, s) => {
-    s.rounds++;
-    return { dirty: s.dirty, report: contractReport(s) };
-  },
-  clean: (st, s) => {
-    s.dirty = false;
-    return { dirty: s.dirty, report: contractReport(s) };
-  },
-  view: (st, s) => ({ dirty: s.dirty, report: contractReport(s) }),
-};
-
 // ---- reallocation rounds (kit feedback 69): a round is used when it begins and listed once its outline changed ----
 const REALLOC_OPS = {
   begin: (st, s, o) => {
@@ -404,7 +366,6 @@ const RECHECK_OPS = {
 
 const FAMILIES = {
   checker: { test: (p) => /^(checker(:.+)?|gaps|join|dependents)$/.test(p), init: checkerFold, ops: CHECKER_OPS },
-  contracts: { test: (p) => p === "contracts", init: contractsFold, ops: CONTRACT_OPS },
   realloc: { test: (p) => p === "realloc", init: () => ({ used: 0, done: [] }), ops: REALLOC_OPS },
   recheck: { test: (p) => p === "recheck", init: () => ({ report: null }), ops: RECHECK_OPS },
 };
@@ -461,7 +422,7 @@ function viewOf(st, part) {
 // ---- verbs ----
 
 /** plan-run {run, settings: {freeze, plan, checked}, force: {reason, issues}|null}: starts the next instance of the run (a new run: the
- * first). The logs, the forceProceed issues met and the planned marks belong to the instance; the contract changes to the run. */
+ * first). The logs, the forceProceed issues met and the planned marks belong to the instance. */
 export function planRun(root, phaseDir, { run, settings, force = null } = {}) {
   return update(root, phaseDir, (st) => {
     if (typeof run !== "string" || !run) fail("plan-run needs the run id");
@@ -564,6 +525,5 @@ export function planState(root, phaseDir) {
 }
 
 export const planChecker = (root, phaseDir, input) => stepVerb(root, phaseDir, input, "plan-checker", "checker");
-export const planContracts = (root, phaseDir, input) => stepVerb(root, phaseDir, { ...input, part: "contracts" }, "plan-contracts", "contracts");
 export const planRealloc = (root, phaseDir, input) => stepVerb(root, phaseDir, { ...input, part: "realloc" }, "plan-realloc", "realloc");
 export const planRecheck = (root, phaseDir, input) => stepVerb(root, phaseDir, { ...input, part: "recheck" }, "plan-recheck", "recheck");

@@ -54,7 +54,8 @@ test("V5B a plan decision changes only that plan's revision key, an outline deci
   const after = await state();
   assert.equal(after.research, "same");
   assert.deepEqual(after.inputs, ["decisions:outline"]);
-  assert.deepEqual(after["plan:01-01"], ["decisions:outline"]);
+  // A plan key holds the plan's own outline row and manifest entry: the outline revision decides which plans are planned again.
+  assert.equal(after["plan:01-01"], "same");
 });
 
 test("V5B research questions lists the open scope questions; a decide --question answers one; RESOLVED and other questions are not asked", async () => {

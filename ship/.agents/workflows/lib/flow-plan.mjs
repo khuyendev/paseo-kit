@@ -8,17 +8,13 @@
 //   plan-probes        the checker's deterministic probes as issues (countProbes, the Files/plan lines)
 //   plan-linked        the plans a plan edit can affect (incremental recheck, kit feedback 76)
 //   plan-realloc-diff  what an outline reallocation changed (kit feedback 69)
-//   plan-contract-route the contract gate's issues per plan and its stop rule, and which revision conflicts still stand (100)
-//   plan-contract-drift a symbol an outline revision reshaped in the prose but not in the manifest (98)
 //   plan-replan-keep   what the owner's answer to a conflict about some plans keeps on the rerun (101 F3)
 //   plan-streams-end, plan-checker-reply, plan-dependents: the streams flow's end, a checker reply's issues, the dependent plans (O65, O67)
-//   plan-wave-stops  the planner stops of one wave: ownership audits collected, anything else the first stop (kit feedback W16)
 import fs from "node:fs";
 import path from "node:path";
 import { read } from "./flow-files.mjs";
 import { fillTemplate, templateFile, templateText } from "./flow-prompt.mjs";
 import { readText } from "../../harness/lib/io.mjs";
-import { contractDrift, fixPlans } from "../../harness/gsd/contracts.mjs";
 import { decisionLines, decisionsOf } from "../../harness/lib/owner-answers.mjs";
 import { kitHelpers } from "../../harness/workflow/script.mjs";
 
@@ -33,10 +29,10 @@ const failedText = (what, reason) => `${what}${reason ? `: ${reason}` : " return
 
 // ---- agent schemas and planner markers (contracts of the planner, checker, lane and architect agents) ----
 export const OWNER_MARKERS = ["REVISION_CONFLICT", "PHASE SPLIT RECOMMENDED", "SOURCE AUDIT", "CHECKPOINT REACHED", "PLANNING INCONCLUSIVE"];
-export const KNOWN_MARKERS = [...OWNER_MARKERS, "OUTLINE COMPLETE", "PLANNING COMPLETE", "REVISION COMPLETE", "WIRING COMPLETE", "CONTRACT_CHANGE"];
+export const KNOWN_MARKERS = [...OWNER_MARKERS, "OUTLINE COMPLETE", "PLANNING COMPLETE", "REVISION COMPLETE", "WIRING COMPLETE"];
 const PLANNER_SCHEMA = {
   type: "object",
-  properties: { marker: { type: "string" }, summary: { type: "string" }, question: { type: "string" }, plans: { type: "array", items: { type: "string" }, description: "with an owner marker: the proposal, one string per proposed split group (PHASE SPLIT RECOMMENDED) or per audit option (SOURCE AUDIT)" }, conflict: { type: "object" }, changes: { type: "array" }, contract_changes: { type: "array", items: { type: "object", properties: { plan: { type: "string" }, symbol: { type: "string" }, old: { type: "string" }, new: { type: "string" }, file: { type: "string" }, kind: { type: "string" }, reason: { type: "string" } }, required: ["symbol", "old", "new", "reason"] }, description: "CONTRACT_CHANGE: a produced signature that has to change, one entry per symbol; old empty adds a symbol the manifest does not produce yet (file and kind required, file inside this plan's owns)" }, owns_changes: { type: "array", items: { type: "object", properties: { path: { type: "string" }, from: { type: "string" }, reason: { type: "string" } }, required: ["path"] }, description: "SOURCE AUDIT that only adds owns paths, or hands a path over from another plan of another wave (from). Not an outline decision." }, plan_changes: { type: "array", items: { type: "object", properties: { plan: { type: "string" }, change: { type: "string" } }, required: ["plan", "change"] }, description: "a change another plan of this phase needs because of your work, which you may not edit (one entry per plan, its id NN-MM): the flow has that plan planned again with this change; never leave such a follow-up only in the summary" } },
+  properties: { marker: { type: "string" }, summary: { type: "string" }, question: { type: "string" }, plans: { type: "array", items: { type: "string" }, description: "with an owner marker: the proposal, one string per proposed split group (PHASE SPLIT RECOMMENDED) or per audit option (SOURCE AUDIT)" }, conflict: { type: "object" }, changes: { type: "array" }, plan_changes: { type: "array", items: { type: "object", properties: { plan: { type: "string" }, change: { type: "string" } }, required: ["plan", "change"] }, description: "a change another plan of this phase needs because of your work, which you may not edit (one entry per plan, its id NN-MM): the flow has that plan planned again with this change; never leave such a follow-up only in the summary" } },
   required: ["marker"],
 };
 const ISSUE = { type: "object", properties: { plan: { type: ["string", "null"] }, dimension: { type: "string" }, severity: { type: "string" }, required_property: { type: "string" }, description: { type: "string" }, evidence: { type: "string" }, fix_hint: { type: "string" }, target: { type: "string" } }, required: ["severity", "required_property", "description"] };
@@ -70,7 +66,7 @@ function roleOpts(overrides, role, extra = {}) {
 const ROLES = ["planner", "outline", "checker", "architect", "skeleton_lane"];
 
 // `policy`: the composition policies the script resolved (kit feedback 87, RF: a gsd.* policy key is read by the script only, each
-// overridden by its argument); `gsd`: the kit settings (plan_limits, roles, tracer_extra_files, files_per_plan, contract_check).
+// overridden by its argument); `gsd`: the kit settings (plan_limits, roles, tracer_extra_files, files_per_plan).
 export function planArgs(root, { args = {}, policy = {}, gsd: g = {}, adapter = {}, kitLenses = [] } = {}) {
   const a = isObj(args) ? args : {};
   const failed = (reason) => ({ status: "failed", reason, code: 1 });
@@ -82,7 +78,8 @@ export function planArgs(root, { args = {}, policy = {}, gsd: g = {}, adapter = 
   if (!["plan", "gaps"].includes(mode)) return failed(`mode must be plan or gaps, not ${mode}`);
   if (!isInt13(maxSkeletonPasses)) return failed(`maxSkeletonPasses must be an integer 1..3, not ${maxSkeletonPasses}`);
   if (!isInt13(maxCheckIterations)) return failed(`maxCheckIterations must be an integer 1..3, not ${maxCheckIterations}`);
-  if (!Array.isArray(lanesArg) || !lanesArg.length || lanesArg.some((l) => typeof l?.lens !== "string" || !l.lens.trim())) return failed("skeletonLanes needs at least one lane with a non-empty lens");
+  // No lane turns the skeleton review off (the default: upstream GSD reviews no outline); a lane needs a non-empty lens.
+  if (!Array.isArray(lanesArg) || lanesArg.some((l) => typeof l?.lens !== "string" || !l.lens.trim())) return failed("skeletonLanes needs a list of lanes, each with a non-empty lens");
   if (!["auto", "always", "never"].includes(wiringMode)) return failed(`wiring must be auto, always or never, not ${wiringMode}`);
   if (!["staged", "streams"].includes(planFlow)) return failed(`planFlow must be staged or streams, not ${planFlow}`);
   if (a.forceProceed !== undefined && !String(a.forceProceed?.reason ?? "").trim()) return failed("forceProceed needs a non-empty reason");
@@ -104,20 +101,21 @@ export function planArgs(root, { args = {}, policy = {}, gsd: g = {}, adapter = 
   if (unknownLens) return failed(`skeleton lane lens '${unknownLens.lens}' is neither a skeleton kit lens (${kitLenses.join(", ")}) nor an adapter.review_lenses entry of stage skeleton`);
   // G017: the effective settings each gated judgment reads, hashed into its revision key (`--settings`): a changed lane, role or
   // limit reruns the judgments it decides; each key takes only the settings its own judgments read. kit-feedback 37: the checked
-  // key takes tracer_extra_files only when set, so earlier records stay valid.
+  // key takes tracer_extra_files only when set, so earlier records stay valid. A plan key takes the planning limits only: the
+  // planner's model, effort or agent is how a plan was written, and upstream keeps a written plan (kit feedback W20).
   const roleOf = (name) => ({ ...(g.roles?.[name] ?? {}), ...(roleOverrides[name] ?? {}) });
   const planning = { tracer, reversibilityGates, granularity: policy.granularity, plan_limits: g.plan_limits, stack_skill: adapter.stack_skill ?? null };
   const tracerExtraFiles = g.tracer_extra_files;
   const settings = {
     freeze: { lanes: lanes.map((l) => ({ lens: l.lens, text: l.text, model: l.model ?? null, effort: l.effort ?? null })), skeleton_lane: roleOf("skeleton_lane"), tracer, maxSkeletonPasses },
-    plan: { ...planning, planner: roleOf("planner") },
+    plan: planning,
     checked: { ...planning, checker: roleOf("checker"), maxCheckIterations, ...(tracerExtraFiles ? { tracerExtraFiles } : {}), ...(g.files_per_plan ? { filesPerPlan: g.files_per_plan } : {}), ...(reallocRounds ? { reallocRounds } : {}) },
   };
   // G009: the lanes, their lens texts and the role settings are skeleton-review inputs (SKELETON-LANES.json, hashed by the skeleton key).
   const laneInputs = { role: { ...g.roles?.skeleton_lane, ...roleOverrides.skeleton_lane }, lanes: lanes.map((l) => ({ id: l.id, lens: l.lens, model: l.model ?? null, effort: l.effort ?? null, text: l.text, file: kitLenses.includes(l.lens) ? read(root, `.agents/workflows/lenses/${l.lens}.md`).text ?? null : null })) };
   return {
     status: "ok", mode, tracer, reversibilityGates, maxSkeletonPasses, maxCheckIterations, wiringMode, planReview, planFlow, reallocRounds, recheckMode,
-    roleOverrides, roles: Object.fromEntries(ROLES.map((r) => [r, roleOpts(roleOverrides, r)])), forcedIssues, tracerExtraFiles, contractsOn: g.contract_check !== false, lanes, settings, laneInputs, skeleton: skeletonBook(lanes), schemas: SCHEMAS, ownerMarkers: OWNER_MARKERS, knownMarkers: KNOWN_MARKERS,
+    roleOverrides, roles: Object.fromEntries(ROLES.map((r) => [r, roleOpts(roleOverrides, r)])), forcedIssues, tracerExtraFiles, lanes, settings, laneInputs, skeleton: skeletonBook(lanes), schemas: SCHEMAS, ownerMarkers: OWNER_MARKERS, knownMarkers: KNOWN_MARKERS,
   };
 }
 
@@ -164,35 +162,20 @@ function planningContext(root, ctx, mode) {
     validationSkipped: ctx.validation?.skipped ?? "", validationPath: ctx.validation?.path ?? "",
   });
 }
-// Kit feedback 67 F2: a reviser gets the manifest entry of each plan it edits and, per produced symbol, the plans that consume it.
-function contractBlock(root, shows) {
-  const parts = [];
-  for (const { id, show: s } of shows ?? []) {
-    if (!s?.plan || !(s.produces?.some((p) => p.structured) || s.consumes?.some((c) => c.entry))) continue;
-    const consumers = Object.fromEntries(Object.entries(s.consumers ?? {}).filter(([, list]) => list.length));
-    parts.push(`${id} produces (manifest): ${json(s.produces.filter((p) => p.structured).map(({ symbol, kind, file, signature }) => ({ symbol, kind, file, signature })))}`, `${id} consumers per produced symbol: ${json(consumers)}`, `${id} consumes (producer manifest entries to quote): ${json(s.consumes.filter((c) => c.entry).map((c) => ({ plan: c.plan, ...c.entry })))}`);
-  }
-  return parts.length ? renderPlanTemplate(root, "plan-contract-context", { parts: parts.join("\n") }) : "";
-}
-const revisionContext = (root, plans, issues, shows) => renderPlanTemplate(root, "plan-revision", { plans: plans.join(", ") || "none", issues: json(issues), contract: shows ? contractBlock(root, shows) : "" });
+const revisionContext = (root, plans, issues) => renderPlanTemplate(root, "plan-revision", { plans: plans.join(", ") || "none", issues: json(issues) });
 const PLANNER_TAIL = (root, ctx, d) => ({ policy: policyBlock(ctx.approvedResearch ?? null), returnNote: renderPlanTemplate(root, "plan-return", {}), digest: digestLine(d.key, d.digest) });
 const issueView = (list, keys) => list.map((i) => Object.fromEntries(keys.map((k) => [k, i[k]])));
 
 const KINDS = {
-  outline: (root, ctx, d, p) => renderPlanTemplate(root, "plan-outline", { context: planningContext(root, ctx, "outline"), specless: renderPlanTemplate(root, "plan-specless", {}), outline: p.OUTLINE, manifest: p.MANIFEST, contracts: ctx.contractsOn ? renderPlanTemplate(root, "plan-outline-contracts", {}) : "", ph: PH, checkArgs: d.checkArgs.join(" "), ...PLANNER_TAIL(root, ctx, { key: "inputs", digest: d.digest }) }),
+  outline: (root, ctx, d, p) => renderPlanTemplate(root, "plan-outline", { context: planningContext(root, ctx, "outline"), specless: renderPlanTemplate(root, "plan-specless", {}), outline: p.OUTLINE, manifest: p.MANIFEST, existing: d.existing ? `${p.OUTLINE} and its manifest are on disk from an earlier run: revise them for what changed in the inputs (the owner's decisions above, CONTEXT, the research); keep every row and manifest entry the change does not touch exactly as it is (id, text, wave, owns), so the plans written on them are kept.` : "", ph: PH, checkArgs: d.checkArgs.join(" "), ...PLANNER_TAIL(root, ctx, { key: "inputs", digest: d.digest }) }),
   "outline-fix": (root, ctx, d, p) => renderPlanTemplate(root, "plan-outline-fix", { outline: p.OUTLINE, manifest: p.MANIFEST, errors: `\n${bullets(d.errors)}`, ...PLANNER_TAIL(root, ctx, { key: "inputs", digest: d.digest }) }),
   // A revision of plans (or of the outline): the planning context in revision mode and the issues to answer.
-  revise: (root, ctx, d) => renderPlanTemplate(root, "plan-revise", { context: planningContext(root, ctx, "revision"), revision: revisionContext(root, d.plans, d.issues, d.shows), threatRanges: threatRangesText(d.plans), ...PLANNER_TAIL(root, ctx, d) }),
+  revise: (root, ctx, d) => renderPlanTemplate(root, "plan-revise", { context: planningContext(root, ctx, "revision"), revision: revisionContext(root, d.plans, d.issues), threatRanges: threatRangesText(d.plans), ...PLANNER_TAIL(root, ctx, d) }),
   write: (root, ctx, d, p) => {
     const quotes = (d.wiringText ?? "").split(/\r?\n/).filter((l) => l.includes(d.id)).slice(0, 40);
     const wiring = d.wiringText ? renderPlanTemplate(root, "plan-write-wiring", { id: d.id, wiring: p.WIRING, quotes: quotes.map((l) => `> ${l}`).join("\n") || "> (none name this plan)" }) : "No WIRING contract for this phase.";
-    // Kit feedback 67 F1, 76: the planner writes each produced signature as the manifest has it and quotes each consumed one.
-    const s = d.contract;
-    const mine = (s?.show?.produces ?? []).filter((x) => x.structured).map(({ symbol, kind, file, signature }) => ({ symbol, kind, file, signature }));
-    const used = (s?.show?.consumes ?? []).filter((c) => c.entry).map((c) => ({ plan: c.plan, ...c.entry }));
-    const contract = s ? renderPlanTemplate(root, "plan-write-contract", { produces: mine.length ? json(mine) : "", consumes: used.length ? json(used) : "" }) : "";
     const range = threatRangeOf(d.id);
-    return renderPlanTemplate(root, "plan-write", { context: planningContext(root, ctx, "standard"), specless: renderPlanTemplate(root, "plan-specless", {}), plan: p.planPath(d.id), id: d.id, manifest: p.MANIFEST, entry: json(d.entry), owns: json(d.entry?.owns ?? []), wiring, carried: bullets(d.carried ?? []), contract, threatRange: range?.range ?? "", threatExample: range?.example ?? "", ...PLANNER_TAIL(root, ctx, { key: "freeze", digest: d.digest }) });
+    return renderPlanTemplate(root, "plan-write", { context: planningContext(root, ctx, "standard"), specless: renderPlanTemplate(root, "plan-specless", {}), plan: p.planPath(d.id), id: d.id, manifest: p.MANIFEST, entry: json(d.entry), owns: json(d.entry?.owns ?? []), wave: String(d.wave ?? 1), sameWave: d.sameWave?.length ? d.sameWave.join("; ") : "none", wiring, carried: bullets(d.carried ?? []), threatRange: range?.range ?? "", threatExample: range?.example ?? "", ...PLANNER_TAIL(root, ctx, { key: "freeze", digest: d.digest }) });
   },
   fix: (root, ctx, d, p) => { const range = threatRangeOf(d.id); return renderPlanTemplate(root, "plan-fix", { plan: p.planPath(d.id), errors: `\n${bullets(d.errors)}`, threatRange: range?.range ?? "", threatExample: range?.example ?? "", ...PLANNER_TAIL(root, ctx, { key: "freeze", digest: d.digest }) }); },
   realloc: (root, ctx, d, p) => renderPlanTemplate(root, "plan-realloc", {
@@ -472,27 +455,6 @@ export function planValidation(root, { off = null, approvedResearch = null, stra
   };
 }
 
-// ---- plan-contract-route (kit feedback 67 F3, 100): the issues of a contract check per plan, and the gate's stop rule ----
-// Each error goes to its `fixers` (the plans whose planner can fix it, `ph gsd verify contracts`; fixPlans for an error without the
-// field) that are plans of the run, else to the plans it names. `conflicts`: the plans whose reviser returned REVISION_CONFLICT in
-// the last round; a conflict stands while this check still routes an issue to its plan, else it is dropped (100 F2).
-export function planContractRoute(root, { errors = [], planIds = [], round = 1, prev = null, cap = 1, conflicts = [] } = {}) {
-  const byPlan = new Map();
-  for (const e of errors) {
-    const ours = (list) => list.filter((p) => planIds.includes(p));
-    const to = ours(asArray(e.fixers).length ? asArray(e.fixers) : fixPlans(e));
-    for (const p of to.length ? to : ours(asArray(e.plans).length ? e.plans : [e.plan])) byPlan.set(p, [...(byPlan.get(p) ?? []), { plan: p, dimension: "contract", severity: "blocker", required_property: `${e.kind}${e.symbol ? ` ${e.symbol}` : ""}`, description: e.message, fix_hint: e.fix_hint, related_plans: asArray(e.plans).filter((x) => x !== p) }]);
-  }
-  const missing = errors.filter((e) => e.kind === "plan-missing").map((e) => e.plan);
-  const over = errors.length > 0 && (round > cap || (prev !== null && errors.length >= prev));
-  const stop = missing.length ? `${missing.join(", ")} in the manifest but not planned` : over ? (round > cap ? `${errors.length} contract issues left after ${round - 1} revisions` : `contract issues not falling: ${errors.length}, was ${prev}`) : null;
-  return { byPlan: [...byPlan], stop, standing: conflicts.filter((id) => byPlan.has(id)), dropped: conflicts.filter((id) => !byPlan.has(id)) };
-}
-
-// ---- plan-contract-drift (kit feedback 98 F1): an outline revision that reshaped a symbol in the prose but not in the manifest ----
-/** Flow verb `plan-contract-drift` {before: {outline, manifest}, after: {outline, manifest}} -> {drift, errors, warnings}. */
-export const planContractDrift = (root, { before = {}, after = {} } = {}) => contractDrift(before, after);
-
 // ---- plan-replan-keep (kit feedback 101 F3): what the owner's answer to a conflict about some plans keeps ----
 // `replanPlans` {plans, inputs}; `keys` {<name>: revisions key argv} for inputs, freeze, skeleton and plan:<id>; `checks`
 // {<name>: {code, changed, recorded}} their `revisions check` answers; `files`: the outline, manifest, wiring and research report.
@@ -508,8 +470,9 @@ export function planReplanKeep(root, { replanPlans = null, keys = {}, checks = {
   const answerOnly = (c) => c?.code === 1 && Array.isArray(c.changed) && c.changed.length > 0 && !c.changed.some(denied);
   for (const k of ["inputs", "freeze"]) if (!answerOnly(checks[k])) return no(`the ${k} record changed in ${checks[k]?.changed?.join(", ") || "parts it cannot name"}, not only in the owner's answer`);
   if (checks.skeleton?.code !== 0) return no("the skeleton review inputs changed");
-  const kept = Object.keys(keys).filter((k) => k.startsWith("plan:") && !replanPlans.plans.includes(k.slice(5)) && answerOnly(checks[k])).map((k) => k.slice(5));
-  return { keep: true, record: [keys.inputs, keys.freeze, ...kept.map((id) => keys[`plan:${id}`])], kept, log: `replanPlans: the owner's answer to the conflict of ${replanPlans.plans.join(", ")} changed ${checks.inputs.changed.join(", ")}; the outline, its review and ${kept.length ? kept.join(", ") : "no other plan"} are kept, ${replanPlans.plans.join(", ")} planned again` };
+  // A plan key holds only the plan's own part, so a plan the answer does not touch checks unchanged and needs no new record.
+  const kept = Object.keys(keys).filter((k) => k.startsWith("plan:") && !replanPlans.plans.includes(k.slice(5)) && (checks[k]?.code === 0 || answerOnly(checks[k]))).map((k) => k.slice(5));
+  return { keep: true, record: [keys.inputs, keys.freeze, ...kept.filter((id) => checks[`plan:${id}`]?.code !== 0).map((id) => keys[`plan:${id}`])], kept, log: `replanPlans: the owner's answer to the conflict of ${replanPlans.plans.join(", ")} changed ${checks.inputs.changed.join(", ")}; the outline, its review and ${kept.length ? kept.join(", ") : "no other plan"} are kept, ${replanPlans.plans.join(", ")} planned again` };
 }
 
 // ---- plan-streams-end (O65, O67): the end of the streams flow once every review stream returned ----
@@ -548,36 +511,4 @@ export function planDependents(root, { index = [], changed = [], planIds = [] } 
   return { list, log: list.length ? `plan interfaces changed: ${changed.join(", ")}; checking ${list.map(([id]) => id).join(", ")}` : null };
 }
 
-// Kit feedback W16: every planner of the wave has already returned. Ownership-only SOURCE AUDITs (owns_changes, each a path,
-// `from` when another plan owns it) become one stop answered by `ph gsd owns add` / `owns handover`. Any other stop, or a
-// failed call, stays the first of those, as the wave used to stop.
-export function planWaveStops(_root, { stops = [], phase = "" } = {}) {
-  const ownsOnly = (s) => !s?.failed && String(s?.marker ?? "").includes("SOURCE AUDIT") && Array.isArray(s.owns) && s.owns.length > 0 && s.owns.every((o) => o && typeof o.path === "string" && o.path.trim());
-  if (stops.length && stops.every(ownsOnly)) {
-    const owns = [];
-    const commands = [];
-    const q = (s) => String(s ?? "").replace(/"/g, "'");
-    for (const s of stops) for (const o of s.owns) {
-      const path = q(String(o.path).trim());
-      const reason = q(String(o.reason ?? s.summary ?? "ownership audit").trim() || "ownership audit");
-      const from = String(o.from ?? "").trim();
-      if (from) {
-        owns.push({ op: "handover", from, to: s.id, path: String(o.path).trim(), reason: String(o.reason ?? s.summary ?? "ownership audit").trim() });
-        commands.push(`node .agents/harness/ph.mjs gsd owns handover ${phase} --from ${from} --to ${s.id} --path ${path} --reason "${reason}"`);
-      } else {
-        owns.push({ op: "add", plan: s.id, path: String(o.path).trim(), reason: String(o.reason ?? s.summary ?? "ownership audit").trim() });
-        commands.push(`node .agents/harness/ph.mjs gsd owns add ${phase} --plan ${s.id} --path ${path} --reason "${reason}"`);
-      }
-    }
-    const plans = [...new Set(stops.map((s) => s.id))];
-    return {
-      act: "owns", reason: `ownership audit of ${plans.join(", ")}: owns only (no outline change)`,
-      plans: stops.map((s) => s.summary ?? s.id), owns, command: commands.join("; "),
-      options: ["apply each owns change (ph gsd owns add, or owns handover across waves) and rerun", "record an outline decision (ph gsd decide --outline) when the audit is not only ownership", "abandon"],
-    };
-  }
-  const index = stops.findIndex((s) => s?.failed || s?.marker);
-  return { act: "first", index: index < 0 ? 0 : index };
-}
-
-export const PLAN_VERBS = Object.freeze(["plan-args", "plan-prompt", "plan-skeleton", "plan-probes", "plan-linked", "plan-realloc-diff", "plan-validation", "plan-contract-route", "plan-contract-drift", "plan-replan-keep", "plan-streams-end", "plan-checker-reply", "plan-dependents", "plan-wave-stops"]);
+export const PLAN_VERBS = Object.freeze(["plan-args", "plan-prompt", "plan-skeleton", "plan-probes", "plan-linked", "plan-realloc-diff", "plan-validation", "plan-replan-keep", "plan-streams-end", "plan-checker-reply", "plan-dependents"]);

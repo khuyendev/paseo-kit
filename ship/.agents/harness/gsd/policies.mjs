@@ -31,6 +31,7 @@ export const COMPOSITION_POLICIES = Object.freeze({
   "gsd.checker_reallocate": script("gsd-plan"),
   "gsd.checker_recheck": script("gsd-plan"),
   "gsd.skeleton_lanes": script("gsd-plan"),
+  "gsd.wiring": script("gsd-plan"),
   "gsd.max_skeleton_passes": script("gsd-plan"),
   "gsd.max_check_iterations": script("gsd-plan"),
   "gsd.map_mode": script("gsd-map-codebase"),

@@ -2602,7 +2602,7 @@ Conventions used below:
 - Scope: v1
 
 #### GSDC-28 Revision hashes (`revisions.json`)
-- Requirement: `revisions record|check|hash|show <phaseDir> [key]` over keys `research` (CONTEXT, PROJECT, the phase's own requirement entries and their specs, `<canonical_refs>` files, `adapter.instructions` files, researcher role text), `inputs` (research + RESEARCH.md without its attempt key and completion marker), `freeze` (outline, manifest, WIRING, inputs), `plan:<id>`, `plans`, `checked`, `handoff`; every key also hashes the phase's ROADMAP section without its generated dependency block; `revisions.json` stores each key's hash and file list once (no duplicated lists); `check` exits 0 same, 1 changed, 66 never recorded and reports `headChanged` without invalidating; writes are atomic.
+- Requirement: `revisions record|check|hash|show <phaseDir> [key]` over keys `research` (CONTEXT, PROJECT, the phase's own requirement entries and their specs, `<canonical_refs>` files, `adapter.instructions` files, researcher role text), `inputs` (research + RESEARCH.md without its attempt key and completion marker), `freeze` (outline, manifest, WIRING, inputs), `plan:<id>` (the plan's own outline row, manifest entry in its freeze form and WIRING lines naming it, its file, the decisions naming it), `plans`, `checked`, `handoff`; every key but `plan:<id>` also hashes the phase's ROADMAP section without its generated dependency block; a `plan:<id>` record of the previous form holds while its plan file, decisions, outline and manifest are as recorded (`legacy`); `revisions.json` stores each key's hash and file list once (no duplicated lists); `check` exits 0 same, 1 changed, 66 never recorded and reports `headChanged` without invalidating; writes are atomic.
 - Acceptance: fixture: record `freeze`; editing CONTEXT makes `check freeze` exit 1; editing another phase's ROADMAP section keeps 0; editing this phase's section exits 1; a code-only commit keeps 0 with `headChanged:true`.
 - Source: GSP-29, HIS-47, D-75, INV-39.
 - Scope: v1
@@ -2834,8 +2834,8 @@ Skills live in `.claude/skills/gsd-*`, workflow scripts in `.agents/workflows/gs
 - Scope: v1
 
 #### GSDF-15 Plan workflow arguments
-- Requirement: `gsd-plan.js` requires `phaseDir`; `mode` `plan` (default) or `gaps`; `tracer` default true; `reversibilityGates` default true; `maxSkeletonPasses` and `maxCheckIterations` default from `gsd` config (3) and only integers 1..3 (4 fails the run before any agent); `skeletonLanes` default `[{lens:fidelity},{lens:integration}]`, at least one lane with a non-empty lens; `wiring` `auto|always|never`; `replan`; `skipResearch` with `researchSkipReason`; `forceProceed {reason}`; `planReview` (default from `gsd`, off); per-run role overrides; returns `{status planned|needs-owner|failed|refused, reason, ...}`.
-- Acceptance: fixture: `maxCheckIterations: 4` fails with reason and zero agents; `skeletonLanes: []` fails; defaults resolve from the overlay.
+- Requirement: `gsd-plan.js` requires `phaseDir`; `mode` `plan` (default) or `gaps`; `tracer` default true; `reversibilityGates` default true; `maxSkeletonPasses` and `maxCheckIterations` default from `gsd` config (3) and only integers 1..3 (4 fails the run before any agent); `skeletonLanes` default from `gsd.skeleton_lanes` (`[]`: no skeleton review, as upstream GSD; owner 2026-10-25), each lane with a non-empty lens; `wiring` `auto|always|never`, default from `gsd.wiring` (`never`); `replan`; `skipResearch` with `researchSkipReason`; `forceProceed {reason}`; `planReview` (default from `gsd`, off); per-run role overrides; returns `{status planned|needs-owner|failed|refused, reason, ...}`.
+- Acceptance: fixture: `maxCheckIterations: 4` fails with reason and zero agents; a lane with an empty lens fails; `skeletonLanes: []` runs no lane; defaults resolve from the overlay.
 - Source: GSP-38, D-68, D-65, D-66.
 - Scope: v1
 
@@ -2864,13 +2864,13 @@ Skills live in `.claude/skills/gsd-*`, workflow scripts in `.agents/workflows/gs
 - Scope: v1
 
 #### GSDF-20 Wiring-contract stage (adapter architect only)
-- Requirement: the wiring stage runs only when `adapter.agents.architect` names an existing agent and (`wiring: always`, or not `never` and the outline check found cross-plan edges or a WIRING.md exists); the architect writes only `<NN>-WIRING.md` and returns `{status complete|conflict, sharedChanges, outlineChanges, conflicts}`; `conflict` -> `needs-owner`; a missing file -> `failed`; `outlineChanges` become blocker issues for the skeleton review; without an architect agent cross-plan edges are reviewed by the integration lane only and the stage is logged as skipped.
+- Requirement: the wiring stage (off by default: `gsd.wiring` `never`, owner 2026-10-25) runs only when `adapter.agents.architect` names an existing agent and (`wiring: always`, or not `never` and the outline check found cross-plan edges or a WIRING.md exists); the architect writes only `<NN>-WIRING.md` and returns `{status complete|conflict, sharedChanges, outlineChanges, conflicts}`; `conflict` -> `needs-owner`; a missing file -> `failed`; `outlineChanges` become blocker issues for the skeleton review; without an architect agent cross-plan edges are reviewed by the integration lane only and the stage is logged as skipped.
 - Acceptance: fixture adapter with an architect: a `consumes` edge triggers it, no edge does not; fixture adapter without one: run proceeds and logs `wiring: no architect agent`.
 - Source: GSP-48, HIS-60, D-109, INGEST-CONFLICTS W-22.
 - Scope: v1
 
 #### GSDF-21 Skeleton review, pass 1
-- Requirement: lanes get ids L1..Ln and run `gsd-skeleton-reviewer` fresh, read-only, in parallel, with the lens, phase, goal, frozen snapshot file list, requirement IDs, tracer mode, mechanical warnings and cross-plan edges; issues use the checker format `{plan, dimension, severity, required_property, description, evidence, fix_hint, target outline|wiring|both}`; info issues become advisories; a lane returning nothing is retried once, then the run fails (the gate never passes unreviewed); generic lens texts (`fidelity`, `integration`) ship in the kit, further lenses come from config.
+- Requirement: only with lanes (`gsd.skeleton_lanes` is `[]` by default: no skeleton review, the outline is frozen as its check passed it; owner 2026-10-25). Lanes get ids L1..Ln and run `gsd-skeleton-reviewer` fresh, read-only, in parallel, with the lens, phase, goal, frozen snapshot file list, requirement IDs, tracer mode, mechanical warnings and cross-plan edges; issues use the checker format `{plan, dimension, severity, required_property, description, evidence, fix_hint, target outline|wiring|both}`; info issues become advisories; a lane returning nothing is retried once, then the run fails (the gate never passes unreviewed); generic lens texts (`fidelity`, `integration`) ship in the kit, further lenses come from config.
 - Acceptance: fixture: one lane null twice -> `failed`; info-only issues pass with advisories.
 - Source: GSP-49, GSP-51, HIS-45, D-68.
 - Scope: v1
@@ -2888,8 +2888,8 @@ Skills live in `.claude/skills/gsd-*`, workflow scripts in `.agents/workflows/gs
 - Scope: v1
 
 #### GSDF-24 Per-plan planning
-- Requirement: after the freeze the workflow runs `supersede --keep <outline ids>`, then per outline wave in order keeps plans whose `revisions check plan:<id>` matches and whose structure passes, and runs single-plan planners in parallel for the rest (frozen manifest entry, `owns` repeated exactly, WIRING declarations quoted, open skeleton warnings for that plan); after the join it records `plan:<id>` serially in row order; a later wave starts only after the current wave is on disk.
-- Acceptance: fixture: kill after wave 1 -> rerun keeps wave-1 plans and plans wave 2; an outline edit rewrites all plans.
+- Requirement: after the freeze the workflow runs `supersede --keep <outline ids>`, then per outline wave in order keeps plans whose `revisions check plan:<id>` matches and whose structure passes (upstream chunked planning keeps a written plan; the key holds only the plan's own outline row and manifest entry, the decisions naming it and its file, so a skeleton reviewed again plans no other plan again; `replan` plans every plan again), and runs single-plan planners in parallel for the rest (the manifest entry, its `owns` as the start of the plan's write set to which the planner adds every path its tasks change that no other plan of its wave owns, the paths the other plans of the wave own, WIRING declarations quoted, open skeleton warnings for that plan); after the join it records `plan:<id>` serially in row order; a later wave starts only after the current wave is on disk.
+- Acceptance: fixture: kill after wave 1 -> rerun keeps wave-1 plans and plans wave 2; an outline edit of one row plans only that row's plan again; `replan` plans all; a planner model change plans none.
 - Source: GSP-53, UPS-26, INV-38.
 - Scope: v1
 

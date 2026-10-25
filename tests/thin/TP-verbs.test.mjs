@@ -24,7 +24,7 @@ test("TP plan-args checks the arguments in the GSDF-15 order and answers the fir
     [{ mode: "x", maxSkeletonPasses: 9 }, "mode must be plan or gaps, not x"],
     [{ maxSkeletonPasses: 4, maxCheckIterations: 0 }, "maxSkeletonPasses must be an integer 1..3, not 4"],
     [{ maxCheckIterations: 1.5 }, "maxCheckIterations must be an integer 1..3, not 1.5"],
-    [{ skeletonLanes: [{ lens: " " }] }, "skeletonLanes needs at least one lane with a non-empty lens"],
+    [{ skeletonLanes: [{ lens: " " }] }, "skeletonLanes needs a list of lanes, each with a non-empty lens"],
     [{ wiring: "maybe", planFlow: "x" }, "wiring must be auto, always or never, not maybe"],
     [{ planFlow: "pipelined" }, "planFlow must be staged or streams, not pipelined"],
     [{ forceProceed: { reason: " " } }, "forceProceed needs a non-empty reason"],
@@ -41,21 +41,20 @@ test("TP plan-args normalises the arguments and answers the settings each revisi
   const custom = { name: "layout", stage: "skeleton", text: "Check the layout." };
   const r = args({ roles: { skeleton_lane: { effort: "low" }, planner: { model: "p" } }, skeletonLanes: [{ lens: "fidelity", model: "x" }, { lens: "layout" }], forceProceed: { reason: "ok", issues: [{ plan: null, dimension: "scope" }] } }, { ...G, checker_reallocate: 2, tracer_extra_files: 3, files_per_plan: { warning: 8, blocker: 12 } }, { review_lenses: [custom], stack_skill: "flutter" });
   assert.equal(r.status, "ok");
-  assert.deepEqual([r.mode, r.tracer, r.reversibilityGates, r.maxSkeletonPasses, r.maxCheckIterations, r.wiringMode, r.planReview, r.planFlow, r.reallocRounds, r.recheckMode, r.contractsOn], ["plan", true, true, 2, 3, "auto", false, "staged", 2, "full", true]);
+  assert.deepEqual([r.mode, r.tracer, r.reversibilityGates, r.maxSkeletonPasses, r.maxCheckIterations, r.wiringMode, r.planReview, r.planFlow, r.reallocRounds, r.recheckMode], ["plan", true, true, 2, 3, "auto", false, "staged", 2, "full"]);
   assert.deepEqual(r.forcedIssues, [{ plan: null, dimension: "scope" }]);
   assert.deepEqual(r.lanes.map((l) => [l.id, l.text, l.opts]), [["L1", "Lens: fidelity. Follow the lens text in .agents/workflows/lenses/fidelity.md.", { role: "skeleton_lane", model: "x", effort: "low" }], ["L2", "Lens: layout.\nCheck the layout.", { role: "skeleton_lane", effort: "low" }]]);
   assert.deepEqual(r.roles, { planner: { role: "planner", model: "p" }, outline: { role: "outline" }, checker: { role: "checker" }, architect: { role: "architect" }, skeleton_lane: { role: "skeleton_lane", effort: "low" } });
   const planning = { tracer: true, reversibilityGates: true, granularity: "standard", plan_limits: G.plan_limits, stack_skill: "flutter" };
   assert.equal(JSON.stringify(r.settings), JSON.stringify({
     freeze: { lanes: [{ lens: "fidelity", text: r.lanes[0].text, model: "x", effort: null }, { lens: "layout", text: r.lanes[1].text, model: null, effort: null }], skeleton_lane: { effort: "low" }, tracer: true, maxSkeletonPasses: 2 },
-    plan: { ...planning, planner: { model: "p" } },
+    plan: planning,
     checked: { ...planning, checker: { model: "c" }, maxCheckIterations: 3, tracerExtraFiles: 3, filesPerPlan: { warning: 8, blocker: 12 }, reallocRounds: 2 },
   }));
   assert.deepEqual(r.schemas, JSON.parse(JSON.stringify(SCHEMAS)));
   // Kit feedback 69, 76: reallocation and the incremental recheck belong to the staged plan mode only.
   assert.equal(args({ planFlow: "streams" }, { ...G, checker_reallocate: 2 }).reallocRounds, 0);
   assert.deepEqual([args({ mode: "gaps" }, { ...G, checker_reallocate: 2, checker_recheck: "incremental" })].map((x) => [x.reallocRounds, x.recheckMode]), [[0, "full"]]);
-  assert.equal(args({}, { ...G, contract_check: false }).contractsOn, false);
 });
 
 test("TP plan-args answers the skeleton lane inputs with the project's kit lens files, as flow read gives them (G009)", async () => {

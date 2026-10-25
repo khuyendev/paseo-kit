@@ -1,15 +1,12 @@
-// Kit feedback #103 (G103): a stricter adapter command is not a weakened check, and a JSON catalog contract is
-// checked by key path. F1 an argv that keeps the old argv and only adds a strictness flag (--timeout, fail-fast,
+// Kit feedback #103 (G103): a stricter adapter command is not a weakened check. F1 an argv that keeps the old argv and only adds a strictness flag (--timeout, fail-fast,
 // reporter/output, verbosity, or a flag the baseline's adapter.commands.non_weakening_flags already names) is a note;
 // a dropped test path, an added skip/exclude, a narrowed path, a changed executable, and any verify_vocabulary or
-// checks change still stop at Checks with ph gsd allow. F2 a .json file (or a file matching adapter.catalogs) whose
-// signature is `a.b { c, d }` / `name({{token}})` is checked by key path; a missing key is a note naming the path.
+// checks change still stop at Checks with ph gsd allow. (F2, the catalog check of the contract gate, went with the gate.)
 import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { loadConfigLenient } from "../../ship/.agents/harness/config.mjs";
-import { producedCheck, signatureKeyPaths } from "../../ship/.agents/harness/gsd/contracts.mjs";
 import { makeTempProject, SHIP_DIR } from "../helpers/temp.mjs";
 import { project } from "../gsd-core/fixture.mjs";
 import { setup } from "../ph/setup.mjs";
@@ -110,7 +107,7 @@ test("G103 F1 verify_vocabulary and checks stay strict even when the test argv o
   assert.match(c.json.weakened[0].detail, /adapter\.checks differs/);
 });
 
-test("G103 F1 the schema accepts the optional flag list and refuses a flag that does not start with -; catalogs is an optional glob list", () => {
+test("G103 F1 the schema accepts the optional flag list and refuses a flag that does not start with -", () => {
   const s = setup();
   s.project.writeJson(OVERLAY, { adapter: { commands: { non_weakening_flags: ["--coverage"] } } });
   assert.match(String(loadConfigLenient(s.root).error?.message), /adapter\.commands\.(build|test)/, "a partial commands entry still names its missing keys");
@@ -119,72 +116,5 @@ test("G103 F1 the schema accepts the optional flag list and refuses a flag that 
   assert.equal(loadConfigLenient(s.root).error, null);
   s.project.writeJson(OVERLAY, { adapter: { commands: commands([NODE, "-e", "0"], { non_weakening_flags: ["coverage"] }) } });
   assert.match(String(loadConfigLenient(s.root).error?.message), /adapter\.commands\.non_weakening_flags\[0\].*a flag starting with -/);
-  s.project.writeJson(OVERLAY, { adapter: { catalogs: ["**/*.arb", "lib/i18n/*.i18n"] } });
-  assert.equal(loadConfigLenient(s.root).error, null);
-  s.project.writeJson(OVERLAY, { adapter: { catalogs: "lib/i18n/*.i18n" } });
-  assert.match(String(loadConfigLenient(s.root).error?.message), /adapter\.catalogs/);
 });
 
-const ICON = "flutter.projectIcon { invalidUrl, insecureUrl, downloadFailed({{status}}), noSupportedIcon }";
-const NESTED = "flutter.addProject { title {chooseHost, addProject}, pageLabel({{page}}), method { directorySearch {label, description({{host}})} } }";
-const iconJson = JSON.stringify({ flutter: { projectIcon: { invalidUrl: "bad", insecureUrl: "http", downloadFailed: "failed ({{status}})", noSupportedIcon: "none" } } });
-const nestedJson = JSON.stringify({ flutter: { addProject: { title: { chooseHost: "h", addProject: "a" }, pageLabel: "p {{page}}", method: { directorySearch: { label: "l", description: "on {{host}}" } } } } });
-
-function catalogProject(file, text, signature, symbol, extra = {}) {
-  const manifest = { phase: "01", plans: [{ id: "01-01", owns: ["Path:lib/"], produces: [{ symbol, kind: "catalog", file, signature }] }] };
-  return makeTempProject({
-    files: { [`${PD}/01-PLAN-OUTLINE.manifest.json`]: JSON.stringify(manifest), [file]: text },
-    overlay: extra,
-  });
-}
-const notesOf = (p, ...ids) => producedCheck(p.root, PD, ids.length ? ids : ["01-01"])[0];
-
-test("G103 F2 a JSON catalog whose keys exist holds the signature: no substring note", () => {
-  const icon = catalogProject("lib/i18n/strings_en.i18n.json", iconJson, ICON, "t.flutter.projectIcon");
-  const a = notesOf(icon);
-  assert.equal(a.ok, true, JSON.stringify(a));
-  assert.deepEqual(a.notes, [], JSON.stringify(a.notes));
-  const nested = catalogProject("lib/i18n/strings_en.i18n.json", nestedJson, NESTED, "t.flutter.addProject");
-  assert.deepEqual(notesOf(nested).notes, [], JSON.stringify(notesOf(nested).notes));
-  const plain = catalogProject("lib/i18n/strings_en.i18n.json", iconJson, "flutter.projectIcon.invalidUrl", "t.flutter.projectIcon");
-  assert.deepEqual(notesOf(plain).notes, [], JSON.stringify(notesOf(plain).notes));
-});
-
-const REAL = "flutter.addProject { title {chooseHost, addProject, directorySearch, githubSearch, githubLocation, newDirectoryParent, newDirectoryName}, placeholder {hosts, directories, github, parentDirectories, directoryName}, status {adding, noMatches, updateHost}, error {searchDirectories, searchGithub, githubUnavailable, hostUnavailable, addProject, cloneRepository, directoryNameRequired, createDirectory}, noHosts {title, subtitle}, back, pageLabel({{page}}), method { directorySearch {label, description({{host}})}, github {label, updateHost, search, manual}, newDirectory {label, description({{host}}), updateHost} }, github {cloneUrl, cloneShorthand({{protocol}})}, location {alreadyExists, parentDirectory({{parent}})} }";
-
-test("G103 F2 the catalog signature a manifest writes (nested braces, name({{token}})) is held by its keys", () => {
-  const paths = signatureKeyPaths(REAL);
-  assert.equal(paths.length, 40);
-  assert.ok(paths.includes("flutter.addProject.pageLabel"));
-  assert.ok(paths.includes("flutter.addProject.method.directorySearch.description"));
-  assert.ok(paths.includes("flutter.addProject.github.cloneShorthand"));
-  assert.ok(paths.includes("flutter.addProject.location.parentDirectory"));
-  const obj = {};
-  for (const keyPath of paths) {
-    const segs = keyPath.split(".");
-    let cur = obj;
-    for (const seg of segs.slice(0, -1)) cur = cur[seg] ??= {};
-    cur[segs.at(-1)] = "x";
-  }
-  const file = "lib/i18n/strings_en.i18n.json";
-  const held = catalogProject(file, JSON.stringify(obj), REAL, "t.flutter.addProject");
-  assert.equal(notesOf(held).ok, true);
-  assert.deepEqual(notesOf(held).notes, []);
-  delete obj.flutter.addProject.location.parentDirectory;
-  const gone = catalogProject(file, JSON.stringify(obj), REAL, "t.flutter.addProject");
-  assert.deepEqual(notesOf(gone).notes, [`t.flutter.addProject: ${file} missing key path flutter.addProject.location.parentDirectory`]);
-});
-
-test("G103 F2 a missing catalog key is a note naming the key path, and a non-json catalog the adapter names is checked the same way", () => {
-  const missing = catalogProject("lib/i18n/strings_en.i18n.json", JSON.stringify({ flutter: { projectIcon: { invalidUrl: "bad", insecureUrl: "http", downloadFailed: "x" } } }), ICON, "t.flutter.projectIcon");
-  const m = notesOf(missing);
-  assert.equal(m.ok, true, JSON.stringify(m));
-  assert.deepEqual(m.notes, ["t.flutter.projectIcon: lib/i18n/strings_en.i18n.json missing key path flutter.projectIcon.noSupportedIcon"]);
-  const named = catalogProject("lib/i18n/strings_en.i18n", iconJson, ICON, "t.flutter.projectIcon", { adapter: { catalogs: ["lib/i18n/*.i18n"] } });
-  assert.deepEqual(notesOf(named).notes, [], JSON.stringify(notesOf(named)));
-  const namedMissing = catalogProject("lib/i18n/strings_en.i18n", JSON.stringify({ flutter: { projectIcon: { invalidUrl: "bad" } } }), "flutter.projectIcon.invalidUrl", "t.other.projectIcon", { adapter: { catalogs: ["**/*.i18n"] } });
-  assert.equal(notesOf(namedMissing).ok, true);
-  assert.deepEqual(notesOf(namedMissing).notes, []);
-  const absent = catalogProject("lib/i18n/strings_en.i18n", JSON.stringify({ flutter: { projectIcon: {} } }), "flutter.projectIcon.invalidUrl", "t.flutter.projectIcon", { adapter: { catalogs: ["**/*.i18n"] } });
-  assert.deepEqual(notesOf(absent).notes, ["t.flutter.projectIcon: lib/i18n/strings_en.i18n missing key path flutter.projectIcon.invalidUrl"]);
-});

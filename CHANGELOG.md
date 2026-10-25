@@ -6,6 +6,36 @@ and the measured check (HARN-15). `node kit/release-check.mjs [<range>]` checks 
 
 ## [Unreleased]
 
+- gsd-plan reviews as upstream GSD does: the plan checker (owner 2026-10-25: "Uh tắt mặc định đi. Contract gate tính ra đâu
+  cần, bỏ"). The skeleton review of the outline and the wiring stage are kit additions upstream does not have; they are off
+  by default: `gsd.skeleton_lanes` defaults to `[]` (no skeleton review: the outline is frozen as its check passed it, no
+  OUTLINE-REVIEW.md; a list of lanes turns it on, an empty `skeletonLanes` argument is valid) and the new `gsd.wiring`
+  (`auto|always|never`) to `never`. Plan review and the streams flow were already off by default. The contract gate is
+  removed: `gsd.contract_check`, `adapter.catalogs`, the verbs `verify contracts`, `contracts show`, `contracts change`,
+  the flow verbs `plan-contracts`, `plan-contract-route`, `plan-contract-drift`, the CONTRACT_CHANGE marker and
+  `contract_changes`, the outline drift check, the revisers' contract block, the wave gate's `contract-<plan>` step and the
+  prompt templates plan-write-contract, plan-contract-context and plan-outline-contracts; `harness/gsd/contracts.mjs`
+  becomes `manifest.mjs` (manifest reading and the freeze hash, which still ignores the signatures old manifests carry).
+  Projects that set `skeleton_lanes` in their own config keep their lanes. Prompts changed: plan-write, plan-outline,
+  plan-revision, plan-revise, gsd-plan SKILL.md, harness references/kit-adapter.md. Checked: full suite (see the commit),
+  tests/align/upstream-plan.test.mjs.
+- gsd-plan follows upstream GSD on plan reuse and file ownership (owner 2026-10-25: "Sao ko follow theo gsd gốc ? Chỗ nào
+  sai với gsd gốc thì chỉnh lại đi"). The owns lock and the replan of every plan were kit additions carried over from the
+  WildEra port (GSP-53, HIS-47), not upstream: upstream chunked planning keeps a written plan on a rerun and lets the planner
+  set its own `files_modified`, disjoint only within a wave. Now a `plan:<id>` key holds the plan's own outline row, manifest
+  entry (freeze form) and WIRING lines, the decisions naming it and its file (no freeze, CONTEXT, research, ROADMAP or
+  planner role), so a skeleton reviewed again, an outline decision, another plan's row or a planner model change plans no
+  plan again by itself; a revised outline plans again only the rows it changed, `replan` still plans all; a record of the
+  previous form holds while its plan, decisions, outline and manifest are as recorded (`legacy`, recorded again). An outline
+  on disk is revised, not rewritten (rows the change does not touch stay as they are), and an outline its writer confirms
+  unchanged (`OUTLINE COMPLETE`) stands. A planner adds every path its tasks change to its own owns unless another plan of
+  its wave owns it (that change goes to that plan through `plan_changes`); its prompt lists the paths the other plans of the
+  wave own; SOURCE AUDIT keeps its upstream meaning and ownership is never an owner stop (the `plan-wave-stops` verb and
+  `owns_changes` are gone); a contract addition may name a file the plan's own owns cover; `ph gsd owns add` refuses only a
+  path a same-wave plan owns; the skeleton integration lens no longer asks the outline's owns to cover every file (a file
+  they do not list is no defect). Prompts changed: plan-write, plan-return, plan-checker, plan-outline, lenses/integration,
+  gsd-plan SKILL.md.
+  Checked: full suite (see the commit), tests/align/upstream-plan.test.mjs on the real verbs.
 - Kit feedback 127 and WildEraV6 13-16 (owner 2026-10-25: "Có feedback tiếp"; three Grok 4.7 agents, notes
   kit-bughunt/fb13/design/<ID>.md). Stalled agents (127): new `agent_silent_s` (default 300, 0 = off): an agent with no
   stream event for that long is reported as a stall, naming an open tool call and how long it has been open; new

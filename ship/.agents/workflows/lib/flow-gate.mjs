@@ -13,7 +13,6 @@ import { evidenceVerdict, requiredSteps, executionProblem, gateStepName, obligat
 import { earlierObligations, metricHits, placeRegressions, pureTestFilter, readSuiteReport, reportVerdict } from "./flow-gate-select.mjs";
 import { fileTestArgvs, gateObligation, testCommandOf } from "../../harness/adapter/contract.mjs";
 import { sha256 } from "../../harness/lib/hash.mjs";
-import { producedCheck } from "../../harness/gsd/contracts.mjs";
 import { gitLines, head } from "./flow-git.mjs";
 import { contentHash, owned, ownsPrefixes, ownsScope, specificOwners } from "./flow-owns.mjs";
 import { OWNER_ANSWERS_FILE, readAnswers } from "../../harness/lib/owner-answers.mjs";
@@ -26,7 +25,7 @@ const TIMEOUT_CODE = 124;
 const EXCERPT_LINES = 40;
 
 // Kit feedback 122 F3: a failed build or analyze step is a compile failure; a failed test step is behaviour.
-// The count is steps, not diagnostics. checks, contract and inputs-stable are neither.
+// The count is steps, not diagnostics. checks and inputs-stable are neither.
 export function failureClass(name, argv = []) {
   const n = String(name ?? "");
   if (n === "test" || /-(?:cmd|test)(?:-\d+)?$/.test(n)) return "behaviour";
@@ -625,14 +624,6 @@ export async function gate(root, phaseDir, input) {
       else { notes.push("build not configured (adapter.commands.build)"); steps.push(noRun(root, logDir, "build", "not_configured", notes.at(-1))); }
       if (cmds.test) { steps.push(await run("test", suiteArgv, cmds.test_timeout_s)); noteHang(steps.at(-1)); checkpoint(); }
       else { notes.push("tests not configured (adapter.commands.test)"); steps.push(noRun(root, logDir, "test", "not_configured", notes.at(-1))); }
-    }
-    // Kit feedback 67 F5: a plan that produces structured symbols (outline manifest) must have them at the declared file.
-    if (cfg.gsd.contract_check) for (const c of producedCheck(root, phaseDir, (input.plans ?? []).map((p) => p.id))) {
-      const text = c.ok ? `${c.symbols} produced symbol(s) found at their declared files` : ["produced symbols missing:", ...c.problems].join("\n");
-      const log = path.join(logDir, `${safeName(`contract-${c.plan}`)}.log`);
-      writeTextAtomic(log, `${text}\n`);
-      steps.push({ name: `contract-${c.plan}`, argv: [], outcome: c.ok ? "passed" : "failed", exitCode: c.ok ? 0 : 1, executed: { ...NOT_RUN }, log: toSlash(path.relative(root, log)), text, plan: c.plan, task: null, kind: "contract" });
-      for (const n of c.notes) notes.push(`contract ${c.plan}: ${n}`);
     }
     // Kit feedback 125 F1: obligations of earlier plans of this wave whose files or verify targets the wave's diff touches.
     const earlier = earlierObligations(root, cfg, { ...input, phaseDir }, obligationStepNames);

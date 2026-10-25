@@ -20,7 +20,7 @@ test("G017 a changed settings digest changes the freeze key; the same digest kee
   assert.equal(research.code, 0, "research takes no settings digest");
 });
 
-test("G017 a changed skeleton lane reruns the skeleton review; a checker role or planner role change reruns only its judgment", async () => {
+test("G017 a changed skeleton lane reruns the skeleton review; a checker role change reruns only its judgment, a planner role change nothing", async () => {
   const w = makeWorld();
   const first = await plan(w, { skeletonLanes: [{ lens: "fidelity" }] });
   assert.equal(first.result.status, "planned");
@@ -32,8 +32,9 @@ test("G017 a changed skeleton lane reruns the skeleton review; a checker role or
   assert.deepEqual([skeletonLabels(checker), labels(checker).filter((l) => l.startsWith("plan-"))], [[], []], "a checker change leaves skeleton and plans reused");
   assert.ok(labels(checker).includes("checker-1"), "the checker reruns");
   // Role overrides are per run: the checker override is repeated, or its effective role would revert and rerun the checker.
+  // Kit feedback W20: a planner's model is how a plan was written; upstream keeps a written plan, so nothing is planned again.
   const planner = await plan(w, { skeletonLanes: [{ lens: "fidelity" }, { lens: "integration" }], roles: { checker: { model: "checker-model" }, planner: { model: "planner-model" } } });
-  assert.deepEqual([skeletonLabels(planner), labels(planner).includes("checker-1")], [[], false], "a planner change reruns plans, not the checker");
-  assert.ok(labels(planner).includes("plan-01-01"), "the plans rerun");
+  assert.deepEqual([skeletonLabels(planner), labels(planner).includes("checker-1")], [[], false], "a planner change reruns neither the skeleton nor the checker");
+  assert.deepEqual(labels(planner).filter((l) => l.startsWith("plan-")), [], "the plans are kept");
   assert.ok(!labels(planner).includes("outline"), "the outline stays file-keyed: a regenerated outline may match the old one");
 });

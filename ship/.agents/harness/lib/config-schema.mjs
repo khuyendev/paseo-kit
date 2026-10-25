@@ -156,9 +156,6 @@ export const SCHEMA = obj({
     // Kit feedback 92: skip_guards, literal environment-guard expressions; absent from the defaults so the gate configuration
     // hash a phase baseline recorded does not move on a kit update.
     checks: obj({ enabled: bool(), paths: nullable(strs()), test_decl: nullable(strs()), assert: nullable(strs()), skip: nullable(strs()), skip_guards: arr(str({ nonEmpty: true })) }, ["enabled", "paths", "test_decl", "assert", "skip", "skip_guards"]),
-    // Kit feedback 103: globs of catalog files (besides every .json file) whose manifest signature is checked by key path.
-    // Absent from the defaults, and not part of the gate-configuration hash.
-    catalogs: strs(),
     // Kit feedback 112: extra runtime-crash regexes for the gate. Absent from the defaults, and not part of the
     // gate-configuration hash (that is commands, verify_vocabulary and checks).
     crash_signatures: arr(str({ nonEmpty: true })),
@@ -172,7 +169,7 @@ export const SCHEMA = obj({
     // machine-readable report; a pure test-filter obligation covered by it is not started again.
     metrics: arr(str({ nonEmpty: true })),
     test_report: obj({ path: str({ nonEmpty: true, repoPath: true }), format: str({ oneOf: ["junit", "json"] }) }),
-  }, ["checks", "catalogs", "crash_signatures", "doc_tools", "generated", "metrics", "test_report"]),
+  }, ["checks", "crash_signatures", "doc_tools", "generated", "metrics", "test_report"]),
   gsd: obj({
     roles: map(obj({ model: str({ nonEmpty: true }), effort: effort(), reason: str() }, ["model", "effort", "reason"])),
     granularity: str({ oneOf: ["coarse", "standard", "fine"] }),
@@ -203,7 +200,9 @@ export const SCHEMA = obj({
     // kit-feedback 69, 76: reallocation rounds a run may take when the checker sends plans back to the outline (0 = off); recheck scope.
     checker_reallocate: int(0, 2),
     checker_recheck: str({ oneOf: ["full", "incremental"] }),
-    skeleton_lanes: arr(obj({ lens: str({ nonEmpty: true }), model: str({ nonEmpty: true }), effort: effort() }, ["model", "effort"]), 1),
+    // Upstream GSD reviews no outline: an empty list (the default) turns the skeleton review off; the wiring stage is off unless set.
+    skeleton_lanes: arr(obj({ lens: str({ nonEmpty: true }), model: str({ nonEmpty: true }), effort: effort() }, ["model", "effort"])),
+    wiring: str({ oneOf: ["auto", "always", "never"] }),
     max_skeleton_passes: int(1, 3),
     max_check_iterations: int(1, 3),
     drift_threshold: int(),
@@ -219,8 +218,6 @@ export const SCHEMA = obj({
     review_metrics: bool(),
     // Kit feedback 70: gsd-plan renders <NN>-VALIDATION.md (upstream plan-phase step 5.5) for the checker's Dimension 8.
     validation_strategy: bool(),
-    // Kit feedback 67, 76: structured manifest contracts, `ph gsd verify contracts` after planners, revisions and plan-review edits and at handoff, the contract block of revisers, the wave-gate check of produced symbols.
-    contract_check: bool(),
     // Kit feedback 77: report = an unowned path outside adapter.ownership.source_roots is reported and left out of the wave commit; stop = every unowned path stops the run.
     unowned_outside_roots: str({ oneOf: ["report", "stop"] }),
     // Kit feedback 79: executor task status pending-request; a partial task that waits only for requests the run routed is no owner decision.

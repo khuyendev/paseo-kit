@@ -153,7 +153,8 @@
     "plan_flow": "staged",
     "checker_reallocate": 0,
     "checker_recheck": "full",
-    "skeleton_lanes": [{ "lens": "fidelity" }, { "lens": "integration" }],
+    "skeleton_lanes": [],
+    "wiring": "never",
     "max_skeleton_passes": 3,
     "max_check_iterations": 3,
     "drift_threshold": 3,
@@ -166,7 +167,6 @@
     "verify_mode": "phase",
     "review_metrics": true,
     "validation_strategy": true,
-    "contract_check": true,
     "unowned_outside_roots": "report",
     "pending_request_tasks": true
   }

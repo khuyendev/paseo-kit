@@ -24,7 +24,8 @@ export function makeWorld(opts = {}) {
   const project = makeTempProject({
     files: { [`${PHASE_DIR}/01-CONTEXT.md`]: "<decisions>\n- **D-01:** keep it small\n</decisions>\n", ...(opts.research === false ? {} : { [`${PHASE_DIR}/01-RESEARCH.md`]: "research\n" }), ...(opts.files ?? {}) },
     // Kit feedback 72: the flow tests written for the fresh-review cycle keep it; the tests of the resolve check set `plan_review_check` themselves.
-    overlay: { ...opts.overlay, gsd: { plan_review_check: "fresh", ...opts.overlay?.gsd } },
+    // The skeleton review and the wiring stage are off by default (upstream GSD has neither); these worlds test them, so they turn them on.
+    overlay: { ...opts.overlay, gsd: { plan_review_check: "fresh", skeleton_lanes: [{ lens: "fidelity" }, { lens: "integration" }], wiring: "auto", ...opts.overlay?.gsd } },
   });
   const P = (rel) => path.join(project.root, rel);
   const read = (rel) => (fs.existsSync(P(rel)) ? fs.readFileSync(P(rel), "utf8") : "");
@@ -44,8 +45,10 @@ export function makeWorld(opts = {}) {
     checked: () => planIdsOnDisk().map((id) => read(`${PHASE_DIR}/${id}-PLAN.md`)).join(""),
     handoff: () => keyText.checked(),
   };
-  // As the real keyHash: the --settings digest of the verb is part of the key (G017).
-  const hashOf = (key, settings = "") => digest(settings + (key.startsWith("plan:") ? read(`${PHASE_DIR}/${key.slice(5)}-PLAN.md`) : keyText[key]()));
+  // As the real keyHash: the --settings digest of the verb is part of the key (G017); a plan key holds the plan's own outline row and
+  // manifest entry and its file (GSDF-24), not the rest of the outline.
+  const planKey = (id) => JSON.stringify([rows().find((r) => r.id === id) ?? null, (manifest()?.plans ?? []).find((p) => p.id === id) ?? null]) + read(`${PHASE_DIR}/${id}-PLAN.md`);
+  const hashOf = (key, settings = "") => digest(settings + (key.startsWith("plan:") ? planKey(key.slice(5)) : keyText[key]()));
   const settingsArg = (args) => (args.includes("--settings") ? args[args.indexOf("--settings") + 1] : undefined);
   const recorded = new Map();
   const attempts = {};
@@ -84,9 +87,6 @@ export function makeWorld(opts = {}) {
     "check verify-command-paths": () => world.probes.vcp ?? { probes: [] },
     "check verify-failure-directions": () => world.probes.vfd ?? { findings: [] },
     "check owns": () => world.probes.owns ?? { problems: [] },
-    // Kit feedback 67: no manifest contracts in these worlds unless a test installs its own handlers.
-    "verify contracts": () => ({ passed: true, errors: [], warnings: [] }),
-    "contracts show": () => ({ code: 66, json: { status: "missing" } }),
     "check coverage": () => (world.coverage.passed ? { passed: true } : { code: 1, json: world.coverage }),
     handoff: (argv) => { ev(`handoff ${argv.slice(1).join(" ")}`.trim()); return world.handoff ?? { planRevision: "rev1", waves: [{ wave: 1, file: `${PHASE_DIR}/handoff/w1.args.json` }], sharedChanges: [] }; },
     "state planned-phase": (argv) => { ev(`state planned-phase ${argv.join(" ")}`); return { updated: ["status"] }; },

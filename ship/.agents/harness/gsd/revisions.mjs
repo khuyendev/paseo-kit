@@ -11,7 +11,8 @@ import { loadAgentDef } from "../runtime/agents.mjs";
 import { isInside } from "../lib/paths.mjs";
 import { headOf } from "./git.mjs";
 import { normPlanId, phaseFile, planPath, planIds, readPlan } from "./planning.mjs";
-import { manifestFreezeText } from "./contracts.mjs";
+import { manifestEntryFreeze, manifestFreezeText } from "./manifest.mjs";
+import { readOutline } from "./outline.mjs";
 import { loadRequirements } from "./requirements.mjs";
 import { loadRoadmap, roadmapPhase, sectionContent } from "./roadmap.mjs";
 
@@ -105,6 +106,16 @@ export function keyFiles(g, phase, key) {
   // definition is hashed here, since the freeze key covers the outline and wiring only.
   const skeleton = () => [inPhase(`${phase.padded}-SKELETON-LANES.json`), ...roleFiles(g, g.cfg.adapter.agents?.skeleton_lane ?? "gsd-skeleton-reviewer").map((p) => harness(p))];
   const allPlans = () => [...freeze(), ...validation(), ...planIds(phase).map((id) => code(rel(g.codeRoot, planPath(phase, id))))];
+  // A plan's own part of the skeleton: its outline row, its manifest entry as the freeze key hashes it, and the WIRING lines its planner
+  // is shown. Upstream chunked planning keeps a written plan on a rerun, so a plan key holds only this part, the plan file and the
+  // decisions naming the plan: another plan's row, CONTEXT, the research or a setting does not plan it again (the checker judges it).
+  const entry = (id) => {
+    const o = readOutline(phase);
+    const row = (o.rows ?? []).find((r) => normPlanId(r.id) === normPlanId(id)) ?? null;
+    const own = (o.manifest?.plans ?? []).find((p) => p && typeof p.id === "string" && normPlanId(p.id) === normPlanId(id)) ?? null;
+    const wiring = (readIf(phaseFile(phase, "WIRING.md")) ?? "").split(/\r?\n/).filter((l) => l.includes(row?.id ?? id)).slice(0, 40);
+    return { label: `entry:${id}`, text: row || own ? JSON.stringify([row, own ? manifestEntryFreeze(own) : null, wiring]) : null };
+  };
   if (key === "research") return research();
   if (key === "inputs") return inputs();
   if (key === "freeze") return freeze();
@@ -112,7 +123,7 @@ export function keyFiles(g, phase, key) {
   if (key === "plans" || key === "checked" || key === "handoff") return allPlans();
   if (key === "checkedbody") return [...freeze(), ...planIds(phase).map((id) => ({ label: rel(g.codeRoot, planPath(phase, id)), text: planContent(phase, id) }))];
   const m = /^plan:(.+)$/.exec(key);
-  if (m) return [...freeze(), code(rel(g.codeRoot, planPath(phase, m[1]))), ...decided(m[1], (d) => d.plans.includes(m[1]))];
+  if (m) return [entry(m[1]), code(rel(g.codeRoot, planPath(phase, m[1]))), ...decided(m[1], (d) => d.plans.includes(m[1]))];
   throw fail(`unknown revisions key ${key} (research, inputs, freeze, skeleton, plan:<id>, plans, checked, checkedbody, handoff)`);
 }
 
@@ -127,7 +138,8 @@ function digestOf(entry) {
 }
 
 // The digest of each part of a key, in hash order: its files (deduplicated, sorted), this phase's ROADMAP section without its
-// generated block, and the settings digest. A record keeps the parts, so a check can name the part that changed (F40).
+// generated block (not for a plan key, which holds only the plan's own part), and the settings digest. A record keeps the parts, so
+// a check can name the part that changed (F40).
 export function keyParts(g, phase, key, settings = null) {
   const seen = new Map();
   const outside = new Set();
@@ -137,8 +149,10 @@ export function keyParts(g, phase, key, settings = null) {
   }
   const labels = [...seen.keys()].sort();
   const parts = labels.map((label) => [label, digestOf(seen.get(label))]);
-  const section = roadmapPhase(loadRoadmap(g.codeRoot, g.cfg), phase.number)?.section ?? null;
-  parts.push(["roadmap", section === null ? "missing" : textDigest(sectionContent(section))]);
+  if (!key.startsWith("plan:")) {
+    const section = roadmapPhase(loadRoadmap(g.codeRoot, g.cfg), phase.number)?.section ?? null;
+    parts.push(["roadmap", section === null ? "missing" : textDigest(sectionContent(section))]);
+  }
   if (settings !== null) parts.push(["settings", settings]);
   const skipped = [...outside].filter((label) => !seen.has(label)).sort();
   return { parts, files: labels, skipped };
@@ -238,13 +252,27 @@ export function acceptManifestEdit(g, phase, planIds) {
 }
 const asPlanIds = (ids) => [...new Set((Array.isArray(ids) ? ids : []).map((id) => String(id ?? "").trim()).filter(Boolean))];
 
+// A plan record of the previous kit held the whole freeze key and the planner's settings, not the plan's own entry part. It holds
+// while the plan file, its decisions, the outline and the manifest are as recorded (what a plan's own part was cut from), whatever
+// the CONTEXT, research or settings did; the workflow records the plan again in the new form. null: not such a record.
+function legacyPlanHolds(g, phase, key, recorded) {
+  const id = /^plan:(.+)$/.exec(key)?.[1];
+  if (!id || !recorded?.parts || Object.hasOwn(recorded.parts, `entry:${id}`)) return null;
+  const now = new Map([...keyParts(g, phase, "freeze").parts, ...keyParts(g, phase, key).parts]);
+  const inPhase = (name) => rel(g.codeRoot, path.join(phase.dir, name));
+  const labels = [rel(g.codeRoot, planPath(phase, id)), `decisions:${id}`, inPhase(`${phase.padded}-PLAN-OUTLINE.md`), inPhase(`${phase.padded}-PLAN-OUTLINE.manifest.json`)];
+  return labels.every((label) => recorded.parts[label] === now.get(label));
+}
+
 export function checkRevision(g, phase, key, settings = null) {
   const recorded = readRevisions(phase).keys[key];
   if (!recorded) throw none(`revisions key ${key} was never recorded`, { key });
   const { parts, skipped } = keyParts(g, phase, key, settings);
   const hash = hashOf(parts);
   const head = headOf(g.codeRoot);
-  return { key, same: hash === recorded.hash, recorded: recorded.hash, current: hash, changed: changedParts(recorded, parts), skipped, headChanged: recorded.head !== head, recordedHead: recorded.head, head };
+  const legacy = hash === recorded.hash ? null : legacyPlanHolds(g, phase, key, recorded);
+  const same = hash === recorded.hash || legacy === true;
+  return { key, same, ...(legacy !== null ? { legacy: true } : {}), recorded: recorded.hash, current: hash, changed: legacy === true ? [] : changedParts(recorded, parts), skipped, headChanged: recorded.head !== head, recordedHead: recorded.head, head };
 }
 
 export function revisionsVerb(g, sub, phase, key, settings = null) {
@@ -265,7 +293,9 @@ export function revisionsVerb(g, sub, phase, key, settings = null) {
     return done({ key, ...k, files: data.lists[k.list] ?? [] });
   }
   if (!Object.keys(data.keys).length) throw none("no revisions recorded");
-  return done({ keys: Object.fromEntries(Object.entries(data.keys).map(([k, v]) => [k, { hash: v.hash, at: v.at, head: v.head, files: (data.lists[v.list] ?? []).length }])) });
+  // `form: previous`: a plan record of the previous kit (no entry part), which gsd-plan renews while it holds (legacyPlanHolds).
+  const previous = (k, v) => k.startsWith("plan:") && v.parts && !Object.hasOwn(v.parts, `entry:${k.slice(5)}`);
+  return done({ keys: Object.fromEntries(Object.entries(data.keys).map(([k, v]) => [k, { hash: v.hash, at: v.at, head: v.head, files: (data.lists[v.list] ?? []).length, ...(previous(k, v) ? { form: "previous" } : {}) }])) });
 }
 
 const need = (key) => {

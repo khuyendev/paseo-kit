@@ -98,42 +98,6 @@ test("RE resume handoff: a run that died at the handoff hands off without planni
   assert.ok(w.events.some((e) => e.startsWith("handoff")));
 });
 
-test("RE resume after a CONTRACT_CHANGE: the replayed change is still this run's, so its consumer is revised before the checker reads again", async () => {
-  const SIG = "Future<void> pause()";
-  const NEW = "Future<void> pause(Duration d)";
-  const SHOW = {
-    "01-01": { plan: "01-01", produces: [{ symbol: "DaemonClient.pause", kind: "method", file: "src/a.js", signature: SIG, structured: true }], consumes: [], consumers: { "DaemonClient.pause": ["01-02"] } },
-    "01-02": { plan: "01-02", produces: [], consumes: [{ plan: "01-01", symbol: "DaemonClient.pause", entry: { symbol: "DaemonClient.pause", kind: "method", file: "src/a.js", signature: SIG } }], consumers: {} },
-  };
-  const w = makeWorld();
-  w.gsd.on("contracts show", ([, , id]) => SHOW[id] ?? { code: 66, json: { status: "missing" } });
-  // As the verb: the first change is applied, the same change again is `already`.
-  let applied = false;
-  w.gsd.on("contracts change", () => {
-    const out = { plan: "01-01", symbol: "DaemonClient.pause", signature: NEW, consumers: ["01-02"] };
-    if (applied) return { changed: false, already: true, ...out };
-    applied = true;
-    return { changed: true, old: SIG, ...out };
-  });
-  let consumerFixed = false;
-  w.gsd.on("verify contracts", () => (applied && !consumerFixed && w.read(planFile("01-02")) ? { code: 1, json: { passed: false, errors: [{ plan: "01-02", plans: ["01-02", "01-01"], kind: "stale-signature", symbol: "DaemonClient.pause", message: `01-02 quotes ${SIG}`, fix_hint: "quote the new one" }], warnings: [] } } : { passed: true, errors: [], warnings: [] }));
-  const overrides = (die) => ({
-    "checker-1": () => ({ issues: [{ plan: "01-01", dimension: "api", severity: "blocker", required_property: "pause takes a timeout", description: "pause has no timeout" }] }),
-    "checker-": () => ({ issues: [], resolved: [{ id: "open-1", evidence: "ok" }] }),
-    "revise-01-01": () => ({ marker: "CONTRACT_CHANGE", summary: "pause takes a timeout", contract_changes: [{ symbol: "DaemonClient.pause", old: SIG, new: NEW, reason: "pause needs a timeout" }] }),
-    "contract-01-02": () => { die?.(); consumerFixed = true; },
-  });
-  const j = journal();
-  const first = await planRun(w, j, plannerResponder(w, { overrides: overrides(dieOnce("consumer revision")) }), { args: { planReview: false } });
-  assert.equal(first.error?.message, "killed at consumer revision");
-  const r = await planRun(w, j, plannerResponder(w, { overrides: overrides() }), { args: { planReview: false }, replay: true });
-  assert.equal(r.result?.status, "planned", JSON.stringify(r.result));
-  assert.deepEqual(r.calls.filter((c) => c.label === "revise-01-01-1"), [{ label: "revise-01-01-1", hit: true }], "the reviser's reply is replayed");
-  assert.deepEqual(r.result.contracts.changes, [{ plan: "01-01", symbol: "DaemonClient.pause", old: SIG, new: NEW, reason: "pause needs a timeout", consumers: ["01-02"] }]);
-  const order = labels(r);
-  assert.ok(order.includes("contract-01-02-1") && order.indexOf("contract-01-02-1") < order.indexOf("checker-2"), order.join(", "));
-});
-
 test("RE a run after a run that ended is a new run, even with the same run id: a plan edited by hand in between is planned again", async () => {
   const w = makeWorld();
   const j = journal();

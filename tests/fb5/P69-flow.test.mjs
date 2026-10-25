@@ -109,15 +109,17 @@ test("P69 forceProceed.issues is validated before any agent runs", async () => {
 
 const MANIFEST = (id, dir) => ({ id, owns: [`Path:src/${dir}/`], requirements: ["R-1"], consumes: [] });
 const SPLIT_ROWS = [{ id: "01-01", wave: 1 }, { id: "01-03", wave: 1 }, { id: "01-02", wave: 2, depends: ["01-01"] }];
-// The fake `ph gsd` reports 01-01 over the blocker line while `state.big` holds it; plan records depend on the outline like the real
-// `plan:<id>` key (the freeze files are part of it), so an outline change makes every plan record stale.
+// The fake `ph gsd` reports 01-01 over the blocker line while `state.big` holds it; plan records depend on the plan's own outline row
+// and manifest entry like the real `plan:<id>` key, so an outline change makes stale only the records of the plans it changed.
 function reallocWorld(rounds, state = { big: new Set(["01-01"]) }, gsdPart = {}) {
   const w = makeWorld({ overlay: { gsd: { checker_reallocate: rounds, ...gsdPart } } });
   const recs = new Map();
   const planKey = (args) => {
     const id = args[1].slice(5);
     const settings = args.includes("--settings") ? args[args.indexOf("--settings") + 1] : "";
-    return `${settings}|${w.read(`${PHASE_DIR}/01-PLAN-OUTLINE.md`)}|${w.read(`${PHASE_DIR}/01-PLAN-OUTLINE.manifest.json`)}|${w.read(planFile(id))}`;
+    const row = w.read(`${PHASE_DIR}/01-PLAN-OUTLINE.md`).split("\n").find((l) => l.startsWith(`| ${id} |`)) ?? "";
+    const entry = (JSON.parse(w.read(`${PHASE_DIR}/01-PLAN-OUTLINE.manifest.json`) || "{}").plans ?? []).find((p) => p.id === id) ?? null;
+    return `${settings}|${row}|${JSON.stringify(entry)}|${w.read(planFile(id))}`;
   };
   const baseCheck = w.gsd.handlers["revisions check"];
   const baseRecord = w.gsd.handlers["revisions record"];

@@ -5,7 +5,6 @@ import { textDigest } from "../lib/hash.mjs";
 import { isInside } from "../lib/paths.mjs";
 import { done, fail, idList, none, unavailable } from "./common.mjs";
 import { frontmatterGet, frontmatterValidate, historyDigest, initPayload, initProject, listArtifacts, researchPrompt, summaryExtract, supersede, verifyArtifacts, verifyKeyLinks, writeArtifact } from "./artifacts.mjs";
-import { contractsChange, contractsShow, verifyContractsVerb } from "./contracts.mjs";
 import { debugBudget, debugCheckpoint, debugClose, debugCreate, debugExtend, debugList, debugStatus } from "./debug.mjs";
 import { commitAdopt } from "./commit-adopt.mjs";
 import { commitVerb, evaluationScope, selectRevertCommits } from "./gitverbs.mjs";
@@ -20,7 +19,7 @@ import { checkDependencies, checkOwns, checkSmokeBuilds, coverage, decisionCover
 import { findPhaseVerb, phaseAdd, phaseComplete, phaseInsert, phaseRemove, planIndex, requirementsVerb, roadmapVerb, uatPassed } from "./phases.mjs";
 import { normPlanId, planIds, readPlan, readPlans, requirePhase } from "./planning.mjs";
 import { ownsAdd, ownsHandover } from "./owns.mjs";
-import { ATTEMPT_KINDS, acceptManifestEdit, readAttempt, recordAttempt, revisionsVerb } from "./revisions.mjs";
+import { ATTEMPT_KINDS, readAttempt, recordAttempt, revisionsVerb } from "./revisions.mjs";
 import { attachHandEdit, captureBeforeRecord, listHandEdits, recordHandEdit, scanHandEdits } from "./hand-edits.mjs";
 import { stateVerb } from "./state.mjs";
 import { fingerprint, researchStatus, verificationParts, verificationStatusVerb } from "./status.mjs";
@@ -160,25 +159,6 @@ export const verbHandlers = {
       return done(results.length === 1 ? results[0] : { valid, plans: results }, valid ? 0 : 1);
     },
   },
-  // Kit feedback 67, 76: the cross-plan contracts of the manifest against the plans (and, for 'contracts change', the one writer).
-  "verify.contracts": {
-    usage: "ph gsd verify.contracts <phase> [--plans <ids>] [--complete]",
-    options: { plans: "string", complete: "bool" },
-    run: (g, a, o) => {
-      const phase = phaseOf(g, a);
-      return verifyContractsVerb(g, phase, { plans: subset(o, phase), complete: bool(o.complete, false) });
-    },
-  },
-  "contracts.show": { usage: "ph gsd contracts.show <phase> --plan <NN-MM>", options: { plan: "string" }, run: (g, a, o) => {
-    if (!o.plan) throw fail("contracts show needs --plan <NN-MM>");
-    return contractsShow(g, phaseOf(g, a), normPlanId(o.plan));
-  } },
-  "contracts.change": { usage: "ph gsd contracts.change <phase> (stdin JSON {plan, symbol, old, new, reason, file?, kind?}; old empty adds a symbol the manifest does not produce, file and kind required)", options: {}, run: (g, a) => {
-    const phase = phaseOf(g, a);
-    const r = contractsChange(g, phase, json(g.stdin()));
-    if (r.json?.invalidate?.length) r.json.invalidated = acceptManifestEdit(g, phase, r.json.invalidate);
-    return r;
-  } },
   // Kit feedback W16: an owns-only answer. Repeat --path for more than one path. A hand-over names both plans and crosses waves.
   "owns.add": { usage: "ph gsd owns.add <phase> --plan <NN-MM> --path <p> [--path <p>...] --reason <text>", options: { plan: "string", path: "list", reason: "string" }, run: (g, a, o) => ownsAdd(g, phaseOf(g, a), { plan: o.plan, paths: o.path, reason: o.reason }) },
   "owns.handover": { usage: "ph gsd owns.handover <phase> --from <NN-MM> --to <NN-MM> --path <p> [--path <p>...] --reason <text>", options: { from: "string", to: "string", path: "list", reason: "string" }, run: (g, a, o) => ownsHandover(g, phaseOf(g, a), { from: o.from, to: o.to, paths: o.path, reason: o.reason }) },

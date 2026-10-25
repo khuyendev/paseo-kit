@@ -64,7 +64,6 @@ test("RE plan-checker round: per plan cap and stall, the blockers no checker con
   assert.deepEqual(view.findings.map((f) => [f.id, f.plan, f.fate]), [["K1", "01-01", "open"], ["K2", "01-02", "applied"], ["K3", null, "open"]]);
   assert.equal(step(w, "checker", "i3", [round([], { cap: 4 })]).status, "refused", "the cap is 1..3");
   assert.equal(step(w, "checker", "i3", [{ op: "drop" }]).status, "refused");
-  assert.equal(ps.planContracts(w.root, PHASE_DIR, { run: RUN, step: "x", ops: [{ op: "round" }] }).status, "ok");
   assert.equal(step(w, "contracts", "x", [{ op: "round" }]).status, "refused", "plan-checker writes only checker parts");
 });
 
@@ -116,23 +115,6 @@ test("RE the streams join and the dependency checks: route rounds, confirmed blo
   assert.deepEqual(ps.planState(w.root, PHASE_DIR).views.dependents.findings.map((x) => [x.id, x.class, x.fate]), [["D1", "stale", "open"], ["D2", "old", "applied"]]);
 });
 
-test("RE plan-contracts: a change applied by an earlier instance of the run is the run's own when replayed (already), not a later run's", () => {
-  const w = makeWorld();
-  start(w);
-  const change = (id, outcome) => reply(ps.planContracts(w.root, PHASE_DIR, { run: RUN, step: id, ops: [{ op: "change", plan: "01-01", symbol: "A.b", old: "b()", new: "b(x)", reason: "r", outcome: { plan: "01-01", signature: "b(x)", consumers: ["01-02"], ...outcome } }] }));
-  const first = change("revise-01-01-1#1:A.b", { changed: true, old: "b()" });
-  assert.deepEqual([first.changed, first.dirty, first.report.changes.length], [true, true, 1]);
-  start(w);
-  const replayed = change("revise-01-01-1#1:A.b", { changed: false, already: true });
-  assert.deepEqual([replayed.changed, replayed.dirty, replayed.entry.old], [true, true, "b()"]);
-  const g = (id, op, extra = {}) => reply(ps.planContracts(w.root, PHASE_DIR, { run: RUN, step: id, ops: [{ op, ...extra }] }));
-  assert.equal(g("g1", "clean").dirty, false);
-  assert.deepEqual(g("g1:1", "check", { errors: 2 }).report, { checks: 1, rounds: 0, issues: 2, changes: replayed.report.changes });
-  assert.equal(g("g1:1:round", "round").report.rounds, 1);
-  ps.planEnd(w.root, PHASE_DIR, { run: RUN });
-  start(w);
-  assert.equal(change("revise-01-01-1#1:A.b", { changed: false, already: true }).changed, false, "a new run did not apply it");
-});
 
 test("RE plan-realloc counts the rounds a run may use; plan-recheck sorts a plan edit from every other change", () => {
   const w = makeWorld();
